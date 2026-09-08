@@ -144,6 +144,15 @@ class DocumentedEnvVarsAreReadTests(unittest.TestCase):
         self.documented = _names_by_file(_doc_paths())
         self.in_code = set(_names_by_file(_code_paths()))
 
+    def test_no_shipped_document_exports_a_prohibited_runtime_variable(self) -> None:
+        prohibited = re.compile(r"\bexport\s+(AAS_RUNTIME_ROOT|AAS_COMPUTE_SECRETS_FILE)\b")
+        found = [
+            path.relative_to(ROOT).as_posix()
+            for path in ROOT.glob("canonical/**/*.md")
+            if prohibited.search(path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual([], found, "scope runtime overrides per invocation")
+
     def test_no_shipped_document_names_a_variable_nothing_reads(self) -> None:
         unread = _unread(self.documented, self.in_code)
         self.assertEqual(

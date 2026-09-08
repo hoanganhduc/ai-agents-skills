@@ -1068,7 +1068,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         if os.environ.get("AAS_ARL_BROKER_SOCKET") and backend != "foreground":
             raise SystemExit(
                 "credential-brokered force-loop start requires --backend foreground; "
-                "detached backends cannot outlive the exact-generation broker"
+                "detached backends cannot outlive the credential broker"
             )
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
