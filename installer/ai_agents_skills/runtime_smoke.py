@@ -71,7 +71,7 @@ def run_runtime_smoke(
 ) -> dict[str, Any]:
     host_platform = current_platform(platform)
     selected_skills = selected_runtime_skills(manifests, skills)
-    venv = skill_venv_row(Path.home())
+    venv = skill_venv_row()
     with tempfile.TemporaryDirectory(prefix="aas-runtime-smoke-") as tmp:
         root = Path(tmp)
         (root / ".codex").mkdir(parents=True)
@@ -581,7 +581,7 @@ def run_installed_runtime_smoke(
     functional_rows: list[dict[str, Any]] = []
     live_rows: list[dict[str, Any]] = []
     credential_sections: list[dict[str, Any]] = []
-    venv = skill_venv_row(root)
+    venv = skill_venv_row()
     for runtime_root_text, artifacts in sorted(expected_by_root.items()):
         runtime_root = Path(runtime_root_text)
         selected_for_root = sorted(root_result_skills.get(runtime_root_text, set()))
@@ -1071,7 +1071,7 @@ def compare_runtime_state_records(
     }
 
 
-def skill_venv_row(runtime_root: Path) -> dict[str, Any]:
+def skill_venv_row() -> dict[str, Any]:
     """Resolve the operator's venv before constructing any synthetic HOME."""
     prefix = os.environ.get("AAS_SKILL_VENV") or str(Path.home() / ".agents_skills_venv")
     if not os.path.lexists(prefix):
@@ -1100,7 +1100,7 @@ def credential_launch_canary(
     if manifests is None:
         from .manifest import load_manifests
         manifests = load_manifests()
-    credential_manifest = json.loads((RUNTIME_SOURCE_ROOT.parents[1] / "manifest" / "credential-runtime.json").read_text())
+    credential_manifest = json.loads((RUNTIME_SOURCE_ROOT.parents[1] / "manifest" / "credential-runtime.json").read_text(encoding="utf-8"))
     commands = {command for consumer in credential_manifest["consumers"] for command in consumer["commands"]}
     candidate = next((row for row in results if row.get("command_target") in commands), None)
     if candidate is None:

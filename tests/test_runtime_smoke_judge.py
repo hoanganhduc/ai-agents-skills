@@ -101,19 +101,19 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(self.judge({"exit_code": 1}, subprocess.CompletedProcess([], 1, "", "")), [])
 
     def test_files_types_regex_json_and_containment(self):
-        (self.smoke_dir / "data").write_text('{"ready":true}\n')
+        (self.smoke_dir / "data").write_text('{"ready":true}\n', encoding="utf-8")
         (self.smoke_dir / "folder").mkdir()
         expect = {"files": ["data", {"path": "data", "type": "file"},
                              {"path": "folder", "type": "directory"}, {"path": "data", "regex": "^.*ready.*$"},
                              {"path": "data", "json": [{"path": "ready", "equals": True}]}]}
         self.assertEqual(self.judge(expect), [])
-        (self.root / "outside").write_text("sensitive")
+        (self.root / "outside").write_text("sensitive", encoding="utf-8")
         (self.smoke_dir / "escape").symlink_to(self.root / "outside")
         for path in ["../outside", str(self.root / "outside"), "escape", "no-file"]:
             self.assertTrue(self.judge({"files": [path]}), path)
         self.assertTrue(self.judge({"files": [{"path": "folder", "type": "file"}]}))
         self.assertTrue(self.judge({"files": [{"path": "data", "type": "directory"}]}))
-        (self.smoke_dir / "data").write_text("not json")
+        (self.smoke_dir / "data").write_text("not json", encoding="utf-8")
         self.assertTrue(self.judge(expect))
 
     def test_invalid_json_and_all_regex_failures_are_reported(self):
@@ -151,16 +151,16 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
     def test_fixtures_expand_content_copy_sources_and_refuse_symlink_escape(self):
         source = self.root / "source"
         source.mkdir()
-        (source / "input").write_text("copied")
+        (source / "input").write_text("copied", encoding="utf-8")
         case = contract(fixtures=[{"to": "nested/content", "content": "{workspace}|{smoke_dir}|{skill_venv}"},
                                   {"to": "copy", "copy_from": "input"}])
         with patch.object(smoke, "RUNTIME_SOURCE_ROOT", source):
             smoke.materialize_smoke_fixtures(case, self.workspace, skill_venv="/private/venv")
         destination = self.smoke_dir / "nested" / "content"
-        self.assertEqual(destination.read_text(), f"{self.workspace}|{self.smoke_dir}|/private/venv")
+        self.assertEqual(destination.read_text(encoding="utf-8"), f"{self.workspace}|{self.smoke_dir}|/private/venv")
         self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(destination.parent.stat().st_mode), 0o700)
-        self.assertEqual((self.smoke_dir / "copy").read_text(), "copied")
+        self.assertEqual((self.smoke_dir / "copy").read_text(encoding="utf-8"), "copied")
         (self.smoke_dir / "escape").symlink_to(self.root, target_is_directory=True)
         with self.assertRaises(ValueError):
             smoke.materialize_smoke_fixtures(contract(fixtures=[{"to": "escape/leak", "content": "no"}]), self.workspace)
@@ -231,7 +231,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
     def test_live_uses_real_runtime_real_environment_and_no_fixtures(self):
         config = self.workspace / "skills" / "example" / "config.json"
         config.parent.mkdir(mode=0o700, parents=True)
-        config.write_text("{}")
+        config.write_text("{}", encoding="utf-8")
         required_config = "{workspace}/skills/example/config.json"
         case = contract(requires={"pointer_env": ["AAS_SKILL_SECRETS_FILE"],
                                   "config_files": [required_config], "network": True},
@@ -257,11 +257,11 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         with patch.dict(os.environ, {"AAS_SKILL_VENV": str(prefix)}), \
                 patch.object(smoke.skill_python, "attested_base_python", return_value=Path("/usr/bin/python3")), \
                 patch.object(smoke.skill_python, "admit_skill_venv", return_value=(False, "group writable")) as admit:
-            result = smoke.skill_venv_row(self.root)
+            result = smoke.skill_venv_row()
         self.assertEqual(result, {"status": "refused", "path": str(prefix), "reason": "group writable"})
         admit.assert_called_once_with(str(prefix), attested_python=Path("/usr/bin/python3"))
         with patch.dict(os.environ, {"AAS_SKILL_VENV": str(self.root / "absent")}):
-            self.assertEqual(smoke.skill_venv_row(self.root)["status"], "absent")
+            self.assertEqual(smoke.skill_venv_row()["status"], "absent")
 
     def test_venv_only_selection_creates_no_t2_row(self):
         manifest = manifests_for({"needs": contract(requires_python_modules=["module_one"])})
@@ -280,7 +280,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
 
     def test_credential_canary_requires_127_and_restores_mode_on_timeout(self):
         launcher = self.root / "run_skill.sh"
-        launcher.write_text("#!/bin/sh\n")
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
         launcher.chmod(0o700)
         manifest = manifests_for(offline=contract())
         # The command is a real credential-bearing selector; no provider is run.
@@ -343,7 +343,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
                      "validate": contract(args=["validate"], timeout_seconds=90, expect={"stdout_json": [{"path": "status", "equals": "ok"}]})}
         manifest = {"runtime": {"skills": {"deep-research-workflow": {"functional_smoke": contracts}}}}
         (self.smoke_dir / "deep").mkdir()
-        (self.smoke_dir / "deep" / "file").write_text("stale")
+        (self.smoke_dir / "deep" / "file").write_text("stale", encoding="utf-8")
         processes = [subprocess.CompletedProcess([], 2, "", "invalid choice: 'selftest'"),
                      subprocess.CompletedProcess([], 0, '{"schema_version":1}', ""),
                      subprocess.CompletedProcess([], 0, '{"status":"ok"}', "")]
