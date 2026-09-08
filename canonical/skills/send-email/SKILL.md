@@ -149,22 +149,9 @@ default cc/bcc, and the selected config path.
 Run via the managed runner (POSIX shown; see Windows Runtime Commands above):
 
 ```bash
-# Credential-bearing lanes must launch from a root-owned AAS component
-# generation; the per-user runtime copy is refused by the credential gate.
-# The generation directory is named for a git commit, so its name carries no
-# ordering -- pick the newest publish, which the store records as its mtime.
+# Any owner-controlled installed runtime is accepted; execute directly so #!/bin/bash -p applies.
 launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
-newest=0
-for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
-  gen="${gen%/}"
-  [ -f "$gen/manifest/credential-runtime.json" ] || continue
-  [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
-  stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
-  [ "${stamp:-0}" -gt "$newest" ] || continue
-  newest="$stamp"
-  launcher="$gen/canonical/runtime/runners/run_skill.sh"
-done
-bash "$launcher" skills/send-email/run_send_email.sh <command> [args...]
+"$launcher" skills/send-email/run_send_email.sh <command> [args...]
 ```
 
 - `send` -- compose and send. Recipients (`--to`, `--cc`, `--bcc`) are repeatable
@@ -197,16 +184,16 @@ Examples:
 
 ```bash
 # preview without sending
-bash "$launcher" skills/send-email/run_send_email.sh \
+"$launcher" skills/send-email/run_send_email.sh \
   send --to <recipient> --subject "Report" --body "See attached." --attach ~/report.pdf --dry-run
 
 # send a text + HTML message to several recipients
-bash "$launcher" skills/send-email/run_send_email.sh \
+"$launcher" skills/send-email/run_send_email.sh \
   send --to <recipient> --cc <reviewer> --subject "Update" \
   --body "Plain fallback." --html "<p>Rich <b>body</b>.</p>"
 
 # test the server and credentials
-bash "$launcher" skills/send-email/run_send_email.sh verify
+"$launcher" skills/send-email/run_send_email.sh verify
 ```
 
 Every command prints a single JSON object. On success it includes `"ok": true`;

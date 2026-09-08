@@ -8,6 +8,22 @@ metadata:
 # Docling
 
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--skills docling --apply --real-system"`
+and check it with `make verify-skill-python`. This skill is opt-in; use the
+explicit skill selection shown here, or add `--include-opt-in` to provision
+all opt-in skills.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
+The existing `~/.local/share/docling-venv` is not adopted: it is group-writable
+and is reached only by direct wrapper invocation. The managed launcher uses
+the shared skill venv above.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -51,40 +67,39 @@ Runtime files:
 
 - `$AAS_RUNTIME_WORKSPACE/skills/docling/`
 
-Installed Docling environment:
+Managed Docling environment:
 
-- `~/.local/share/docling-venv/`
-- CLI: `~/.local/share/docling-venv/bin/docling`
-- Python packages: `~/.local/share/docling-venv/lib/python3.10/site-packages/`
+- `~/.agents_skills_venv/` (or `AAS_SKILL_VENV`)
+- CLI: `<skill-venv>/bin/docling`
 
 Shared runtime runner:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh <subcommand> [args...]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh <subcommand> [args...]
 ```
 
-The runtime launcher currently delegates Docling execution to the dedicated
-virtualenv above rather than a package copy under `$AAS_RUNTIME_WORKSPACE/.local/`.
+The runtime launcher admits the shared skill venv before the Docling wrapper
+resolves its Python and CLI.
 
 ## Supported runtime subcommands
 
 ### Doctor
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
 ```
 
 Checks whether Python imports and the `docling` CLI are available.
-In this setup, that check should resolve against `~/.local/share/docling-venv`.
+Through the managed launcher, that check resolves against the admitted skill venv.
 
 ### Convert
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to md
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to md
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to json   --preset scan-heavy
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to json   --preset scan-heavy
 ```
 
 Useful local quality controls:
@@ -103,7 +118,7 @@ Useful local quality controls:
 Optional remote fallback is explicit and never enabled by config:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/file.pdf" \
   --to md \
   --preset scan-heavy \
@@ -121,7 +136,7 @@ Live OCR.space smoke is also explicit and uses a generated synthetic PDF page,
 not a user document:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
   --allow-remote-ocr
 ```
 
@@ -131,7 +146,7 @@ real API key and a live remote request.
 ### Analyze structure
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh extract   --source "/path/to/file.pdf"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh extract   --source "/path/to/file.pdf"
 ```
 
 Emits JSON with counts and basic structural signals such as headings, tables, pictures, and pages.
@@ -144,7 +159,7 @@ to `headings_total`, so a partial list is never mistaken for the whole structure
 ### OCR quality
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh quality \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh quality \
   --source "/path/to/file.pdf" \
   --preset scan-heavy
 ```
@@ -155,7 +170,7 @@ replacement-character ratio, and reasons that would trigger fallback.
 ### Chunk
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk   --source "/path/to/file.pdf"   --mode hierarchical
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk   --source "/path/to/file.pdf"   --mode hierarchical
 ```
 
 The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
@@ -165,7 +180,7 @@ paper runs to hundreds of chunks, so the payload usually belongs in a file
 rather than on stdout:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk \
   --source "/path/to/file.pdf" \
   --output "/path/to/chunks.json"
 ```
@@ -177,7 +192,7 @@ document, `--offset`/`--limit` for a deliberate window, or a raised ceiling.
 To page through a long document, follow `next_offset` until it is `null`:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh chunk \
   --source "/path/to/file.pdf" --offset 0 --limit 50
 ```
 
@@ -222,7 +237,7 @@ remove account-level rate, quota, or concurrency limits.
 Pass a config explicitly:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/file.pdf" \
   --config "/path/to/docling.toml" \
   --preset scan-heavy

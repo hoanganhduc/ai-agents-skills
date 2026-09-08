@@ -298,7 +298,8 @@ dependency-bound artifacts should also install their backing skills.
 - Installer CLI commands include `doctor`, `precheck`, `audit-system`, `plan`,
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
   `installed-runtime-smoke`, `lifecycle-test`, `list-skills`, `list-artifacts`,
-  `describe`, and `describe-artifact`.
+  `describe`, `describe-artifact`, `provision-external`,
+  `provision-skill-python`, and `verify-skill-python`.
 - Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
   through `make` or `./make.ps1`, not as installer CLI commands.

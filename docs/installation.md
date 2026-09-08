@@ -93,6 +93,54 @@ python3 -m installer.ai_agents_skills help
 python3 -m installer.ai_agents_skills describe zotero
 ```
 
+## Skill Python venv
+
+`provision-external` manages declared external dependency bundles. Use
+`provision-skill-python` for the separate shared Linux skill environment at
+`~/.agents_skills_venv`; `AAS_SKILL_VENV` or `--venv` selects another permitted
+path under the selected home. Provisioning is a dry run until `--apply` is
+given, and applying to the real user home also requires `--real-system`.
+
+```bash
+make provision-skill-python
+make provision-skill-python ARGS="--apply --real-system"
+make provision-skill-python ARGS="--skills docling,lean-explore-mcp --apply --real-system"
+make verify-skill-python
+```
+
+The default package set covers calibre, modal-research-compute,
+hetzner-research-compute, kaggle-research-compute, research-digest-wrapper, and
+zotero. Docling and lean-explore-mcp are opt-in: name them with `--skills` or
+use `--include-opt-in`. The installer combines the selected manifest requirement
+files into one pip invocation; no packages are installed by runtime smoke or
+by launching a skill. Provisioning may download packages. Hetzner's Python
+module list is empty, so its stdlib commands do not require this venv.
+
+The base interpreter defaults to attested `/usr/bin/python3`; `--python` must
+resolve to an attested distribution Python. The provisioner creates or
+identifies the venv, rejects foreign-owned or multiply linked tree entries,
+removes group/world write bits, and checks venv admission and pip consistency.
+It records the selected skills, requirement hashes and a pip freeze in
+`aas-skill-python.json`. Each selected skill's `installed_bytes` is the shared
+site-packages byte delta for that provisioning call, not a per-skill size.
+`verify-skill-python` reads the receipt by default and checks interpreter
+identity and version, modes, declared imports, and pip consistency without
+installing packages; `--skills` or `--include-opt-in` selects another
+verification scope.
+
+`--recreate` and `--remove` are mutually exclusive explicit operations and
+only act on an identified skill venv. Ordinary uninstall preserves it. The
+installer's own `.venv`, protected system locations, and existing dedicated
+course, Docling, Manim, and eOffice environments are never adopted or removed.
+In particular, the group-writable `~/.local/share/docling-venv` remains a
+direct-wrapper-only legacy environment.
+
+Execute `run_skill.sh` directly so its `#!/bin/bash -p` shebang applies. The
+launcher uses system Python when the skill venv is absent; unavailable
+third-party imports then fail at startup. A present but inadmissible venv
+stops the launch with exit `127` and its refusal reason. Override
+`AAS_SKILL_VENV` per invocation when a different admitted venv is required.
+
 ## Restored runtime secret projection
 
 Managed runtime skills can receive restored API credentials from a strict

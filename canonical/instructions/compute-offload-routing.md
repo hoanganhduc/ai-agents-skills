@@ -233,27 +233,14 @@ Each lane installs to the runtime root and runs via `run_skill.sh`. Resolve the 
 for the current agent, then use the lane's wrapper:
 
 ```bash
-# Credential-bearing lanes must launch from a root-owned AAS component
-# generation; the per-user runtime copy is refused by the credential gate.
-# The generation directory is named for a git commit, so its name carries no
-# ordering -- pick the newest publish, which the store records as its mtime.
+# Any owner-controlled installed runtime is accepted; execute directly so #!/bin/bash -p applies.
 launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
-newest=0
-for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
-  gen="${gen%/}"
-  [ -f "$gen/manifest/credential-runtime.json" ] || continue
-  [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
-  stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
-  [ "${stamp:-0}" -gt "$newest" ] || continue
-  newest="$stamp"
-  launcher="$gen/canonical/runtime/runners/run_skill.sh"
-done
 # router + Modal / GitHub Actions lanes:
-run() { bash "$launcher" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
+run() { "$launcher" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
 # Kaggle lane:
-kg() { bash "$launcher" skills/kaggle-research-compute/run_kaggle_research_compute.sh "$@"; }
+kg() { "$launcher" skills/kaggle-research-compute/run_kaggle_research_compute.sh "$@"; }
 # Hetzner lane:
-hz() { bash "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
+hz() { "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 
 run doctor                 # routing_order + Modal / GitHub Actions readiness
 run plan job.json          # the router's backend choice
