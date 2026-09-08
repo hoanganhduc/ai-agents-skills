@@ -8,6 +8,16 @@ metadata:
 # Calibre
 
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--apply --real-system"`
+and check it with `make verify-skill-python`.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -58,7 +68,7 @@ before the historical `OPENCLAW_SECRETS_FILE` fallback.
 
 Shared runner:
 
-- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
+- `"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Local Library Profile Gate
 
@@ -98,67 +108,67 @@ explicitly opts in after dry-run review.
 Use `functions.exec_command`.
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh search "<query>" [--format epub] [--tag fiction] [--limit 50] [--series "Series Name"]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh search "<query>" [--format epub] [--tag fiction] [--limit 50] [--series "Series Name"]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get "<query>" [--format pdf] [--send "telegram:CHAT_ID"]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get "<query>" [--format pdf] [--send "telegram:CHAT_ID"]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get --id 42 [--send "zulip:Research:books"]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get --id 42 [--send "zulip:Research:books"]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get "ring" --index 0 [--send "telegram:CHAT_ID"]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh get "ring" --index 0 [--send "telegram:CHAT_ID"]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh add /path/book.epub [--isbn 9780140449136] [--title "X" --author "Y"] [--dry-run]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh add /path/book.epub [--isbn 9780140449136] [--title "X" --author "Y"] [--dry-run]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh update --id 42 --title "X" --author "Y" --tags "a,b" --year 1965 --publisher "P" [--series "S" --series-index 1 --isbn 9780441013593]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh update --id 42 --title "X" --author "Y" --tags "a,b" --year 1965 --publisher "P" [--series "S" --series-index 1 --isbn 9780441013593]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh add-tag --id 42 --tag "to-read"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh add-tag --id 42 --tag "to-read"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove-tag --id 42 --tag "to-read"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove-tag --id 42 --tag "to-read"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh list-shelves [--tags|--series|--publishers]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh list-shelves [--tags|--series|--publishers]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh sync [--force] [--progress]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh sync [--force] [--progress]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove "query" [--dry-run]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove "query" [--dry-run]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove --id 42 [--dry-run]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh remove --id 42 [--dry-run]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh convert --id 42 --to epub [--from pdf]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh convert --id 42 --to epub [--from pdf]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh export --id 42 [--format bibtex]
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh export --id 42 [--format bibtex]
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh doctor
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh doctor
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh clean
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/calibre/run_cal.sh clean
 ```
 
 ## Important behaviors

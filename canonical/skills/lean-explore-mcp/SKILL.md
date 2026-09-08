@@ -5,6 +5,18 @@ description: Use when preparing optional LeanExplore MCP setup for Lean declarat
 
 # LeanExplore MCP Setup
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--skills lean-explore-mcp --apply --real-system"`
+and check it with `make verify-skill-python`. This skill is opt-in; use the
+explicit skill selection shown here, or add `--include-opt-in` to provision
+all opt-in skills.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -29,14 +41,14 @@ Use this skill only for explicit optional LeanExplore MCP setup. It never instal
 Check local readiness without running `lean-explore`:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh doctor
 ```
 
 Emit a manual MCP config snippet:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh config-snippet --backend api
 ```
 
@@ -45,7 +57,7 @@ Use `--backend local` only after local data has been prepared outside this repo 
 Run offline smoke:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh smoke
 ```
 
@@ -60,7 +72,7 @@ make provision-skill-python ARGS="--skills lean-explore-mcp --apply --real-syste
 Start the adapter through the launcher, which admits the venv before serving:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh serve --backend api
 ```
 

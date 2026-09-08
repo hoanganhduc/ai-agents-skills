@@ -8,6 +8,16 @@ metadata:
 # Zotero
 
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--apply --real-system"`
+and check it with `make verify-skill-python`.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -50,7 +60,7 @@ workflow.
 
 Shared runner:
 
-- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
+- `"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Local Library Profile Gate
 
@@ -164,7 +174,7 @@ Treat other failed `doctor` checks as blockers unless the user explicitly asks
 for a degraded diagnostic path:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh doctor
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh doctor
 ```
 
 ## Core commands
@@ -174,31 +184,31 @@ Use `functions.exec_command`.
 Common patterns:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get --link "<query>"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get --link "<query>"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --index 0
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --index 0
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --item-type manuscript
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --item-type manuscript
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
 ```
 
 ```bash
@@ -210,7 +220,7 @@ cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHO
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
 ```
 
 ```bash
