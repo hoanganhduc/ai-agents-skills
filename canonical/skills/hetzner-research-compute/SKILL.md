@@ -8,6 +8,19 @@ metadata:
 # Hetzner Research Compute
 
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--apply --real-system"`
+and check it with `make verify-skill-python`.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
+This skill declares no Python modules; its stdlib commands can use system
+Python when the shared venv is absent.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -66,25 +79,12 @@ measure the workload and match it to the server type's declared vCPU/RAM before
 
 ## Runtime commands
 
-Linux (resolve the launcher for the current agent — a root-owned component generation when one is installed, otherwise the per-user runtime — then call it):
+Linux (use the owner-controlled installed runtime for the current agent):
 
 ```bash
-# Credential-bearing lanes must launch from a root-owned AAS component
-# generation; the per-user runtime copy is refused by the credential gate.
-# The generation directory is named for a git commit, so its name carries no
-# ordering -- pick the newest publish, which the store records as its mtime.
+# Any owner-controlled installed runtime is accepted; execute directly so #!/bin/bash -p applies.
 launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
-newest=0
-for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
-  gen="${gen%/}"
-  [ -f "$gen/manifest/credential-runtime.json" ] || continue
-  [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
-  stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
-  [ "${stamp:-0}" -gt "$newest" ] || continue
-  newest="$stamp"
-  launcher="$gen/canonical/runtime/runners/run_skill.sh"
-done
-run() { bash "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
+run() { "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 ```
 
 ```bash

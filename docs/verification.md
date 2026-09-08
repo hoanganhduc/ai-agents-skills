@@ -99,8 +99,10 @@ Post-install smoke:
 
 The post-install runtime layer is offline-only. It uses the installed runtime
 runner, copies managed runtime files into a temporary scratch workspace, strips
-secret-like environment variables, and forbids live APIs, package installation,
-MCP/client config writes, and background server starts.
+secret-like environment variables, and uses contracts that exclude live APIs,
+package installation, MCP/client config writes, and background server starts.
+The `safety.network` declaration is not a network sandbox; an offline case that
+accesses the network is a contract defect that must be caught by review.
 
 Result meanings:
 
@@ -108,7 +110,7 @@ Result meanings:
 - `no-managed-artifacts`: the selected scope has no installer-managed files to check.
 - `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
 
-CLI exit codes: `verify`, `smoke`, `runtime-smoke`,
+CLI exit codes: `verify`, `verify-skill-python`, `smoke`, `runtime-smoke`,
 `installed-runtime-smoke`, `lifecycle-test`, and `docs-check` exit `0` only
 for `ok`. Status values such as
 `no-managed-artifacts`, `degraded`, `stale`, or `failed` are nonzero unless a
@@ -220,9 +222,9 @@ make runtime-smoke ARGS="--skills self-improving-agent"
 
 Use `installed-runtime-smoke` after dependencies have been restored to test
 the managed runtime already installed under the selected root. With no skill
-filter it executes every installed `offline-smoke` contract. Declared
-`manual-native`, `doctor-only`, and `static-only` coverage entries are reported
-as neutral exclusions; they do not hide an offline-contract failure. A missing
+filter it executes every installed `offline-smoke` and `venv-smoke` contract.
+Declared `manual-native`, `doctor-only`, and `static-only` coverage entries are
+reported as neutral exclusions; they do not hide an offline-contract failure. A missing
 or unknown coverage class is a hard failure, so newly added runtime skills
 cannot silently escape the restore verification gate. A missing native runtime
 runner also fails when an installed offline contract needs to execute. For a
@@ -232,16 +234,37 @@ Before execution, managed-state integrity is verified; runtime files are then
 descriptor-read, SHA-256 checked, copied into an isolated scratch runtime, and
 only the verified scratch runner is executed.
 
-That scratch runtime is a temporary per-user tree, so it can never be the
-root-owned component generation `run_skill.sh` requires of a credential-bearing
-launch. The harness therefore relaxes `credential_runtime_enforcement` in the
-scratch copy, exactly as `runtime-smoke` relaxes its own ephemeral install, and
-creates every scratch directory owner-write-only so the runner's command-chain
-check still applies. Without both, the gate refuses each credential-bearing
-skill with exit `127` before its offline contract runs, so those contracts go
-unexercised while reporting as skill failures. The installed runtime itself is
-never patched, and the command-chain, workspace, and system-Python checks are
-never relaxed.
+The scratch copy is owner-controlled and passes the normal credential gate;
+neither harness relaxes `credential_runtime_enforcement` or any launcher check.
+Each offline case uses a private synthetic HOME and drops inherited interpreter
+and venv overrides, so temporary runtime smoke (T2) uses system Python. Its
+environment includes secret canaries and the live-side-effect gate. The
+`credential_launch` section checks a positive credential-bearing launch and a
+negative launch with a group-writable scratch launcher: the latter must exit
+`127` with an owner-controlled-launcher refusal. When the selected set has no
+credential-bearing offline contract, the canary is `skipped`, which fails
+`--require-complete-coverage`; it is `not-applicable` on Windows.
+
+Before replacing HOME, the harness observes the operator's `AAS_SKILL_VENV` or
+`~/.agents_skills_venv`. The `skill_venv` section reports `admitted`, `absent`, or
+`refused` with the reason. This observation does not fail system-only T2.
+Installed functional cases with nonempty `requires_python_modules` use the
+admitted real venv through an explicit `AAS_SKILL_VENV` while retaining the
+synthetic HOME. An absent venv or missing imports skips those cases with a
+reason; cases requiring no modules run on system Python when the venv is
+absent. A refused venv fails every installed functional case. Functional cases
+exclude parent secret canaries so their no-key fixtures remain no-key, and
+still pass through the normal launcher. `--require-functional` makes any
+skipped or failed functional row fail the installed-runtime result.
+
+`installed-runtime-smoke --live` additionally runs declared read-only live
+checks against the real installed runtime, real HOME, and operator environment,
+without scratch copies or canaries. Missing declared prerequisites produce a
+`skipped` live row. Temporary `runtime-smoke` never runs live checks. Network
+access remains declarative in every contract, not sandboxed by the harness.
+Install Python packages explicitly with `provision-skill-python`, and use the
+read-only `verify-skill-python` before requiring functional coverage; see
+[Skill Python venv](installation.md#skill-python-venv).
 
 Every installed-runtime report, including an early `skipped` result, uses the
 stable top-level schema `ai-agents-skills.installed-runtime-smoke.v1` with
@@ -250,12 +273,19 @@ version, `status: ok`, `unknown_coverage_count: 0`, and
 `missing_managed_runtime_count: 0`; a `skipped` report is
 not readiness evidence. Declared exclusions remain visible through
 `declared_exclusion_count` and `declared_exclusions` and are the only neutral
-non-executed coverage class.
+non-executed coverage class. The `credential_launch`, `skill_venv`, `functional`,
+and `live` sections are siblings under that unchanged schema; they do not
+change the two coverage counters. Check rows use `ok`, `failed`, `skipped`, or
+`not-applicable`; `skill_venv` records admission separately as described above.
+Temporary runtime reports include the first three sections and exclude live
+execution.
 
 ```bash
 make installed-runtime-smoke
 make installed-runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 make installed-runtime-smoke ARGS="--require-complete-coverage"
+make installed-runtime-smoke ARGS="--require-complete-coverage --require-functional"
+make installed-runtime-smoke ARGS="--live"
 ```
 
 `self-improving-agent` has a portable offline smoke contract for its
@@ -265,12 +295,12 @@ requires running the Windows `./make.ps1` and runtime runner checks on Windows;
 Linux-hosted Windows platform-shape tests verify install layout, not native
 Windows execution.
 
-Docling has a skill-specific runtime doctor because it may rely on a dedicated
-Docling environment and heavier OCR/model packages that are not part of the
-default runtime-smoke harness:
+Docling has a skill-specific runtime doctor. Its shared-venv Python packages
+are opt-in, and heavier OCR/model assets are not part of the default temporary
+runtime-smoke harness:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
 ```
 
 `smoke` can also return `no-managed-artifacts` when no managed skill-file

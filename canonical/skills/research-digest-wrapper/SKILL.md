@@ -8,6 +8,16 @@ metadata:
 # Research Digest Wrapper
 
 
+## Python packages
+
+On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
+`AAS_SKILL_VENV`). From the repository, run
+`make provision-skill-python ARGS="--apply --real-system"`
+and check it with `make verify-skill-python`.
+If the venv is absent, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A refused venv stops the launch with
+exit `127` and a reason.
+
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
@@ -27,7 +37,7 @@ Use the managed runtime runner rather than invoking the digest script directly.
 
 Shared runner:
 
-- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
+- `"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Use cases
 
@@ -39,7 +49,7 @@ Shared runner:
 ## Core execution
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh <COMMAND AND ARGS>
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh <COMMAND AND ARGS>
 ```
 
 ## Common actions
@@ -67,11 +77,11 @@ Every remaining selected paper still receives the deterministic local summary.
 Verified example shapes:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh run --tag graph-theory --min-priority 3
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh run --tag graph-theory --min-priority 3
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh add-topic "Token sliding" --tag reconfiguration --priority 5
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh add-topic "Token sliding" --tag reconfiguration --priority 5
 ```
 
 ## After execution
