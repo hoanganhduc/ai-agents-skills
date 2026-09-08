@@ -513,12 +513,45 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
             "submission-venue-selector": ("run", "select"), "vnthuquan": ("download",),
         }
         for skill, blocked in verbs.items():
+            command = f"workspace/skills/{skill}/run.sh"
             for verb in blocked:
                 with self.subTest(skill=skill, verb=verb), self.assertRaisesRegex(ManifestError, "mutating verb"):
-                    self._validate(self._contract("live_check", args=[verb]), "live_check", skill=skill)
-        self._validate(self._contract("live_check", args=["reap", "--dry-run"]), "live_check", skill="hetzner-research-compute")
+                    self._validate(self._contract("live_check", command=command, args=[verb]), "live_check", skill=skill)
+        command = "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh"
+        self._validate(self._contract("live_check", command=command, args=["reap", "--dry-run"]), "live_check", skill="hetzner-research-compute")
         with self.assertRaisesRegex(ManifestError, "mutating verb"):
-            self._validate(self._contract("live_check", args=["kill", "--dry-run"]), "live_check", skill="hetzner-research-compute")
+            self._validate(self._contract("live_check", command=command, args=["kill", "--dry-run"]), "live_check", skill="hetzner-research-compute")
+
+    def test_live_checks_cannot_bypass_mutating_verbs_with_another_declared_skill(self) -> None:
+        contract = self._contract(
+            "live_check", command="workspace/skills/send-email/run_send_email.sh",
+            args=["send", "--to", "<EMAIL>", "--subject", "fixture", "--body", "fixture"],
+            requires={"network": True, "pointer_env": ["SEND_EMAIL_SECRETS_FILE"]},
+        )
+        with self.assertRaisesRegex(ManifestError, "mutating verb: send"):
+            self._validate(contract, "live_check", skill="send-email")
+        with self.assertRaisesRegex(ManifestError, "declared skill"):
+            self._validate(contract, "live_check", skill="graph-verifier")
+        contract["args"] = ["verify"]
+        self._validate(contract, "live_check", skill="send-email")
+
+    def test_every_live_platform_command_stays_in_its_declared_skill_namespace(self) -> None:
+        commands = {
+            "linux": "workspace/skills/example/run.sh",
+            "windows_ps1": "workspace/skills/example/scripts/run.ps1",
+        }
+        self._validate(self._contract("live_check", command=commands), "live_check")
+        for platform in commands:
+            for target in (
+                "workspace/skills/send-email/run_send_email.sh",
+                "workspace/skills/example-other/run.sh",
+                "workspace/scripts/run.sh",
+            ):
+                with self.subTest(platform=platform, target=target):
+                    self._refuses(
+                        self._contract("live_check", command={**commands, platform: target}),
+                        "live_check", "declared skill",
+                    )
 
     def test_case_collections_require_named_contracts_and_preserve_order(self) -> None:
         for kind in ("functional_smoke", "live_check"):

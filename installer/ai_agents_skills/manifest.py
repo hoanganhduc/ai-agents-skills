@@ -649,6 +649,8 @@ def _validate_runtime_case(skill: str, contract: Any, kind: str, runtime_source_
         if not isinstance(target, str) or not target.startswith("workspace/"):
             raise ManifestError(f"{owner} command must be workspace-relative")
         _runtime_relative_path(target.removeprefix("workspace/"), f"{owner} command", smoke_relative=False)
+        if kind == "live_check" and not target.startswith(f"workspace/skills/{skill}/"):
+            raise ManifestError(f"{owner} command must stay under the declared skill's workspace/skills/{skill}/ namespace")
     args = contract.get("args", [])
     if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
         raise ManifestError(f"{owner} args must be a list of strings")
