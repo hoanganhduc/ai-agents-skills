@@ -91,9 +91,10 @@ class BrokerConfig:
     # Exact, non-secret Hetzner project identity used to bind broad inventory/deletion and
     # detached-reaper evidence. Project-wide operations fail closed when this is absent.
     hetzner_project_identity: str | None = None
-    # Root/operator-produced, short-lived JSON evidence for the detached scheduler. The agent
-    # process must not own or be able to rewrite this file or its immediate parent.
-    hetzner_reaper_lease_file: str | None = None
+    # Owner-private, short-lived JSON evidence for the scheduler under the same account.
+    hetzner_reaper_lease_file: str | None = field(default_factory=lambda: str(
+        Path("~/.local/state/ai-agents-skills/hetzner-reaper-lease.json").expanduser()
+    ))
     hetzner_reaper_scheduler_id: str | None = None
     hetzner_reaper_lease_max_age_seconds: int = 900
     # Kaggle Kernels lane (disabled by default; configured under [kaggle]). CPU is free and
@@ -185,6 +186,15 @@ def load_config(path: Path | None = None) -> BrokerConfig:
     kaggle = data.get("kaggle", {}) or {}
     local = data.get("local", {}) or {}
     fanout = data.get("fanout", {}) or {}
+    reaper_lease_file = str(Path(hetzner.get(
+        "reaper_lease_file", "~/.local/state/ai-agents-skills/hetzner-reaper-lease.json"
+    )).expanduser())
+    lease_realpath = Path(reaper_lease_file).resolve()
+    if any(lease_realpath.is_relative_to(root) for root in ("/etc", "/usr", "/opt")):
+        raise ValueError(
+            "reaper lease path must be owner-controlled; move it under $HOME "
+            "(default ~/.local/state/ai-agents-skills/hetzner-reaper-lease.json)"
+        )
 
     return BrokerConfig(
         install_id=data["install_id"],
@@ -219,7 +229,7 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         hetzner_image=hetzner.get("image"),
         hetzner_bundle_root=hetzner.get("bundle_root"),
         hetzner_project_identity=hetzner.get("project_identity"),
-        hetzner_reaper_lease_file=hetzner.get("reaper_lease_file"),
+        hetzner_reaper_lease_file=reaper_lease_file,
         hetzner_reaper_scheduler_id=hetzner.get("reaper_scheduler_id"),
         hetzner_reaper_lease_max_age_seconds=int(
             hetzner.get("reaper_lease_max_age_seconds", 900)
