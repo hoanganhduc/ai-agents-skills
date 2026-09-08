@@ -384,9 +384,10 @@
           "{smoke_dir}/mma"
         ],
         "timeout_seconds": 30,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "mma"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -399,6 +400,35 @@
         },
         "env_canaries": {
           "AAS_MANIM_TOKEN": "MANIM-MATH-ANIMATION-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "failures",
+              "equals": []
+            },
+            {
+              "path": "passed",
+              "type": "integer"
+            },
+            {
+              "path": "total",
+              "type": "integer"
+            },
+            {
+              "path": "passed",
+              "equals_path": "total"
+            },
+            {
+              "path": "total",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -474,9 +504,10 @@
           "{smoke_dir}/send-email"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "send-email"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -492,6 +523,104 @@
           "format": "json",
           "values": {
             "SMTP_PASSWORD": "SEND-EMAIL-SMOKE-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "command",
+              "equals": "selftest"
+            },
+            {
+              "path": "failed",
+              "equals": 0
+            },
+            {
+              "path": "passed",
+              "type": "integer"
+            },
+            {
+              "path": "passed",
+              "minimum": 1
+            }
+          ],
+          "stdout_regex": [
+            "\"passed\": 17",
+            "\"failed\": 0"
+          ]
+        }
+      },
+      "functional_smoke": {
+        "accounts": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/send-email/run_send_email.sh",
+            "macos": "workspace/skills/send-email/run_send_email.sh",
+            "wsl": "workspace/skills/send-email/run_send_email.sh",
+            "windows": "workspace/skills/send-email/run_send_email.ps1",
+            "windows_ps1": "workspace/skills/send-email/run_send_email.ps1"
+          },
+          "args": [
+            "accounts"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "command",
+                "equals": "accounts"
+              }
+            ]
+          }
+        }
+      },
+      "live_check": {
+        "verify": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/send-email/run_send_email.sh",
+            "macos": "workspace/skills/send-email/run_send_email.sh",
+            "wsl": "workspace/skills/send-email/run_send_email.sh",
+            "windows": "workspace/skills/send-email/run_send_email.ps1",
+            "windows_ps1": "workspace/skills/send-email/run_send_email.ps1"
+          },
+          "args": [
+            "verify"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "SEND_EMAIL_SECRETS_FILE"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              },
+              {
+                "path": "command",
+                "equals": "verify"
+              },
+              {
+                "path": "authenticated",
+                "equals": true
+              }
+            ]
           }
         }
       }
@@ -646,9 +775,10 @@
           "{smoke_dir}/remote-bridge"
         ],
         "timeout_seconds": 30,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "remote-bridge"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -665,6 +795,153 @@
           "values": {
             "TELEGRAM_BOT_TOKEN": "REMOTE-BRIDGE-SMOKE-CANARY",
             "ZULIP_API_KEY": "REMOTE-BRIDGE-SMOKE-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "package_install_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "real_secrets_read",
+              "equals": false
+            },
+            {
+              "path": "command",
+              "equals": "selftest"
+            },
+            {
+              "path": "checks",
+              "contains": "arm_conflict"
+            },
+            {
+              "path": "checks",
+              "contains": "digest"
+            },
+            {
+              "path": "checks",
+              "contains": "cas"
+            },
+            {
+              "path": "checks",
+              "contains": "single_use_approval"
+            },
+            {
+              "path": "checks",
+              "contains": "inbox_once"
+            },
+            {
+              "path": "checks",
+              "contains": "parse"
+            },
+            {
+              "path": "checks",
+              "contains": "redaction"
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "show-config": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "macos": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "wsl": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "windows": "workspace/skills/remote-bridge/run_remote_bridge.ps1",
+            "windows_ps1": "workspace/skills/remote-bridge/run_remote_bridge.ps1"
+          },
+          "args": [
+            "show-config"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              },
+              {
+                "path": "command",
+                "equals": "show-config"
+              }
+            ]
+          }
+        }
+      },
+      "live_check": {
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "macos": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "wsl": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+            "windows": "workspace/skills/remote-bridge/run_remote_bridge.ps1",
+            "windows_ps1": "workspace/skills/remote-bridge/run_remote_bridge.ps1"
+          },
+          "args": [
+            "doctor",
+            "--live"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "REMOTE_BRIDGE_SECRETS_FILE"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "doctor.telegram_configured",
+                "equals": true
+              },
+              {
+                "path": "doctor.telegram_webhook",
+                "exists": true
+              },
+              {
+                "path": "doctor.telegram_webhook_error",
+                "absent": true
+              }
+            ]
           }
         }
       }
@@ -962,9 +1239,10 @@
           "{smoke_dir}/s2v"
         ],
         "timeout_seconds": 30,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "s2v"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -977,6 +1255,35 @@
         },
         "env_canaries": {
           "AAS_SLIDES_TO_VIDEO_TOKEN": "SLIDES-TO-VIDEO-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "failures",
+              "equals": []
+            },
+            {
+              "path": "passed",
+              "type": "integer"
+            },
+            {
+              "path": "total",
+              "type": "integer"
+            },
+            {
+              "path": "passed",
+              "equals_path": "total"
+            },
+            {
+              "path": "total",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -1518,9 +1825,9 @@
           "selftest"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -1533,6 +1840,214 @@
         },
         "env_canaries": {
           "AAS_AUTONOMOUS_RESEARCH_LOOP_CANARY": "AUTONOMOUS-RESEARCH-LOOP-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "run_dir_created",
+              "equals": true
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "package_install_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "provider_cli_attempted",
+              "equals": false
+            },
+            {
+              "path": "subagents_spawned",
+              "equals": false
+            },
+            {
+              "path": "validation_status",
+              "equals": "ok"
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "init": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "macos": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "wsl": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
+            "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1"
+          },
+          "args": [
+            "init",
+            "--dir",
+            "{smoke_dir}/arl",
+            "--goal",
+            "smoke goal",
+            "--success-criteria",
+            "smoke criteria"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "files": [
+              "arl/loop_state.json"
+            ]
+          }
+        },
+        "validate": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "macos": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "wsl": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
+            "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1"
+          },
+          "args": [
+            "validate",
+            "--dir",
+            "{smoke_dir}/arl"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              },
+              {
+                "path": "errors",
+                "equals": []
+              }
+            ]
+          }
+        },
+        "status": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "macos": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "wsl": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+            "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
+            "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1"
+          },
+          "args": [
+            "status",
+            "--dir",
+            "{smoke_dir}/arl"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "exists": true
+              }
+            ]
+          }
+        },
+        "force-help": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "macos": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "wsl": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "windows": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
+            "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1"
+          },
+          "args": [
+            "--help"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "^usage:"
+          }
+        },
+        "force-smoke-missing-loop": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "macos": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "wsl": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+            "windows": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
+            "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1"
+          },
+          "args": [
+            "smoke",
+            "--loop",
+            "{smoke_dir}/arl-missing",
+            "--root",
+            "{smoke_dir}",
+            "--policy-file",
+            "{smoke_dir}/force-policy.env"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 1,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": false
+              },
+              {
+                "path": "errors",
+                "contains": "loop missing"
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "force-policy.env",
+              "content": ""
+            }
+          ]
         }
       }
     },
@@ -1638,8 +2153,8 @@
     "calibre": {
       "runtime_dir": "calibre",
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Calibre workflows depend on the user's local ebook library and profile selection."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -1849,7 +2364,176 @@
           "newline": "lf",
           "mode": "0755"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/calibre/run_cal.sh",
+          "macos": "workspace/skills/calibre/run_cal.sh",
+          "wsl": "workspace/skills/calibre/run_cal.sh"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_regex": [
+            "\"status\": \"(ok|issues_found)\"",
+            "\"checks\"",
+            "Skipped \\(no credentials\\)"
+          ]
+        }
+      },
+      "functional_smoke": {
+        "help": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/calibre/run_cal.sh",
+            "macos": "workspace/skills/calibre/run_cal.sh",
+            "wsl": "workspace/skills/calibre/run_cal.sh"
+          },
+          "args": [
+            "--help"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "(?i)usage"
+          }
+        },
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/calibre/run_cal.sh",
+            "macos": "workspace/skills/calibre/run_cal.sh",
+            "wsl": "workspace/skills/calibre/run_cal.sh"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "PyPDF2",
+            "requests",
+            "ebooklib",
+            "googleapiclient",
+            "google.oauth2"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "checks",
+                "contains": {
+                  "name": "ebooklib",
+                  "ok": true,
+                  "message": "ebooklib available"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "live_check": {
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/calibre/run_cal.sh",
+            "macos": "workspace/skills/calibre/run_cal.sh",
+            "wsl": "workspace/skills/calibre/run_cal.sh"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_CALIBRE_SECRETS_FILE"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "checks[0].name",
+                "equals": "gdrive_credentials"
+              },
+              {
+                "path": "checks[0].ok",
+                "equals": true
+              },
+              {
+                "path": "checks[1].name",
+                "equals": "gdrive_folder"
+              },
+              {
+                "path": "checks[1].ok",
+                "equals": true
+              },
+              {
+                "path": "checks[1].message",
+                "regex": "Drive folder accessible"
+              }
+            ]
+          }
+        },
+        "list-shelves": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/calibre/run_cal.sh",
+            "macos": "workspace/skills/calibre/run_cal.sh",
+            "wsl": "workspace/skills/calibre/run_cal.sh"
+          },
+          "args": [
+            "list-shelves"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_CALIBRE_SECRETS_FILE"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "tags",
+                "type": "array"
+              },
+              {
+                "path": "series",
+                "type": "array"
+              }
+            ]
+          }
+        }
+      }
     },
     "deep-research-workflow": {
       "runtime_dir": "deep-research-workflow",
@@ -1960,9 +2644,9 @@
           "selftest"
         ],
         "timeout_seconds": 30,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -1973,6 +2657,175 @@
         },
         "env_canaries": {
           "AAS_DEEP_RESEARCH_API_KEY": "DEEP-RESEARCH-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "schema_version",
+              "equals": "deep-research.selftest.v1"
+            },
+            {
+              "path": "positive_count",
+              "equals": 4
+            },
+            {
+              "path": "negative_count",
+              "equals": 6
+            },
+            {
+              "path": "scenarios[*].name",
+              "set_equals": [
+                "v2_ready_success",
+                "v2_ready_failure",
+                "v2_ready_with_caveats_success",
+                "v2_ready_with_caveats_failure",
+                "agd_evidence_success",
+                "agd_evidence_failure",
+                "weak_computation_failure",
+                "formal_promotion_success",
+                "formal_promotion_failure",
+                "artifact_ref_path_safety"
+              ]
+            },
+            {
+              "path": "scenarios[*].passed",
+              "equals": true
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "init": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "macos": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "wsl": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "windows_ps1": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1",
+            "windows": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1"
+          },
+          "args": [
+            "init",
+            "--dir",
+            "{smoke_dir}",
+            "--subdir",
+            "deep",
+            "--structured",
+            "--schema-version",
+            "2"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "files": [
+              {
+                "path": "deep/sources.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/analysis.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/report.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/sources.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/claims.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/guards.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/delivery.json",
+                "type": "file"
+              },
+              {
+                "path": "deep/delegation",
+                "type": "directory"
+              }
+            ]
+          }
+        },
+        "validate": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "macos": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "wsl": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+            "windows_ps1": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1",
+            "windows": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1"
+          },
+          "args": [
+            "validate",
+            "--dir",
+            "{smoke_dir}/deep",
+            "--schema-version",
+            "2"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              }
+            ],
+            "files": [
+              {
+                "path": "deep/sources.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/analysis.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/report.md",
+                "type": "file"
+              },
+              {
+                "path": "deep/sources.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/claims.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/guards.jsonl",
+                "type": "file"
+              },
+              {
+                "path": "deep/delivery.json",
+                "type": "file"
+              },
+              {
+                "path": "deep/delegation",
+                "type": "directory"
+              }
+            ]
+          }
         }
       }
     },
@@ -2016,8 +2869,8 @@
     "docling": {
       "runtime_dir": "docling",
       "smoke_coverage": {
-        "status": "doctor-only",
-        "reason": "Docling conversion and OCR need local parser dependencies and documents; use the doctor path for environment checks."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -2169,7 +3022,144 @@
           "newline": "lf",
           "mode": "0755"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/docling/run_docling.sh",
+          "macos": "workspace/skills/docling/run_docling.sh",
+          "wsl": "workspace/skills/docling/run_docling.sh",
+          "windows": "workspace/skills/docling/run_docling.ps1",
+          "windows_ps1": "workspace/skills/docling/run_docling.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "local_only",
+              "equals": true
+            },
+            {
+              "path": "docling_import",
+              "equals": false
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "help": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/docling/run_docling.sh",
+            "macos": "workspace/skills/docling/run_docling.sh",
+            "wsl": "workspace/skills/docling/run_docling.sh",
+            "windows": "workspace/skills/docling/run_docling.ps1",
+            "windows_ps1": "workspace/skills/docling/run_docling.ps1"
+          },
+          "args": [
+            "--help"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "^usage: run_docling\\.sh <doctor\\|convert\\|extract\\|chunk\\|quality\\|ocrspace-smoke> \\[args\\.\\.\\.\\]$"
+          }
+        },
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/docling/run_docling.sh",
+            "macos": "workspace/skills/docling/run_docling.sh",
+            "wsl": "workspace/skills/docling/run_docling.sh",
+            "windows": "workspace/skills/docling/run_docling.ps1",
+            "windows_ps1": "workspace/skills/docling/run_docling.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 90,
+          "requires_python_modules": [
+            "docling",
+            "pypdfium2"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "docling_import",
+                "equals": true
+              }
+            ]
+          }
+        },
+        "convert-html": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/docling/run_docling.sh",
+            "macos": "workspace/skills/docling/run_docling.sh",
+            "wsl": "workspace/skills/docling/run_docling.sh",
+            "windows": "workspace/skills/docling/run_docling.ps1",
+            "windows_ps1": "workspace/skills/docling/run_docling.ps1"
+          },
+          "args": [
+            "convert",
+            "--source",
+            "{smoke_dir}/docling/fixture.html",
+            "--to",
+            "md",
+            "--output",
+            "{smoke_dir}/docling/out.md"
+          ],
+          "timeout_seconds": 300,
+          "requires_python_modules": [
+            "docling",
+            "pypdfium2"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "files": [
+              {
+                "path": "docling/out.md",
+                "regex": "Reconfiguration"
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "docling/fixture.html",
+              "content": "<html><body><h1>Reconfiguration</h1><p>Token sliding on graphs.</p></body></html>"
+            }
+          ]
+        }
+      }
     },
     "formal-skeleton-helper": {
       "runtime_dir": "formal-skeleton-helper",
@@ -2218,9 +3208,10 @@
           "{smoke_dir}/formal"
         ],
         "timeout_seconds": 15,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "formal"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2231,6 +3222,21 @@
         },
         "env_canaries": {
           "AAS_FORMAL_SKELETON_TOKEN": "FORMAL-SKELETON-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            }
+          ],
+          "files": [
+            {
+              "path": "formal/unnamed_claim.lean",
+              "type": "file"
+            }
+          ]
         }
       }
     },
@@ -2291,9 +3297,9 @@
           "smoke"
         ],
         "timeout_seconds": 15,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2307,6 +3313,80 @@
           "format": "env",
           "values": {
             "AXLE_API_KEY": "AXLE-SMOKE-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "snippet_contains_placeholder",
+              "equals": true
+            },
+            {
+              "path": "snippet_package_pinned",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "doctor": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+            "macos": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+            "wsl": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+            "windows": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
+            "windows_ps1": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "helper_python.status",
+                "equals": "available"
+              }
+            ]
           }
         }
       }
@@ -2368,9 +3448,9 @@
           "smoke"
         ],
         "timeout_seconds": 15,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2381,6 +3461,71 @@
         },
         "env_canaries": {
           "AAS_OPENGAUSS_SMOKE_TOKEN": "OPENGAUSS-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "snippet_contains_placeholder",
+              "equals": true
+            },
+            {
+              "path": "snippet_has_install_pointer",
+              "equals": true
+            },
+            {
+              "path": "native_windows_refused",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "gauss_launched",
+              "equals": false
+            },
+            {
+              "path": "evidence_policy.opengauss_run",
+              "exists": true
+            },
+            {
+              "path": "evidence_policy.formal_check",
+              "exists": true
+            }
+          ]
         }
       }
     },
@@ -2463,9 +3608,9 @@
           "smoke"
         ],
         "timeout_seconds": 15,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2476,6 +3621,143 @@
         },
         "env_canaries": {
           "LEANEXPLORE_API_KEY": "LEANEXPLORE-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "api_snippet_contains_placeholder",
+              "equals": true
+            },
+            {
+              "path": "local_snippet_omits_api_key",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "downloads_attempted",
+              "equals": false
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "doctor": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "macos": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "wsl": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+            "windows_ps1": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "auth_status",
+                "exists": true
+              }
+            ]
+          }
+        },
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "macos": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "wsl": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+            "windows_ps1": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "lean_explore"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "module_status.status",
+                "equals": "available"
+              },
+              {
+                "path": "module_status.module",
+                "equals": "lean_explore"
+              }
+            ]
+          }
+        },
+        "serve-no-key": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "macos": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "wsl": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+            "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+            "windows_ps1": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1"
+          },
+          "args": [
+            "serve",
+            "--backend",
+            "api"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "lean_explore"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 78,
+            "stderr_regex": "LEANEXPLORE_API_KEY is required for the api backend"
+          }
         }
       }
     },
@@ -2536,9 +3818,9 @@
           "doctor"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2549,6 +3831,27 @@
         },
         "env_canaries": {
           "AAS_LEAN_INTAKE_TOKEN": "LEAN-FORMALIZATION-INTAKE-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "tool_status.lean.status",
+              "regex": "^(available|tool_unavailable)$"
+            }
+          ]
         }
       }
     },
@@ -2609,9 +3912,9 @@
           "doctor"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2622,6 +3925,27 @@
         },
         "env_canaries": {
           "AAS_LEAN_GATE_TOKEN": "LEAN-STRICT-GATE-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "tool_status.lean.status",
+              "regex": "^(available|tool_unavailable)$"
+            }
+          ]
         }
       }
     },
@@ -2672,9 +3996,10 @@
           "{smoke_dir}/resources.json"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "resources.json"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2685,6 +4010,24 @@
         },
         "env_canaries": {
           "AAS_RESOURCES_TOKEN": "GET-AVAILABLE-RESOURCES-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "files": [
+            {
+              "path": "resources.json",
+              "json": [
+                {
+                  "path": "os",
+                  "exists": true
+                },
+                {
+                  "path": "cpu",
+                  "exists": true
+                }
+              ]
+            }
+          ]
         }
       }
     },
@@ -2817,9 +4160,9 @@
         },
         "args": [],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2830,6 +4173,19 @@
         },
         "env_canaries": {
           "AAS_GRAPH_VERIFIER_TOKEN": "GRAPH-VERIFIER-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "matches_expected",
+              "equals": true
+            }
+          ]
         }
       }
     },
@@ -2890,9 +4246,9 @@
           "smoke"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -2907,6 +4263,154 @@
           "values": {
             "SEMANTIC_SCHOLAR_API_KEY": "SUBMISSION-VENUE-SELECTOR-CANARY",
             "UNPAYWALL_EMAIL": "SUBMISSION-VENUE-SELECTOR-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "package_install_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "real_secrets_read",
+              "equals": false
+            },
+            {
+              "path": "downloads_attempted",
+              "equals": false
+            },
+            {
+              "path": "mutations_attempted",
+              "equals": false
+            },
+            {
+              "path": "schemas",
+              "contains": "delivery.json"
+            }
+          ],
+          "stdout_regex": "\"schemas\"[\\s\\S]*delivery\\.json"
+        }
+      },
+      "functional_smoke": {
+        "init": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "macos": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "wsl": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
+            "windows_ps1": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1"
+          },
+          "args": [
+            "init",
+            "--dir",
+            "{smoke_dir}/svs",
+            "--draft",
+            "{smoke_dir}/svs/draft.md",
+            "--offline",
+            "--unsafe-workspace-ok"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "files": [
+              "svs/draft.json",
+              "svs/selection_plan.json"
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "svs/draft.md",
+              "content": "# Draft\n\nWe study a reconfiguration problem on graphs.\n"
+            }
+          ]
+        },
+        "validate": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "macos": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "wsl": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
+            "windows_ps1": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1"
+          },
+          "args": [
+            "validate",
+            "--dir",
+            "{smoke_dir}/svs"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 1,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "not-ready"
+              }
+            ]
+          }
+        },
+        "providers": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "macos": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "wsl": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+            "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
+            "windows_ps1": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1"
+          },
+          "args": [
+            "providers",
+            "--dir",
+            "{smoke_dir}/svs",
+            "--check"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              }
+            ]
           }
         }
       }
@@ -2997,9 +4501,9 @@
           "smoke"
         ],
         "timeout_seconds": 60,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -3012,6 +4516,47 @@
         },
         "env_canaries": {
           "AAS_VENUE_RANKING_TOKEN": "VENUE-RANKING-EVIDENCE-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "real_secrets_read",
+              "equals": false
+            },
+            {
+              "path": "ambiguous_fixture_matches",
+              "equals": 2
+            },
+            {
+              "path": "validated_sources",
+              "type": "integer"
+            },
+            {
+              "path": "validated_sources",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -3072,9 +4617,9 @@
           "smoke"
         ],
         "timeout_seconds": 15,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -3085,14 +4630,63 @@
         },
         "env_canaries": {
           "AAS_SELF_IMPROVING_TOKEN": "SELF-IMPROVING-AGENT-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "windows_error_patterns",
+              "equals": true
+            },
+            {
+              "path": "windows_safety_patterns",
+              "equals": true
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "package_install_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "integration_plan_fields",
+              "min_len": 1
+            }
+          ]
         }
       }
     },
     "modal-research-compute": {
       "runtime_dir": "modal-research-compute",
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Modal workflows require explicit external compute credentials and are not safe for generic offline smoke."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -3360,7 +4954,133 @@
           "newline": "lf",
           "mode": "0644"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+          "macos": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+          "wsl": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+          "windows": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1",
+          "windows_ps1": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home",
+          "compute"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "modal_sdk_available",
+              "equals": false
+            },
+            {
+              "path": "modal_ready",
+              "exists": true
+            }
+          ]
+        },
+        "fixtures": [
+          {
+            "to": "compute/config/research-compute.toml",
+            "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+          }
+        ],
+        "env": {
+          "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+        }
+      },
+      "functional_smoke": {
+        "doctor-no-config": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "macos": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "wsl": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "windows": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1",
+            "windows_ps1": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 2,
+            "stderr_regex": "AAS_AUTOLOOP_COMPUTE_WORKSPACE does not name a broker data workspace"
+          },
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/empty"
+          },
+          "fixtures": [
+            {
+              "to": "empty/.keep",
+              "content": ""
+            }
+          ]
+        },
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "macos": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "wsl": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+            "windows": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1",
+            "windows_ps1": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "modal"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "modal_sdk_available",
+                "equals": true
+              },
+              {
+                "path": "modal_config_exists",
+                "equals": false
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "compute/config/research-compute.toml",
+              "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+            }
+          ],
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+          }
+        }
+      }
     },
     "hetzner-research-compute": {
       "runtime_dir": "hetzner-research-compute",
@@ -3368,8 +5088,8 @@
         "modal-research-compute"
       ],
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -3501,7 +5221,191 @@
           "newline": "lf",
           "mode": "0644"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+          "macos": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+          "wsl": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+          "windows": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1",
+          "windows_ps1": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1"
+        },
+        "args": [
+          "bootstrap"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "hcloud_cli_available",
+              "exists": true
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "doctor": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "macos": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "wsl": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "windows": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1",
+            "windows_ps1": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "Phase A performs no network calls"
+          },
+          "fixtures": [
+            {
+              "to": "compute/config/research-compute.toml",
+              "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+            }
+          ],
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+          }
+        },
+        "reaper-dry": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "macos": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "wsl": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "windows": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.ps1",
+            "windows_ps1": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.ps1"
+          },
+          "args": [
+            "reap",
+            "--dry-run"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 1,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": false
+              },
+              {
+                "path": "error",
+                "regex": "HCLOUD_TOKEN is not set; refusing to run a Hetzner command"
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "compute/config/research-compute.toml",
+              "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+            }
+          ],
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+          }
+        }
+      },
+      "live_check": {
+        "reaper-dry": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "macos": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "wsl": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+            "windows": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.ps1",
+            "windows_ps1": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.ps1"
+          },
+          "args": [
+            "reap",
+            "--dry-run"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_COMPUTE_SECRETS_FILE"
+            ],
+            "config_files": [
+              "~/.openclaw/workspace/config/research-compute.toml"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              }
+            ]
+          }
+        },
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "macos": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "wsl": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+            "windows": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1",
+            "windows_ps1": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_COMPUTE_SECRETS_FILE"
+            ],
+            "config_files": [
+              "~/.openclaw/workspace/config/research-compute.toml"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "reaper_lease.present",
+                "equals": true
+              },
+              {
+                "path": "reaper_lease.fresh",
+                "equals": true
+              }
+            ]
+          }
+        }
+      }
     },
     "kaggle-research-compute": {
       "runtime_dir": "kaggle-research-compute",
@@ -3509,8 +5413,8 @@
         "modal-research-compute"
       ],
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked)."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -3583,13 +5487,189 @@
           "newline": "lf",
           "mode": "0644"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+          "macos": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+          "wsl": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+          "windows": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+          "windows_ps1": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home",
+          "compute"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_regex": "network_probe.*no network calls"
+        },
+        "fixtures": [
+          {
+            "to": "compute/config/research-compute.toml",
+            "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+          }
+        ],
+        "env": {
+          "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+        }
+      },
+      "functional_smoke": {
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "macos": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "wsl": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "windows": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+            "windows_ps1": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "kagglehub"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "kagglehub_available",
+                "equals": true
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "compute/config/research-compute.toml",
+              "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+            }
+          ],
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+          }
+        },
+        "bootstrap-offline": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "macos": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "wsl": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "windows": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+            "windows_ps1": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1"
+          },
+          "args": [
+            "bootstrap"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "kagglehub"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "kaggle_cli_available",
+                "equals": true
+              },
+              {
+                "path": "kaggle_cli_version.ok",
+                "equals": true
+              },
+              {
+                "path": "kaggle_cli_version.exit_code",
+                "equals": 0
+              },
+              {
+                "path": "kagglehub_available",
+                "equals": true
+              },
+              {
+                "path": "api_token_present",
+                "equals": false
+              },
+              {
+                "path": "account.reason",
+                "equals": "no_kaggle_api_token"
+              }
+            ]
+          },
+          "fixtures": [
+            {
+              "to": "compute/config/research-compute.toml",
+              "content": "install_id = \"example-install\"\nplatform = \"linux\"\nbroker_state_root = \"state/research-compute\"\ndefault_materialize_root = \".research-compute\"\nmodal_profile = \"default\"\nmodal_environment = \"main\"\ndeployment_alias = \"research-compute-codex\"\nallowed_gpu_families = [\"T4\", \"L4\", \"A10\", \"A100\", \"H100\"]\nper_job_cost_cap_usd = 5.0\ndefault_archive_backend = \"local\"\n\n# Automatic backend order. The planner takes the first feasible, within-budget\n# backend. A custom order must keep \"local\" exactly once and first; the supported\n# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend\n# in a job's policy (\"local\"|\"kaggle\"|\"modal\"|\"hetzner\"|\"gha\") overrides the order.\n# `doctor` warns on deviations and identifies invalid orders; automatic planning\n# rejects an invalid order rather than falling open to an unlisted lane.\n# Kaggle sits right behind local: its CPU compute is free and does NOT consume the\n# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the\n# paid/quota'd lanes (Modal, Hetzner, GHA).\nrouting_order = [\"local\", \"kaggle\", \"modal\", \"hetzner\", \"gha\"]\n\n# Per-job user allowlist (strict): set on the job, not here.\n#   policy.backends = [\"kaggle\", \"hetzner\"]   # only these lanes; no silent local/modal fallthrough\n#   policy.backend  = \"hetzner\"               # single hard pin (mutually exclusive with backends)\n# When the user names specific compute resources, agents MUST encode that allowlist and\n# must not launch ad-hoc local heavy work while any listed lane is still available.\n# Router-wide GPU policy (plan \u00a75.1). A job is GPU-requested when the estimate\n# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)\n# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit\n# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks\n# routing_order for the first GPU-capable + available lane: local (only if the box\n# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid\n# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub\n# Actions GPU is opt-in ([gha].gpu_enabled, off).\n# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.\nmodal_monthly_budget_usd = 0.0\n\n[functions]\nmodal_cpu = \"run_cpu_job\"\nmodal_highmem_cpu = \"run_highmem_job\"\nmodal_gpu = \"run_gpu_job\"\nmodal_sandbox_experimental = \"run_sandbox_job\"\n\n[defaults]\nauto_submit = true\nwait_poll_seconds = 5\n\n# ---------------------------------------------------------------------------\n# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict\n# Actions on GitHub-hosted runners to \"the production, testing, deployment, or\n# publication of the software project associated with the repository,\" and forbid\n# disproportionate / serverless burden. In this broker, Actions compute runs ONLY\n# inside a private research repo, executes that repo's own committed experiment\n# code (parameters are DATA, never executed), as that project's own validation,\n# budget-gated and kept proportionate, and is the LAST automatic backend (after\n# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:\n# GitHub Terms for Additional Products and Features -> GitHub Actions.\n# ---------------------------------------------------------------------------\n[gha]\nenabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes\nincluded_minutes = 0        # 0 = auto-detect from the account plan\nmax_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes\n                            # used this cycle + the job worst-case stay <= this fraction of\n                            # included_minutes -- reserving 40% for the user's other workflows\ngpu_enabled = false         # GPU on GitHub Actions requires PAID \"larger runners\"\n                            # (Team/Enterprise; not free minutes, not public repos), so it is\n                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable\n                            # for GPU-requested jobs (still under max_usage_fraction).\n\n# One block per private research repo that carries an in-repo experiment.yml.\n# The broker sends only parameters (data); it never sends code.\n# [gha.repos.my_experiments]\n# repo = \"owner/PrivateResearchRepo\"   # MUST be private\n# ref = \"main\"\n# workflow = \"experiment.yml\"\n# runtime = \"python\"                   # python | sage | cpp\n# experiment = \"my_sweep\"\n# runner_os = \"linux\"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x\n# timeout_minutes = 30                  # admission also checks core_hours / requested width\n# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners\n# max_memory_mb = 7168                  # conservative standard private Linux runner envelope\n# monthly_minute_budget = <minutes>   # optional per-repo cap\n\n# ---------------------------------------------------------------------------\n# Local-lane self-preservation veto (plan \u00a75). Before choosing the local lane the\n# planner projects the full-run load and pins a safe worker count; a runtime\n# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All\n# thresholds are fractions of the logical core count N. Conservative defaults;\n# calibrate to this host's measured auto-restart point.\n# ---------------------------------------------------------------------------\n[local]\ndanger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)\nsession_headroom_frac = 0.15  # reserve headroom for the interactive session itself\nsoft = 0.4                    # soft breach (fraction of N): shed a worker\nhard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back\nlocal_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads\n\n# ---------------------------------------------------------------------------\n# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal\n# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->\n# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE\n# stops it -- so teardown must run on every terminal path. GPU work is out of\n# scope in v1, so the router skips Hetzner and continues to the next GPU-capable\n# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner\n# project) is set and `doctor` passes.\n# ---------------------------------------------------------------------------\n[hetzner]\nenabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes\nlocation = \"nbg1\"             # default provisioning location; preflight availability-checks the\n                             # live datacenter list and picks an orderable location from the allow-list\nallowed_locations = [\"nbg1\", \"hel1\", \"sin\"]  # current orderable regions (fsn1 has no orderable types)\nimage = \"ubuntu-24.04\"\nbundle_root = \"/absolute/path/to/operator-approved/hetzner-bundles\" # required upload root;\n                                                                 # every job is an immediate child\nproject_identity = \"replace-with-stable-dedicated-project-identity\" # exact non-secret operator identity;\n                                                                    # binds labels, leases, and broad deletion\nreaper_lease_file = \"~/.local/state/ai-agents-skills/hetzner-reaper-lease.json\" # owner-private 0600 lease under an owner-controlled parent chain\n# must equal the --scheduler-id your scheduler passes to attest\n# (crontab recipe: cron:user:$(id -un); systemd --user recipe: hetzner-reaper.timer)\nreaper_scheduler_id = \"cron:user:<your login>\"\nreaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed\nmonthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only\nmax_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)\nmax_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap\nmax_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4\nmax_concurrent_servers = 2    # the Hetzner project server-limit enforces this too\ngpu_server_types = []         # empty in v1: GPU work skips Hetzner\n\n# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current\n# orderable x86 generation; override per account). The router picks the cheapest adequate\n# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63\n# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.\n[hetzner.server_types.cpx22]\nvcpu = 2\nram_gb = 4\narch = \"x86\"\neur_per_hour = 0.0180\n\n[hetzner.server_types.cpx62]\nvcpu = 16\nram_gb = 32\narch = \"x86\"\neur_per_hour = 0.1550\n\n[hetzner.server_types.ccx63]\nvcpu = 48\nram_gb = 192\narch = \"x86\"\neur_per_hour = 1.3678\n\n# ---------------------------------------------------------------------------\n# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload\n# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,\n# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.\n# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are\n# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has\n# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap\n# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there\n# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple\n# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the\n# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or\n# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a\n# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs\n# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`\n# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle\n# terms permit this use before the first live run (the build makes no live Kaggle calls).\n# ---------------------------------------------------------------------------\n[kaggle]\nenabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes\nweekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h\n                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.\nmax_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)\nconcurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)\nsession_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)\nkernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate\nkernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate\n\n# ---------------------------------------------------------------------------\n# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the\n# per-lane probes/drivers: it splits ONE large divisible job (M independent,\n# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free\n# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to\n# minimise makespan (time until every chunk is back) while minimising cost. Small\n# jobs keep using the single-lane router; fan-out is opt-in and only for large\n# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills\n# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,\n# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *\n# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free\n# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);\n# job policy.speed_cost_weight overrides this default. The per-core-hour rates,\n# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS\n# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions\n# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's\n# self-preservation load-cap) are enforced as per-lane chunk ceilings that a\n# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its\n# per-core-hour cost enters the model; Kaggle is the free lane.\n# ---------------------------------------------------------------------------\n[fanout]\nenabled = false              # off by default; opt-in for large divisible batch jobs\nspeed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable\nmin_chunks = 8               # below this many chunks, use the single-lane router instead\nusd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term\nlocal_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective\nmodal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)\nmodal_slots = 16             # Modal parallel width used for makespan estimation\ngha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation\nlocal_startup_seconds = 5.0       # fixed per-lane startup latency before the first result\nkaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency\nmodal_startup_seconds = 45.0\nhetzner_startup_seconds = 180.0   # provision + boot latency\ngha_startup_seconds = 60.0        # Actions runner queue latency\n"
+            }
+          ],
+          "env": {
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+          }
+        }
+      },
+      "live_check": {
+        "bootstrap": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "macos": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "wsl": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+            "windows": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+            "windows_ps1": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1"
+          },
+          "args": [
+            "bootstrap"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "config_files": [
+              "~/.kaggle/access_token"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "account.usable",
+                "equals": true
+              },
+              {
+                "path": "account.username",
+                "regex": ".+"
+              }
+            ]
+          }
+        }
+      }
     },
     "research-digest-wrapper": {
       "runtime_dir": "research-digest-wrapper",
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Digest runs depend on configured topics and external feeds; no generic offline smoke is declared."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "python": {
         "requirements": [
@@ -3640,7 +5720,84 @@
           "newline": "lf",
           "mode": "0755"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+          "macos": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+          "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh"
+        },
+        "args": [
+          "list-topics"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "topics",
+              "exists": true
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "doctor-venv": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+            "macos": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+            "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "feedparser",
+            "requests"
+          ],
+          "safety": {
+            "network": "loopback"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "dependencies.feedparser.ok",
+                "equals": true
+              },
+              {
+                "path": "dependencies.requests.ok",
+                "equals": true
+              },
+              {
+                "path": "ollama_reachable",
+                "exists": true
+              }
+            ]
+          }
+        }
+      }
     },
     "rss-news-digest": {
       "runtime_dir": "rss-news-digest",
@@ -4182,8 +6339,8 @@
     "vnthuquan": {
       "runtime_dir": "vnthuquan",
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Vietnam Thu Quan discovery/download flows are network and library-profile gated."
+        "status": "offline-smoke",
+        "reason": "Declared offline contract runs with synthetic HOME; functional and live checks are separate."
       },
       "files": [
         {
@@ -4221,13 +6378,177 @@
           "newline": "lf",
           "mode": "0644"
         }
-      ]
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+          "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+          "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+          "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+          "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+        },
+        "args": [
+          "--help"
+        ],
+        "timeout_seconds": 60,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_regex": "^Usage:"
+        }
+      },
+      "functional_smoke": {
+        "help": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+            "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+          },
+          "args": [
+            "--help"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "^Usage:"
+          }
+        },
+        "diagnose": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+            "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+          },
+          "args": [
+            "diagnose",
+            "--json"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "alternatives": [
+              {
+                "exit_code": 0,
+                "stdout_regex": "\"config_scope\""
+              },
+              {
+                "exit_code": 127,
+                "stdout_regex": "\"error_code\": \"missing_executable\""
+              }
+            ]
+          }
+        }
+      },
+      "live_check": {
+        "mirrors": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+            "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+          },
+          "args": [
+            "mirrors",
+            "check"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              },
+              {
+                "path": "command",
+                "equals": "mirrors"
+              },
+              {
+                "path": "subcommand",
+                "equals": "check"
+              },
+              {
+                "path": "mirrors",
+                "type": "array"
+              }
+            ]
+          }
+        },
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+            "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+          },
+          "args": [
+            "doctor"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              },
+              {
+                "path": "command",
+                "equals": "doctor"
+              },
+              {
+                "path": "live_site_ready",
+                "equals": true
+              }
+            ]
+          }
+        }
+      }
     },
     "zotero": {
       "runtime_dir": "zotero",
       "smoke_coverage": {
-        "status": "manual-native",
-        "reason": "Zotero workflows depend on the user's local library, profile, and optional cloud credentials."
+        "status": "venv-smoke",
+        "reason": "Declared functional contracts require the admitted skill Python venv."
       },
       "python": {
         "requirements": [
@@ -4588,7 +6909,146 @@
           "newline": "lf",
           "mode": "0644"
         }
-      ]
+      ],
+      "functional_smoke": {
+        "help": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/zotero/run_zot.sh",
+            "macos": "workspace/skills/zotero/run_zot.sh",
+            "wsl": "workspace/skills/zotero/run_zot.sh"
+          },
+          "args": [
+            "--help"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "pyzotero",
+            "requests",
+            "PyPDF2",
+            "pdfplumber",
+            "googleapiclient",
+            "google.oauth2"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_regex": "^usage:"
+          }
+        },
+        "doctor-no-config": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/zotero/run_zot.sh",
+            "macos": "workspace/skills/zotero/run_zot.sh",
+            "wsl": "workspace/skills/zotero/run_zot.sh"
+          },
+          "args": [
+            "doctor",
+            "--json"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [
+            "pyzotero",
+            "requests",
+            "PyPDF2",
+            "pdfplumber",
+            "googleapiclient",
+            "google.oauth2"
+          ],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 1,
+            "stdout_regex": "\"code\": \"CONFIG_MISSING\""
+          }
+        }
+      },
+      "live_check": {
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/zotero/run_zot.sh",
+            "macos": "workspace/skills/zotero/run_zot.sh",
+            "wsl": "workspace/skills/zotero/run_zot.sh"
+          },
+          "args": [
+            "doctor",
+            "--json"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_ZOTERO_SECRETS_FILE"
+            ],
+            "config_files": [
+              "{workspace}/skills/zotero/config.json"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              },
+              {
+                "path": "checks[*].ok",
+                "equals": true
+              },
+              {
+                "path": "checks",
+                "min_len": 1
+              }
+            ]
+          }
+        },
+        "list-collections": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/zotero/run_zot.sh",
+            "macos": "workspace/skills/zotero/run_zot.sh",
+            "wsl": "workspace/skills/zotero/run_zot.sh"
+          },
+          "args": [
+            "list-collections",
+            "--json"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_ZOTERO_SECRETS_FILE"
+            ],
+            "config_files": [
+              "{workspace}/skills/zotero/config.json"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              },
+              {
+                "path": "action",
+                "equals": "list_collections"
+              },
+              {
+                "path": "collections",
+                "exists": true
+              }
+            ]
+          }
+        }
+      }
     },
     "url-to-screenshot-runtime": {
       "runtime_dir": "url-to-screenshot-runtime",
@@ -4948,9 +7408,10 @@
           "{smoke_dir}/u2s"
         ],
         "timeout_seconds": 60,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home",
+          "u2s"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -4963,6 +7424,67 @@
         },
         "env_canaries": {
           "AAS_URL_TO_SCREENSHOT_SMOKE_TOKEN": "URL-TO-SCREENSHOT-SMOKE-CANARY"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "package_install_attempted",
+              "equals": false
+            },
+            {
+              "path": "server_started",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "browser_launched",
+              "equals": false
+            },
+            {
+              "path": "failures",
+              "equals": []
+            },
+            {
+              "path": "passed",
+              "type": "integer"
+            },
+            {
+              "path": "total",
+              "type": "integer"
+            },
+            {
+              "path": "passed",
+              "equals_path": "total"
+            },
+            {
+              "path": "total",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -5023,9 +7545,9 @@
           "doctor"
         ],
         "timeout_seconds": 20,
-        "writes": {
-          "workspace_scratch": true
-        },
+        "writes": [
+          "home"
+        ],
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -5039,6 +7561,94 @@
           "format": "env",
           "values": {
             "ZENODO_TOKEN": "LEAN-RESEARCH-LIBRARY-SMOKE-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "no_auto_install",
+              "equals": true
+            },
+            {
+              "path": "installs_attempted",
+              "equals": false
+            },
+            {
+              "path": "tool_status.lean.status",
+              "regex": "^(available|tool_unavailable)$"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "library_configured",
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "functional_smoke": {
+        "status": {
+          "schema": "runtime-functional-smoke.v1",
+          "command": {
+            "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
+            "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
+          },
+          "args": [
+            "status"
+          ],
+          "timeout_seconds": 60,
+          "requires_python_modules": [],
+          "safety": {
+            "network": "forbidden"
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "not-configured"
+              }
+            ]
+          }
+        }
+      },
+      "live_check": {
+        "ecosystem": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+            "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
+            "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
+          },
+          "args": [
+            "doctor",
+            "--ecosystem"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ecosystem.latest_stable_mathlib",
+                "regex": "^v?\\d+"
+              }
+            ]
           }
         }
       }

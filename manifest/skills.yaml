@@ -460,7 +460,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "venv-smoke"
       ]
     },
     "calibre": {
@@ -498,7 +499,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "getscipapers-requester": {
@@ -686,7 +688,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "get-available-resources": {
@@ -1039,7 +1042,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "rss-news-digest": {
@@ -1288,7 +1292,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "hetzner-research-compute": {
@@ -1319,7 +1324,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "kaggle-research-compute": {
@@ -1352,7 +1358,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "paper-review": {
@@ -1442,7 +1449,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "self-improving-agent": {
