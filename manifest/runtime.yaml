@@ -2397,6 +2397,13 @@
             "\"checks\"",
             "Skipped \\(no credentials\\)"
           ]
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_CALIBRE_SECRETS_FILE",
+          "format": "json",
+          "values": {
+            "CALIBRE_GDRIVE_FOLDER_ID": "CALIBRE-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -3062,6 +3069,13 @@
               "equals": false
             }
           ]
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "OCR_SPACE_API_KEY": "DOCLING-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -4995,11 +5009,23 @@
           "stdout_json": [
             {
               "path": "modal_sdk_available",
-              "equals": false
+              "equals": true
             },
             {
               "path": "modal_ready",
               "exists": true
+            },
+            {
+              "path": "modal_config_exists",
+              "equals": false
+            },
+            {
+              "path": "modal_tokens_in_env",
+              "equals": false
+            },
+            {
+              "path": "modal_ready",
+              "equals": false
             }
           ]
         },
@@ -5011,6 +5037,13 @@
         ],
         "env": {
           "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_COMPUTE_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "HCLOUD_SSH_KEYS": "MODAL-RESEARCH-COMPUTE-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -5264,6 +5297,13 @@
               "exists": true
             }
           ]
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_COMPUTE_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "HCLOUD_SSH_KEYS": "HETZNER-RESEARCH-COMPUTE-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -5535,6 +5575,13 @@
         ],
         "env": {
           "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute"
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_COMPUTE_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "HCLOUD_SSH_KEYS": "KAGGLE-RESEARCH-COMPUTE-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -5765,6 +5812,13 @@
               "exists": true
             }
           ]
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "OPENCLAW_S2_API_KEY": "RESEARCH-DIGEST-WRAPPER-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
@@ -6416,6 +6470,13 @@
         "expect": {
           "exit_code": 0,
           "stdout_regex": "^Usage:"
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_CALIBRE_SECRETS_FILE",
+          "format": "json",
+          "values": {
+            "CALIBRE_GDRIVE_FOLDER_ID": "VNTHUQUAN-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {

@@ -20,6 +20,7 @@ from installer.ai_agents_skills.manifest import load_manifests  # noqa: E402
 # here represents the orchestrator, so direct delivery would violate that rule.
 UNREACHABLE_BY_DESIGN = {
     "autonomous-research-loop-runtime": "the ARL orchestrator is credential-blind behind its broker",
+    "vnthuquan": "vnthuquan projects no credential authority; the Calibre pointer and canary are stripped before the command",
 }
 
 
