@@ -18,8 +18,8 @@ agent from leaking a token or leaving a paid server running.
   are immediate children of this root; agent-selected paths outside it are never uploadable.
 - `[hetzner].project_identity`, absolute `reaper_lease_file`, exact `reaper_scheduler_id`,
   and a lease lifetime no greater than 900 seconds are configured.
-- A detached systemd/cron reaper has completed successfully and its root-controlled
-  post-step has published a fresh lease. Live creates fail closed without current evidence
+- A detached user-level systemd/cron reaper has completed successfully and its
+  post-step under the same account has published a fresh owner-private 0600 lease. Live creates fail closed without current evidence
   bound to the project, install scope, scheduler, and relevant configuration.
 
 ## Portable job bundle (backend-agnostic)
@@ -139,11 +139,12 @@ is the load-bearing arm.
   active-jobs ledger). It MUST run detached -- a systemd timer/service or cron entry, never a
   session child, because a background child dies when the agent session restarts and a dead
   reaper is a server that bills forever. The systemd timer/service and cron templates plus a
-  step-by-step install guide are in `references/reaper-deployment.md`. A root-controlled
-  post-success step publishes a short-lived `0644` lease beneath a fully root-controlled
-  parent chain. The non-root driver reads and validates that no-follow descriptor, binding
-  evidence to project, install scope, scheduler, configuration, and freshness. This repo
-  ships only templates; enabling them is a gated, deploy-time action.
+  step-by-step install guide are in `references/reaper-deployment.md`. A post-success
+  step under the same account publishes a short-lived, owner-private `0600` lease beneath
+  an owner-controlled parent chain. The driver reads and validates that no-follow descriptor,
+  binding evidence to project, install scope, scheduler, configuration, and freshness.
+  It is not evidence outside the agent's authority. This repo ships only templates;
+  enabling them is a deploy-time action.
 - **Arm 3 -- kill switch.** `down --all` (driver, in-session) and
   `hetzner_reaper kill` (standalone, detached) both DELETE every server in the exact
   configured project scope immediately, ignoring the reap predicate. Each requires fresh

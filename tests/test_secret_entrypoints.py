@@ -2280,7 +2280,7 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         self.assertEqual(entries[windows_target]["platforms"], ["windows"])
         self.assertEqual(entries[windows_target]["newline"], "crlf")
 
-    def test_reaper_guide_uses_root_lease_and_user_credential_projection(self) -> None:
+    def test_reaper_guide_uses_owner_private_lease_and_user_credential_projection(self) -> None:
         guide = (
             REPO
             / "canonical"
@@ -2290,30 +2290,25 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             / "reaper-deployment.md"
         ).read_text(encoding="utf-8")
         for expected in (
-            "AAS_COMPUTE_SECRETS_FILE",
-            "run_hetzner_reaper.sh",
-            "run_hetzner_reaper.ps1",
-            "/etc/ai-agents-skills/hetzner-reaper-lease.json",
-            "root-owned mode `0644`",
-            "ExecStartPost=",
-            "--scheduler-id hetzner-reaper.timer",
-            "/usr/sbin/runuser --user REPLACE_AGENT_USER",
-            "root-owned launcher resolver: `/usr/local/sbin/aas-credential-launcher`",
-            "/usr/local/sbin/aas-credential-launcher "
-            "skills/hetzner-research-compute/run_hetzner_reaper.sh",
-            "`&&` is deliberate",
-            "Native Windows status (recovery only)",
-            "Live `up` and `oneshot` fail closed",
+            "~/.local/state/ai-agents-skills/hetzner-reaper-lease.json",
+            "--scheduler-kind cron",
+            "cron:user:",
+            "--scheduler-kind systemd-user",
+            "~/.config/systemd/user/hetzner-reaper.timer",
+            "owner-private 0600",
+            "not evidence outside the agent's authority",
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, guide)
-        self.assertNotIn("AAS_HETZNER_DURABLE_REAPER_ATTESTED", guide)
-        # The credential gate matches the component-store layout literally, so a
-        # scheduler launching from /opt exits 127 on every verb. The guide may
-        # still name that path to explain why; it must not launch from it.
-        self.assertNotIn(
-            "/opt/ai-agents-skills/runtime/run_skill.sh", guide
-        )
+        for forbidden in (
+            "/etc/ai-agents-skills",
+            "runuser",
+            "/usr/local/sbin/aas-credential-launcher",
+            "requires a root-owned exact AAS component generation",
+            "reap --attest",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, guide)
 
 
 if __name__ == "__main__":
