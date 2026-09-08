@@ -11,6 +11,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from installer.ai_agents_skills import openclaw_target_apply
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.openclaw_target_apply import (
@@ -41,7 +42,7 @@ CAPTURED_AT = "2026-06-12T00:00:00Z"
 
 
 def _attested_node_available() -> bool:
-    """Mirror the production /usr/bin/node attestation (root-owned, nlink 1)."""
+    """Mirror the production /usr/bin/node attestation (owner-controlled, nlink 1)."""
     try:
         info = os.lstat("/usr/bin/node")
     except OSError:
@@ -49,7 +50,7 @@ def _attested_node_available() -> bool:
     return (
         stat.S_ISREG(info.st_mode)
         and int(info.st_nlink) == 1
-        and int(info.st_uid) == 0
+        and int(info.st_uid) in {0, os.geteuid()}
         and not stat.S_IMODE(info.st_mode) & 0o022
         and bool(stat.S_IMODE(info.st_mode) & 0o111)
     )
@@ -60,6 +61,28 @@ def _attested_node_available() -> bool:
     "the strict Windows private-path DACL guard rejects runner %TEMP% by design",
 )
 class OpenClawTargetV2Tests(unittest.TestCase):
+    def test_openclaw_accepts_owner_controlled_node_and_refuses_bad_modes(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+        with openclaw_root() as root:
+            executable = fake_openclaw(root)
+            parent = root / "node-runtime"
+            parent.mkdir(mode=0o700)
+            node = parent / "node"
+            node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            node.chmod(0o755)
+            with patch.object(openclaw_target_apply, "NODE_PATH", node):
+                self.assertEqual(attest_openclaw_executable(str(executable)).node_path, node)
+                node.chmod(0o775)
+                with self.assertRaises(ValueError) as bad_file:
+                    attest_openclaw_executable(str(executable))
+                self.assertEqual(str(bad_file.exception.__cause__), "OpenClaw executable failed ownership or mode checks")
+                node.chmod(0o755)
+                parent.chmod(0o775)
+                with self.assertRaises(ValueError) as bad_parent:
+                    attest_openclaw_executable(str(executable))
+                self.assertEqual(str(bad_parent.exception.__cause__), "OpenClaw executable has an unsafe parent chain")
+
     def test_canary_manifest_approves_applies_and_uninstalls_skill_file(self) -> None:
         with openclaw_root() as root:
             content = skill_content("model-router")
@@ -447,7 +470,7 @@ class OpenClawTargetV2Tests(unittest.TestCase):
 
     @unittest.skipUnless(
         _attested_node_available(),
-        "the attested root-owned /usr/bin/node interpreter is unavailable",
+        "the attested owner-controlled /usr/bin/node interpreter is unavailable",
     )
     def test_quiescence_ignores_empty_persistent_locks_directory(self) -> None:
         with openclaw_root() as root:
@@ -465,7 +488,7 @@ class OpenClawTargetV2Tests(unittest.TestCase):
 
     @unittest.skipUnless(
         _attested_node_available(),
-        "the attested root-owned /usr/bin/node interpreter is unavailable",
+        "the attested owner-controlled /usr/bin/node interpreter is unavailable",
     )
     def test_quiescence_detects_openclaw_gateway_process(self) -> None:
         with openclaw_root() as root:
@@ -488,7 +511,7 @@ class OpenClawTargetV2Tests(unittest.TestCase):
 
     @unittest.skipUnless(
         _attested_node_available(),
-        "the attested root-owned /usr/bin/node interpreter is unavailable",
+        "the attested owner-controlled /usr/bin/node interpreter is unavailable",
     )
     def test_openclaw_probe_uses_attested_absolute_binary_and_scrubbed_environment(self) -> None:
         with openclaw_root() as root:
