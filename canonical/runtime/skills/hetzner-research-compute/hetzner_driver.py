@@ -109,6 +109,7 @@ BUNDLE_SECRET_POINTER_ENVS = (
 )
 PROTECTED_SECRET_IDENTITIES_ENV = "AAS_PROTECTED_SECRET_FILE_IDS"
 REAPER_LEASE_MAX_AGE_SECONDS = 15 * 60
+REAPER_SCHEDULER_KINDS = frozenset({"systemd", "systemd-user", "cron"})
 BUNDLE_DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 BUNDLE_DIGEST_LABEL_HIGH = "bundle-sha256-high"
 BUNDLE_DIGEST_LABEL_LOW = "bundle-sha256-low"
@@ -196,12 +197,11 @@ def _parse_lease_time(value: Any, *, field: str) -> float:
     return parsed.timestamp()
 
 
-def _require_root_protected_parent_chain(path: Path, *, label: str) -> None:
-    """Require every directory from ``path`` through ``/`` to be root-controlled.
-
-    Checking only the immediate parent is insufficient: an agent that can rename that
-    parent through a writable ancestor can replace an otherwise root-owned lease tree.
-    """
+def _require_owner_protected_parent_chain(
+    path: Path, *, label: str, owner_uid: int | None = None
+) -> None:
+    """Require an owner-controlled chain, allowing root-owned sticky ancestors."""
+    owner_uid = os.getuid() if owner_uid is None else owner_uid
     if os.name != "posix" or not path.is_absolute():
         raise HetznerDriverError(f"{label} parent chain requires an absolute POSIX path")
     current = path
@@ -212,12 +212,15 @@ def _require_root_protected_parent_chain(path: Path, *, label: str) -> None:
             raise HetznerDriverError(f"{label} parent chain cannot be inspected") from exc
         if (
             not stat.S_ISDIR(info.st_mode)
-            or int(info.st_uid) != 0
-            or stat.S_IMODE(info.st_mode) & 0o022
+            or int(info.st_uid) not in {0, owner_uid}
+            or (
+                stat.S_IMODE(info.st_mode) & 0o022
+                and not (int(info.st_uid) == 0 and info.st_mode & stat.S_ISVTX)
+            )
         ):
             raise HetznerDriverError(
-                f"{label} parent chain must contain only root-owned, "
-                "non-group/world-writable directories"
+                f"{label} parent chain must contain only owner-controlled, "
+                "non-group/world-writable directories or root-owned sticky ancestors"
             )
         if current.parent == current:
             return
@@ -225,7 +228,7 @@ def _require_root_protected_parent_chain(path: Path, *, label: str) -> None:
 
 
 def _verify_durable_reaper_lease(config: Any) -> dict[str, Any]:
-    """Verify short-lived, scheduler-bound evidence that the agent cannot self-assert."""
+    """Verify short-lived evidence bound to the scheduler under the same account."""
     configured = str(getattr(config, "hetzner_reaper_lease_file", None) or "")
     scheduler_id = str(getattr(config, "hetzner_reaper_scheduler_id", None) or "")
     if not configured or not Path(configured).is_absolute() or not scheduler_id:
@@ -236,12 +239,7 @@ def _verify_durable_reaper_lease(config: Any) -> dict[str, Any]:
     _reject_symlink_components(lease_path, label="durable reaper lease")
     if os.name != "posix":
         raise HetznerDriverError("durable reaper lease verification requires POSIX")
-    if os.geteuid() == 0:
-        raise HetznerDriverError(
-            "live provisioning as root is disabled because reaper evidence must be outside "
-            "the agent authority"
-        )
-    _require_root_protected_parent_chain(
+    _require_owner_protected_parent_chain(
         lease_path.parent, label="durable reaper lease"
     )
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -252,15 +250,15 @@ def _verify_durable_reaper_lease(config: Any) -> dict[str, Any]:
     try:
         before = os.fstat(descriptor)
         if (
-            int(before.st_uid) != 0
-            or stat.S_IMODE(before.st_mode) & 0o022
+            int(before.st_uid) != os.getuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
             or not stat.S_ISREG(before.st_mode)
             or int(before.st_nlink) != 1
             or int(before.st_size) > 64 * 1024
         ):
             raise HetznerDriverError(
-                "durable reaper lease must be root-owned, regular, single-link, "
-                "bounded, and not group/world writable"
+                "durable reaper lease must be owner-owned, regular, single-link, "
+                "bounded, and private (0600)"
             )
         chunks: list[bytes] = []
         remaining = int(before.st_size)
@@ -290,7 +288,7 @@ def _verify_durable_reaper_lease(config: Any) -> dict[str, Any]:
     scheduler = lease.get("scheduler")
     if (
         not isinstance(scheduler, dict)
-        or scheduler.get("kind") not in {"systemd", "cron"}
+        or scheduler.get("kind") not in REAPER_SCHEDULER_KINDS
         or scheduler.get("id") != scheduler_id
         or scheduler.get("active") is not True
     ):
@@ -1247,10 +1245,38 @@ def _audit(state_root: Path | None, event: dict[str, Any]) -> None:
 
 # --- planning verbs (free; no server) -----------------------------------------
 
+def _reaper_lease_status(config: Any) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "present": False,
+        "fresh": False,
+        "age_seconds": None,
+        "scheduler_kind": None,
+        "scheduler_id": None,
+        "error": None,
+    }
+    configured = str(getattr(config, "hetzner_reaper_lease_file", None) or "")
+    try:
+        if not configured or not Path(configured).exists():
+            return status
+        evidence = _verify_durable_reaper_lease(config)
+    except (HetznerDriverError, OSError) as exc:
+        status["error"] = str(exc)
+        return status
+    status.update({
+        "present": True,
+        "fresh": True,
+        "age_seconds": max(0, int(time.time() - _parse_lease_time(evidence["issued_at"], field="issued_at"))),
+        "scheduler_kind": evidence["scheduler"]["kind"],
+        "scheduler_id": evidence["scheduler"]["id"],
+    })
+    return status
+
+
 def doctor(config: Any) -> dict[str, Any]:
     """Offline readiness snapshot. Reuses the backend doctor and adds a driver note."""
     out = dict(hetzner_backend.doctor(config))
     out["driver"] = "hetzner_driver"
+    out["reaper_lease"] = _reaper_lease_status(config)
     out["confirm_gate"] = "lifecycle verbs require HCLOUD_TOKEN and --confirm"
     return out
 
@@ -2467,7 +2493,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if config is None:
                 raise HetznerDriverError("research-compute.toml not found; run the broker bootstrap first")
-            Path(state_root).mkdir(parents=True, exist_ok=True)
+            if args.command != "doctor":
+                Path(state_root).mkdir(parents=True, exist_ok=True)
             if args.command == "doctor":
                 result = doctor(config)
             elif args.command == "preflight":
