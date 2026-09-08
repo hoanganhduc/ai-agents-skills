@@ -229,7 +229,12 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertTrue(any(check["name"] == "canary-not-leaked:EXAMPLE_TOKEN" and not check["ok"] for check in result["checks"]))
 
     def test_live_uses_real_runtime_real_environment_and_no_fixtures(self):
-        case = contract(requires={"pointer_env": ["AAS_SKILL_SECRETS_FILE"], "network": True},
+        config = self.workspace / "skills" / "example" / "config.json"
+        config.parent.mkdir(mode=0o700, parents=True)
+        config.write_text("{}")
+        required_config = "{workspace}/skills/example/config.json"
+        case = contract(requires={"pointer_env": ["AAS_SKILL_SECRETS_FILE"],
+                                  "config_files": [required_config], "network": True},
                         fixtures=[{"to": "must-not-create", "content": "no"}])
         manifest = manifests_for(live={"read-only": case})
         with patch.dict(os.environ, {"HOME": str(self.root / "operator"), "AAS_SKILL_SECRETS_FILE": "/operator/secret"}), \
@@ -240,10 +245,11 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["env"]["HOME"], str(self.root / "operator"))
         self.assertEqual(run.call_args.kwargs["env"]["AAS_SKILL_SECRETS_FILE"], "/operator/secret")
         self.assertFalse((self.smoke_dir / "must-not-create").exists())
+        config.unlink()
         with patch.dict(os.environ, {}, clear=True), patch.object(smoke, "run_smoke_process") as run:
             result = smoke.run_live_checks(manifest, skills=["example"], runtime_root=self.root, platform="linux")
         run.assert_not_called()
-        self.assertEqual(result["results"][0]["missing_requirements"], ["AAS_SKILL_SECRETS_FILE"])
+        self.assertEqual(result["results"][0]["missing_requirements"], ["AAS_SKILL_SECRETS_FILE", required_config])
 
     def test_skill_venv_resolves_before_synthetic_home_and_reports_refusal(self):
         prefix = self.root / "venv"

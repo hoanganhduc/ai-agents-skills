@@ -1180,7 +1180,9 @@ def run_live_checks(
         for name, contract in manifests["runtime"]["skills"][skill].get("live_check", {}).items():
             requires = contract["requires"]
             missing = [name for name in requires.get("pointer_env", []) if not os.environ.get(name)]
-            missing += [path for path in requires.get("config_files", []) if not Path(path).expanduser().is_file()]
+            replacements = _smoke_replacements(runtime_root / "workspace")
+            missing += [path for path in requires.get("config_files", [])
+                        if not Path(_expand_smoke_value(path, replacements)).expanduser().is_file()]
             if missing:
                 rows.append({"status": "skipped", "skill": skill, "case": name,
                              "runtime_root": str(runtime_root), "missing_requirements": missing})
