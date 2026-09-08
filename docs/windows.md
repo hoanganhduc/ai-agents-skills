@@ -94,7 +94,7 @@ not a degradation to work around.
   `os.name == "nt"` and raises `SecretEnvError`. Native Windows loads
   credentials through `load_secret_env.ps1` instead, which validates the secret
   file's own owner and DACL before exporting anything.
-- **The exact-generation credential broker is unavailable.** The broker speaks
+- **The credential broker is unavailable.** The broker speaks
   over `socket.AF_UNIX`, which CPython does not expose on Windows. Callers gate
   on `broker_active()`, which stays false because nothing sets
   `AAS_ARL_BROKER_SOCKET`, so panel and compute launches take the direct

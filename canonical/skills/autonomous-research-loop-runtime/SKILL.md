@@ -571,7 +571,7 @@ swap, 64 GiB address space, 100% aggregate CPU quota, 128 primary / 64 panel
 tasks, 1024 open files, 4 GiB per-file size, zero-byte core dumps, a 16 MB
 combined captured-output ceiling, and the phase wall timeout plus a 15-second
 scope lifetime margin. Override them only with the validated
-`AAS_AUTOLOOP_RESOURCE_*` integer variables. A root-owned pre-exec gate reads
+`AAS_AUTOLOOP_RESOURCE_*` integer variables. A owner-attested pre-exec gate reads
 the process's actual cgroup leaf and inherited limits before executing the
 provider. Inside containment, the cgroup API, user service manager, container
 control sockets, live tmux/Screen control paths, and related launch planes are
