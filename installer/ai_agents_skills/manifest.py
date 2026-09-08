@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -83,6 +84,8 @@ EXTERNAL_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 EXTERNAL_VENV_POINTER_RE = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 EXTERNAL_DISTRIBUTION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 EXTERNAL_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+RUNTIME_PYTHON_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+RUNTIME_PYTHON_PROVISIONS = frozenset({"default", "opt-in"})
 
 
 def validate_external_dependencies(external_dependencies: dict[str, Any]) -> None:
@@ -285,6 +288,8 @@ def validate_manifests(
             validate_runtime_file(entry, runtime_source_root, f"runtime skill {skill}")
         if "smoke" in spec:
             validate_runtime_smoke_contract(skill, spec["smoke"])
+        if "python" in spec:
+            validate_runtime_python_block(skill, spec["python"], runtime_source_root)
 
     validate_delegation_manifest(delegation)
 
@@ -433,6 +438,40 @@ def validate_runtime_smoke_contract(skill: str, smoke: Any) -> None:
     for field in required_forbidden:
         if safety.get(field) != "forbidden":
             raise ManifestError(f"runtime skill {skill} smoke safety.{field} must be forbidden")
+
+
+def validate_runtime_python_block(skill: str, block: Any, runtime_source_root: Path) -> None:
+    if not isinstance(block, dict):
+        raise ManifestError(f"runtime skill {skill} python must be an object")
+    unknown = sorted(set(block) - {"requirements", "modules", "provision"})
+    if unknown:
+        raise ManifestError(f"runtime skill {skill} python has unknown keys: {', '.join(unknown)}")
+    requirements = block.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        raise ManifestError(f"runtime skill {skill} python requirements must be a non-empty list")
+    root = Path(os.path.realpath(runtime_source_root))
+    for requirement in requirements:
+        if not isinstance(requirement, str) or not requirement:
+            raise ManifestError(f"runtime skill {skill} python requirements entries must be non-empty strings")
+        path = PurePosixPath(requirement)
+        if path.is_absolute() or ".." in path.parts or "" in requirement.split("/"):
+            raise ManifestError(
+                f"runtime skill {skill} python requirements must be relative paths under canonical/runtime: {requirement}"
+            )
+        real = Path(os.path.realpath(root / requirement))
+        if not real.is_relative_to(root):
+            raise ManifestError(f"runtime skill {skill} python requirements must stay under canonical/runtime: {requirement}")
+        if not real.is_file():
+            raise ManifestError(f"runtime skill {skill} python requirements file does not exist: {requirement}")
+    modules = block.get("modules")
+    if not isinstance(modules, list):
+        raise ManifestError(f"runtime skill {skill} python modules must be a list")
+    for module in modules:
+        if not isinstance(module, str) or not RUNTIME_PYTHON_MODULE_RE.fullmatch(module):
+            raise ManifestError(f"runtime skill {skill} python modules entry is not a module name: {module!r}")
+    provision = block.get("provision", "default")
+    if not isinstance(provision, str) or provision not in RUNTIME_PYTHON_PROVISIONS:
+        raise ManifestError(f"runtime skill {skill} python provision must be default or opt-in")
 
 
 def validate_runtime_smoke_coverage(skill: str, spec: dict[str, Any]) -> None:
