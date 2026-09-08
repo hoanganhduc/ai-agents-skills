@@ -253,6 +253,67 @@ class SkillPythonCase(unittest.TestCase):
         return json.loads((self.venv / RECEIPT_NAME).read_text(encoding="utf-8"))
 
 
+class ModeNormalizationTests(SkillPythonCase):
+    def _swapped_entry_leaves_external_file_private(self, *, directory: bool) -> None:
+        self.venv.mkdir(mode=0o775)
+        package = self.venv / "package"
+        package.mkdir(mode=0o775)
+        entry = package / "module.py"
+        entry.write_text("pass\n", encoding="utf-8")
+        entry.chmod(0o664)
+        outside = self.home / "private"
+        outside.mkdir(mode=0o700)
+        secret = outside / "module.py"
+        secret.write_text("private fixture\n", encoding="utf-8")
+        secret.chmod(0o600)
+        swapped = False
+        original_walk = skill_python._walk_entries
+        original_stat = os.stat
+
+        def swap() -> None:
+            nonlocal swapped
+            if swapped:
+                return
+            swapped = True
+            if directory:
+                package.rename(self.venv / "old-package")
+                package.symlink_to(outside, target_is_directory=True)
+            else:
+                entry.unlink()
+                entry.symlink_to(secret)
+
+        def swap_after_snapshot(root: Path):
+            entries = original_walk(root)
+            swap()
+            return entries
+
+        def swap_before_open(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            name = "package" if directory else "module.py"
+            if path == name and kwargs.get("dir_fd") is not None:
+                swap()
+            return info
+
+        # Exercise the old eager walk and the descriptor walk at the same trust
+        # boundary: after metadata was observed but before the entry is opened.
+        with mock.patch.object(skill_python, "_walk_entries", side_effect=swap_after_snapshot), \
+             mock.patch.object(skill_python.os, "stat", side_effect=swap_before_open):
+            try:
+                skill_python.normalize_modes(self.venv)
+            except SkillPythonError:
+                pass
+        self.assertTrue(swapped, "the substitution must actually occur")
+        self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o700)
+        self.assertEqual(secret.read_text(encoding="utf-8"), "private fixture\n")
+
+    def test_normalization_does_not_follow_a_replaced_file(self) -> None:
+        self._swapped_entry_leaves_external_file_private(directory=False)
+
+    def test_normalization_does_not_follow_a_replaced_directory(self) -> None:
+        self._swapped_entry_leaves_external_file_private(directory=True)
+
+
 class PlanTests(SkillPythonCase):
     def test_plan_lists_default_targets_and_excludes_opt_in(self) -> None:
         plan = self.build_plan()
