@@ -86,6 +86,16 @@ from .selectors import (
     skill_recommended_templates,
     split_csv,
 )
+from .skill_python import (
+    SkillPythonError,
+    SkillPythonUsageError,
+    apply_skill_python_plan,
+    attested_base_python,
+    build_skill_python_plan,
+    skill_python_targets,
+    skill_venv_path,
+    verify_skill_python,
+)
 from .state import sha256_file
 from .state import load_state, preflight_state_path, write_text_atomic
 from .target_prechecks import build_target_prechecks
@@ -462,6 +472,44 @@ def build_parser() -> argparse.ArgumentParser:
     provision_external.add_argument(
         "--plan-digest",
         help="exact digest emitted by the preceding dry run; required with --apply",
+    )
+
+    provision_skill_python = sub.add_parser("provision-skill-python")
+    provision_skill_python.add_argument(
+        "--skills",
+        action="append",
+        help="comma-separated skill names to provision; repeatable (default: every provision=default target)",
+    )
+    provision_skill_python.add_argument(
+        "--include-opt-in", action="store_true", help="also provision the provision=opt-in targets"
+    )
+    provision_skill_python.add_argument(
+        "--venv", help="venv directory (default: AAS_SKILL_VENV, else .agents_skills_venv under --root)"
+    )
+    provision_skill_python.add_argument(
+        "--python", help="base interpreter; must resolve to the attested system Python under /usr/bin"
+    )
+    provision_skill_python_mode = provision_skill_python.add_mutually_exclusive_group()
+    provision_skill_python_mode.add_argument(
+        "--recreate", action="store_true", help="remove the identified venv and build it again"
+    )
+    provision_skill_python_mode.add_argument(
+        "--remove", action="store_true", help="remove the identified venv and stop"
+    )
+    provision_skill_python.add_argument("--apply", action="store_true", help="perform the writes; the default is a dry run")
+    provision_skill_python.add_argument("--real-system", action="store_true")
+
+    verify_skill_python_parser = sub.add_parser("verify-skill-python")
+    verify_skill_python_parser.add_argument(
+        "--venv", help="venv directory (default: AAS_SKILL_VENV, else .agents_skills_venv under --root)"
+    )
+    verify_skill_python_parser.add_argument(
+        "--skills",
+        action="append",
+        help="comma-separated skill names to probe; repeatable (default: every skill in the receipt)",
+    )
+    verify_skill_python_parser.add_argument(
+        "--include-opt-in", action="store_true", help="probe every manifest target, opt-in ones included"
     )
 
     precheck = sub.add_parser("precheck")
@@ -924,6 +972,10 @@ def run(args: argparse.Namespace) -> int:
             ),
             args,
         )
+    if args.command == "provision-skill-python":
+        return provision_skill_python_command(args, manifests)
+    if args.command == "verify-skill-python":
+        return verify_skill_python_command(args, manifests)
     if args.command == "precheck":
         return precheck(args, manifests)
     if args.command == "audit-system":
@@ -1144,6 +1196,65 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "tools": tool_results,
     }
     return output(result, args)
+
+
+def usage_error(args: argparse.Namespace, message: str) -> int:
+    """Report a request that cannot be honoured as written and return exit code 2."""
+    if getattr(args, "json", False):
+        print(json.dumps({"status": "usage-error", "error": message}, indent=2))
+    else:
+        print(f"usage error: {message}", file=sys.stderr)
+    return 2
+
+
+def skill_python_skill_names(values: list[str] | None) -> set[str] | None:
+    """``--skills`` values (repeatable, comma-separated) as a set; ``None`` when absent."""
+    names = {name for value in values or [] for name in split_csv(value)}
+    return names or None
+
+
+def provision_skill_python_command(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    venv = skill_venv_path(args.root, args.venv or os.environ.get("AAS_SKILL_VENV"))
+    if args.python:
+        try:
+            attested_base_python(args.python, preflight_ensurepip=False)
+        except SkillPythonError as exc:
+            return usage_error(args, f"--python {exc}")
+    try:
+        plan = build_skill_python_plan(
+            args.root,
+            manifests,
+            skills=skill_python_skill_names(args.skills),
+            venv=venv,
+            python=args.python,
+            include_opt_in=args.include_opt_in,
+            recreate=args.recreate,
+            remove=args.remove,
+        )
+    except SkillPythonUsageError as exc:
+        return usage_error(args, str(exc))
+    if not args.apply:
+        return output({"status": "dry-run", **plan}, args)
+    ensure_apply_allowed(args)
+    return output(
+        apply_skill_python_plan(plan, log=lambda message: print(message, file=sys.stderr)),
+        args,
+    )
+
+
+def verify_skill_python_command(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    venv = skill_venv_path(args.root, args.venv or os.environ.get("AAS_SKILL_VENV"))
+    skills = skill_python_skill_names(args.skills)
+    targets = None
+    if skills is not None or args.include_opt_in:
+        try:
+            targets = skill_python_targets(manifests, skills=skills, include_opt_in=args.include_opt_in)
+        except SkillPythonUsageError as exc:
+            return usage_error(args, str(exc))
+    attested = attested_base_python(None, preflight_ensurepip=False)
+    result = verify_skill_python(venv, targets, attested_python=attested, home=args.root)
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
 
 
 def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
@@ -2125,6 +2236,8 @@ def command_help() -> dict[str, Any]:
         "doctor",
         "antigravity-fixup",
         "provision-external",
+        "provision-skill-python",
+        "verify-skill-python",
         "precheck",
         "audit-system",
         "library-profile-audit",
