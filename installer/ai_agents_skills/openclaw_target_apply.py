@@ -42,6 +42,7 @@ OPENCLAW_TARGET_STATE_VERSION = 1
 OPENCLAW_TARGET_STATE_NAME = "openclaw-target-state.json"
 OPENCLAW_EXECUTABLE_NAMES = frozenset({"openclaw"})
 OPENCLAW_CHILD_PATH = "/usr/bin:/bin"
+NODE_PATH = Path("/usr/bin/node")
 
 
 @dataclass(frozen=True)
@@ -153,9 +154,9 @@ def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> Attested
         os.close(target_descriptor)
     if shebang not in {b"#!/usr/bin/env node", b"#!/usr/bin/node"}:
         raise ValueError("OpenClaw entrypoint must use the approved Node interpreter")
-    node_path = Path("/usr/bin/node")
+    node_path = NODE_PATH
     try:
-        node_identity = _attest_regular_executable(node_path, root_only=True)
+        node_identity = _attest_regular_executable(node_path, root_only=False)
     except (OSError, ValueError) as exc:
         raise ValueError("the attested /usr/bin/node interpreter is unavailable") from exc
     return AttestedOpenClawExecutable(

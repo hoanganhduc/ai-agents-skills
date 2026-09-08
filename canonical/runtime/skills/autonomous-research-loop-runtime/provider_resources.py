@@ -173,7 +173,7 @@ def _trusted_host_binary(candidates: Sequence[Path], label: str) -> str:
         if (
             stat.S_ISREG(info.st_mode)
             and not stat.S_ISLNK(info.st_mode)
-            and info.st_uid == 0
+            and info.st_uid in {0, os.getuid()}
             and not info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
             and os.access(candidate, os.X_OK)
         ):

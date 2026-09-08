@@ -29,7 +29,7 @@ def _load_module():
 
 @unittest.skipIf(os.name == "nt", "POSIX descriptor queue")
 def _attested_node_available() -> bool:
-    """Mirror the fixed root-controlled Node runtime attestation (uid 0, nlink 1)."""
+    """Mirror the fixed owner-controlled Node runtime attestation (nlink 1)."""
     try:
         info = os.lstat("/usr/bin/node")
     except OSError:
@@ -37,7 +37,7 @@ def _attested_node_available() -> bool:
     return (
         stat.S_ISREG(info.st_mode)
         and int(info.st_nlink) == 1
-        and int(info.st_uid) == 0
+        and int(info.st_uid) in {0, os.getuid()}
         and not stat.S_IMODE(info.st_mode) & 0o022
         and bool(stat.S_IMODE(info.st_mode) & 0o111)
     )
@@ -47,6 +47,59 @@ class ZoteroSendQueueTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.queue = _load_module()
+
+    def _delivery_candidates(self, root: Path) -> tuple[Path, Path]:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+        cli = root / ".local/lib/node_modules/openclaw/openclaw.mjs"
+        node = root / ".local/bin/node"
+        for path in (cli, node):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+            current = path.parent
+            while current != root.parent:
+                current.chmod(0o700)
+                current = current.parent
+        return cli, node
+
+    def _without_system_candidates(self):
+        real_stat = Path.stat
+        def candidate_stat(path, *args, **kwargs):
+            if str(path).startswith("/usr/"):
+                raise FileNotFoundError(str(path))
+            return real_stat(path, *args, **kwargs)
+        return mock.patch.object(Path, "stat", candidate_stat)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor attestation")
+    def test_delivery_chain_accepts_owner_controlled_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cli, node = self._delivery_candidates(root)
+            with mock.patch.object(Path, "home", return_value=root), self._without_system_candidates():
+                for function, expected in ((self.queue._open_trusted_delivery_cli, cli), (self.queue._open_trusted_node_runtime, node)):
+                    descriptor = function()
+                    try:
+                        self.assertEqual(os.fstat(descriptor).st_ino, expected.stat().st_ino)
+                        self.assertTrue(os.get_inheritable(descriptor))
+                    finally:
+                        os.close(descriptor)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor attestation")
+    def test_delivery_chain_refuses_group_writable_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cli, node = self._delivery_candidates(root)
+            with mock.patch.object(Path, "home", return_value=root), self._without_system_candidates():
+                for function, path in ((self.queue._open_trusted_delivery_cli, cli), (self.queue._open_trusted_node_runtime, node)):
+                    descriptor = function()
+                    os.close(descriptor)
+                    for target in (path, path.parent):
+                        previous = target.stat().st_mode & 0o777
+                        target.chmod(0o775)
+                        with self.assertRaises(self.queue.QueueSecurityError):
+                            function()
+                        target.chmod(previous)
 
     def test_default_authority_is_host_scoped_and_not_openclaw_delivery_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -812,7 +865,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
 
     @unittest.skipUnless(
         _attested_node_available(),
-        "the fixed root-controlled /usr/bin/node delivery runtime is unavailable",
+        "the fixed owner-controlled /usr/bin/node delivery runtime is unavailable",
     )
     def test_host_sender_ignores_path_and_executes_a_bound_launcher_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -951,7 +1004,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
 
     @unittest.skipUnless(
         _attested_node_available(),
-        "the fixed root-controlled /usr/bin/node delivery runtime is unavailable",
+        "the fixed owner-controlled /usr/bin/node delivery runtime is unavailable",
     )
     def test_host_sender_keeps_delivery_metadata_out_of_live_child_cmdline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -997,10 +1050,10 @@ class ZoteroSendQueueTests(unittest.TestCase):
             fake = Path(temporary) / "openclaw"
             fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             fake.chmod(0o755)
-            with mock.patch.dict(os.environ, {"PATH": str(fake.parent)}):
+            with mock.patch.dict(os.environ, {"PATH": str(fake.parent), "HOME": str(fake.parent)}):
                 with self.assertRaisesRegex(
                     self.queue.QueueSecurityError,
-                    "fixed root-controlled",
+                    "fixed owner-controlled",
                 ):
                     self.queue._open_trusted_delivery_cli()
 

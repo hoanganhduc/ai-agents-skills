@@ -12,6 +12,7 @@ import errno
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -20,6 +21,7 @@ import time
 import unittest
 from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
+from types import SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -55,6 +57,44 @@ _RESOURCE_ENV = {
     "AAS_AUTOLOOP_RESOURCE_FILE_SIZE_MIB": "2",
     "AAS_AUTOLOOP_RESOURCE_OUTPUT_MIB": "1",
 }
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux binary attestation")
+class OwnerControlledHostBinaryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+
+    def test_owner_controlled_binary_and_existing_link_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            binary = root / "binary"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            self.assertEqual(pr._trusted_host_binary([binary], "test"), str(binary))
+            os.link(binary, root / "alias")
+            self.assertEqual(pr._trusted_host_binary([binary], "test"), str(binary))
+            binary.chmod(0o775)
+            with self.assertRaises(pr.ProviderResourceError):
+                pr._trusted_host_binary([binary], "test")
+
+    def test_mocked_host_binary_ownership_and_type(self) -> None:
+        foreign = max(os.getuid(), 0) + 1
+        for owner, mode, accepted in (
+            (foreign, stat.S_IFREG | 0o755, False),
+            (0, stat.S_IFREG | 0o755, True),
+            (0, stat.S_IFREG | 0o775, False),
+            (os.getuid(), stat.S_IFLNK | 0o755, False),
+        ):
+            with self.subTest(owner=owner, mode=mode):
+                info = SimpleNamespace(st_uid=owner, st_mode=mode, st_nlink=1)
+                with mock.patch.object(pr.os, "lstat", return_value=info), mock.patch.object(pr.os, "access", return_value=True):
+                    if accepted:
+                        self.assertEqual(pr._trusted_host_binary([Path("/binary")], "test"), "/binary")
+                    else:
+                        with self.assertRaises(pr.ProviderResourceError):
+                            pr._trusted_host_binary([Path("/binary")], "test")
 
 
 @unittest.skipUnless(
