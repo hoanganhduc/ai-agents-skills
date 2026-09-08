@@ -179,18 +179,22 @@ def list_managed_servers(config: Any) -> list[dict[str, Any]]:
 
 def write_reaper_lease(*, config: Any, scheduler_kind: str,
                        scheduler_id: str, now: float | None = None) -> dict[str, Any]:
-    """Atomically publish short-lived scheduler evidence from a root-owned service/cron job."""
-    if os.name != "posix" or os.geteuid() != 0:
-        raise HetznerReaperError("reaper lease publication must run as root on POSIX")
+    """Atomically publish short-lived evidence from the agent user's scheduler."""
+    if os.name != "posix":
+        raise HetznerReaperError("reaper lease publication requires POSIX")
+    if os.geteuid() == 0:
+        raise HetznerReaperError("reaper lease publication runs as the agent user, not root")
+    if os.geteuid() != os.getuid():
+        raise HetznerReaperError("reaper lease publication requires matching real and effective user IDs")
     expected_scheduler = str(getattr(config, "hetzner_reaper_scheduler_id", None) or "")
-    if scheduler_kind not in {"systemd", "cron"} or scheduler_id != expected_scheduler:
+    if scheduler_kind not in hetzner_driver.REAPER_SCHEDULER_KINDS or scheduler_id != expected_scheduler:
         raise HetznerReaperError("reaper scheduler identity does not match configuration")
     configured = str(getattr(config, "hetzner_reaper_lease_file", None) or "")
     if not configured or not Path(configured).is_absolute():
         raise HetznerReaperError("reaper_lease_file must be absolute")
     path = Path(configured)
     parent = path.parent
-    hetzner_driver._require_root_protected_parent_chain(
+    hetzner_driver._require_owner_protected_parent_chain(
         parent, label="reaper lease"
     )
     issued = time.time() if now is None else float(now)
@@ -214,7 +218,7 @@ def write_reaper_lease(*, config: Any, scheduler_kind: str,
     fd = os.open(
         temp,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o644,
+        0o600,
     )
     try:
         offset = 0
@@ -225,10 +229,8 @@ def write_reaper_lease(*, config: Any, scheduler_kind: str,
         os.close(fd)
     try:
         os.replace(temp, path)
-        # The lease contains no credential material. It must be readable by the non-root
-        # provisioner but writable only by root; the protected parent chain prevents
-        # replacement through an ancestor.
-        os.chmod(path, 0o644)
+        # Keep the lease private to the account that runs the scheduler and provisioner.
+        os.chmod(path, 0o600)
         directory_fd = os.open(
             parent,
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
@@ -490,9 +492,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     attest_p = sub.add_parser(
         "attest",
-        help="publish a short-lived root-owned detached-scheduler lease",
+        help="publish a short-lived owner-private detached-scheduler lease",
     )
-    attest_p.add_argument("--scheduler-kind", choices=("systemd", "cron"), required=True)
+    attest_p.add_argument("--scheduler-kind", choices=sorted(hetzner_driver.REAPER_SCHEDULER_KINDS), required=True)
     attest_p.add_argument("--scheduler-id", required=True)
     return parser
 
