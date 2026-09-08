@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -139,6 +140,70 @@ class LeanExploreVenvServeTests(unittest.TestCase):
             env=self.env, capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_generated_api_config_projects_private_key_through_launcher(self) -> None:
+        venv = self._venv()
+        site = next((venv / "lib").glob("python3.*/site-packages"))
+        package = site / "lean_explore"
+        mcp = package / "mcp"
+        mcp.mkdir(parents=True)
+        for path in (package / "__init__.py", mcp / "__init__.py", mcp / "tools.py"):
+            path.write_text("", encoding="utf-8")
+        canary = "LEANEXPLORE-GENERATED-CONFIG-CANARY"
+        (package / "api.py").write_text(
+            "import os\n"
+            "class ApiClient:\n"
+            "    def __init__(self, *, api_key):\n"
+            f"        if api_key != {canary!r}:\n"
+            "            raise RuntimeError('configured key did not reach adapter')\n"
+            "        if any(name in os.environ for name in "
+            "('LEANEXPLORE_API_KEY', 'AAS_SKILL_SECRETS_FILE')):\n"
+            "            raise RuntimeError('credential environment was not scrubbed')\n",
+            encoding="utf-8",
+        )
+        (mcp / "app.py").write_text(
+            "class App:\n"
+            "    def run(self, *, transport):\n"
+            "        if transport != 'stdio':\n"
+            "            raise RuntimeError('unexpected transport')\n"
+            "        print('{\"configured\": true}')\n"
+            "mcp_app = App()\n",
+            encoding="utf-8",
+        )
+        dist = site / "lean_explore-1.2.1.dist-info"
+        dist.mkdir()
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: lean-explore\nVersion: 1.2.1\n",
+            encoding="utf-8",
+        )
+        secrets = self.root / "lean-explore.env"
+        secrets.write_text(f"LEANEXPLORE_API_KEY={canary}\n", encoding="utf-8")
+        secrets.chmod(0o600)
+        snippet = subprocess.run(
+            [str(self.launcher), COMMAND, "config-snippet", "--backend", "api"],
+            env=self.env, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(snippet.returncode, 0, snippet.stderr)
+        command = json.loads(snippet.stdout)["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
+        env = {**self.env, "AAS_SKILL_VENV": str(venv), **command["env"]}
+        if "AAS_SKILL_SECRETS_FILE" in command["env"]:
+            env["AAS_SKILL_SECRETS_FILE"] = str(secrets)
+        completed = subprocess.run(
+            [command["command"], *command["args"]],
+            env=env, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), {"configured": True})
+        self.assertNotIn(canary, snippet.stdout + snippet.stderr + completed.stdout + completed.stderr)
+
+    def test_curated_api_config_uses_the_secret_file_pointer(self) -> None:
+        template = REPO / "canonical/templates/sample-arl-headless-driver-with-formal/curated_mcp.claude.example.json"
+        command = json.loads(template.read_text(encoding="utf-8"))["mcpServers"]["lean-explore"]
+        self.assertEqual(command["command"], "<ABSOLUTE_RUNTIME_ROOT>/run_skill.sh")
+        self.assertEqual(command["args"], [COMMAND, "serve", "--backend", "api"])
+        self.assertEqual(command["env"], {
+            "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
+        })
 
 
 if __name__ == "__main__":

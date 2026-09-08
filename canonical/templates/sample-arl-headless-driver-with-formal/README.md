@@ -96,7 +96,7 @@ not agent-writable, or re-copy from install each launch).
 ## Secrets
 
 - **Never** `source ~/.config/lean-explore/env` from samples.
-- Operator pre-exports `LEANEXPLORE_API_KEY` if Explore is needed.
+- Set the LeanExplore MCP server's `AAS_SKILL_SECRETS_FILE` env entry to an absolute owner-controlled, non-symlink `0600` file containing `LEANEXPLORE_API_KEY=<key>`, outside every loop tree.
 - Force tick redacts Bearer / api_key shapes in reports.
 
 ## Correct tool positions

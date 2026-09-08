@@ -107,7 +107,7 @@ def config_snippet_payload(backend: str) -> dict[str, Any]:
         "manual_live_use": manual_live_use(),
         "warnings": [
             "copy snippets manually into an MCP client config only after reviewing the target client",
-            "do not replace LEANEXPLORE_API_KEY placeholders in this repo or in generated artifacts",
+            "set AAS_SKILL_SECRETS_FILE only in an operator-owned client config to an absolute, owner-controlled, non-symlink 0600 env file containing LEANEXPLORE_API_KEY; never fill placeholders in this repo or generated artifacts",
             "local backend requires user-managed LeanExplore data prepared outside this repo",
         ],
     })
@@ -117,8 +117,8 @@ def config_snippet_payload(backend: str) -> dict[str, Any]:
 def smoke_payload() -> dict[str, Any]:
     api_snippet = config_snippet_payload("api")
     local_snippet = config_snippet_payload("local")
-    serialized = json.dumps([api_snippet, local_snippet], sort_keys=True)
-    local_stdio = json.dumps(local_snippet["local_stdio_mcp_config"], sort_keys=True)
+    api_env = api_snippet["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]["env"]
+    local_env = local_snippet["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]["env"]
     payload = base_payload()
     payload.update({
         "smoke_mode": "offline",
@@ -130,8 +130,10 @@ def smoke_payload() -> dict[str, Any]:
             "api": local_stdio_command("api"),
             "local": local_stdio_command("local"),
         },
-        "api_snippet_contains_placeholder": "LEANEXPLORE_API_KEY" in serialized,
-        "local_snippet_omits_api_key": "LEANEXPLORE_API_KEY" not in local_stdio,
+        "api_snippet_contains_placeholder": api_env == {
+            "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
+        },
+        "local_snippet_omits_api_key": local_env == {},
         "manual_live_use": manual_live_use(),
     })
     return payload
@@ -207,7 +209,7 @@ def local_stdio_command(backend: str) -> dict[str, Any]:
         "env": {},
     }
     if backend == "api":
-        command["env"]["LEANEXPLORE_API_KEY"] = "<set from your secret store>"
+        command["env"]["AAS_SKILL_SECRETS_FILE"] = "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>"
     return command
 
 

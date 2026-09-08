@@ -78,8 +78,12 @@ Start the adapter through the launcher, which admits the venv before serving:
 
 The emitted local stdio snippet uses the absolute managed `run_skill.sh` launcher
 with args `["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "api"]`
-or the corresponding local backend. API mode uses the `LEANEXPLORE_API_KEY`
-placeholder; local mode assumes a user-managed LeanExplore cache such as
+or the corresponding local backend. For API mode, replace the
+`AAS_SKILL_SECRETS_FILE` placeholder only in your operator-owned client config
+with an absolute path to an owner-controlled file containing
+`LEANEXPLORE_API_KEY=<key>`. Use mode `0600`, no symlinks, and keep the file
+outside agent-writable loop trees. Never fill placeholders in this repo or
+generated artifacts. Local mode assumes a user-managed LeanExplore cache such as
 `~/.lean_explore/cache/`. Serving requires exactly `lean-explore==1.2.1` in the
 admitted venv.
 
