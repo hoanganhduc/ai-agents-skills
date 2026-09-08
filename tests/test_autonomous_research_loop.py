@@ -3526,6 +3526,8 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux bubblewrap gate")
     def test_bwrap_gate_accepts_user_owned_binary(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
         arl, _gf = self._runtime_modules()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -62,6 +62,8 @@ def _attested_node_available() -> bool:
 )
 class OpenClawTargetV2Tests(unittest.TestCase):
     def test_openclaw_accepts_owner_controlled_node_and_refuses_bad_modes(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
         with openclaw_root() as root:
             executable = fake_openclaw(root)
             parent = root / "node-runtime"

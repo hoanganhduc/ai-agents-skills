@@ -61,6 +61,10 @@ _RESOURCE_ENV = {
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux binary attestation")
 class OwnerControlledHostBinaryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+
     def test_owner_controlled_binary_and_existing_link_rule(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -49,6 +49,8 @@ class ZoteroSendQueueTests(unittest.TestCase):
         cls.queue = _load_module()
 
     def _delivery_candidates(self, root: Path) -> tuple[Path, Path]:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
         cli = root / ".local/lib/node_modules/openclaw/openclaw.mjs"
         node = root / ".local/bin/node"
         for path in (cli, node):
