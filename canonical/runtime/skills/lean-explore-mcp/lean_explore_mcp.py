@@ -118,7 +118,7 @@ def smoke_payload() -> dict[str, Any]:
     api_snippet = config_snippet_payload("api")
     local_snippet = config_snippet_payload("local")
     api_env = api_snippet["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]["env"]
-    local_env = local_snippet["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]["env"]
+    local_stdio = json.dumps(local_snippet["local_stdio_mcp_config"], sort_keys=True)
     payload = base_payload()
     payload.update({
         "smoke_mode": "offline",
@@ -133,7 +133,7 @@ def smoke_payload() -> dict[str, Any]:
         "api_snippet_contains_placeholder": api_env == {
             "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
         },
-        "local_snippet_omits_api_key": local_env == {},
+        "local_snippet_omits_api_key": "LEANEXPLORE_API_KEY" not in local_stdio,
         "manual_live_use": manual_live_use(),
     })
     return payload
