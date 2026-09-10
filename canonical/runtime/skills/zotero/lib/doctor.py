@@ -134,6 +134,16 @@ def _check_gdrive(config):
 
 
 def _check_getscipapers():
+    """getscipapers is a companion retrieval tool, not a zot dependency.
+
+    `manifest/skills.yaml` declares it for `getscipapers-requester`, never for
+    `zotero`: retrieval runs as its own skill and hands the downloaded file to
+    `zot add`. The managed launcher also fixes PATH to /usr/bin:/bin, so a
+    user-local install is invisible to `shutil.which` by construction. Reporting
+    its absence as `ok: False` marks a healthy install faulty, so the absence is
+    reported the way the other optional integrations report theirs -- skipped.
+    Both probes stay: either one succeeding is still worth reporting.
+    """
     # Check PATH first
     if shutil.which("getscipapers"):
         return {"name": "getscipapers", "ok": True, "message": "Found in PATH"}
@@ -151,8 +161,9 @@ def _check_getscipapers():
             return {"name": "getscipapers", "ok": True, "message": "Available as python module"}
     except Exception:
         pass
-    return {"name": "getscipapers", "ok": False,
-            "message": "Not found. Install in workspace venv or add to sandbox Dockerfile"}
+    return {"name": "getscipapers", "ok": True,
+            "message": "Not reachable from this skill (optional; skipped). "
+                       "Install it in the skill venv to use it from zot."}
 
 
 def _check_staging_dir(config):
