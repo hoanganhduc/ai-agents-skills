@@ -5,7 +5,8 @@ this installer, so a managed settings entry is identified by two tag fields,
 ``_managedBy`` and ``_id``. The pair (MANAGED_BY, managed_id) makes an entry
 idempotently upsertable and removable without moving or modifying any
 user-authored entry. A full merge-then-remove round trip restores the file to
-its pre-merge shape.
+its pre-merge shape, except that a stripped copy of the managed entry adopted
+by the merge leaves with it.
 """
 
 from __future__ import annotations
@@ -46,6 +47,23 @@ def is_managed_entry(entry: Any, managed_id: str) -> bool:
     )
 
 
+def _is_orphaned_entry(item: Any, tagged: dict[str, Any]) -> bool:
+    """True when ``item`` is an untagged copy of exactly what this merge writes.
+
+    A settings writer that keeps only the keys it knows about strips
+    ``_managedBy`` and ``_id`` and leaves the entry itself behind, unowned. The
+    next merge would find no managed entry and append a second copy, so the
+    stripped entry is treated as this installer's own orphan and re-tagged in
+    place. The match is exact: any extra field, or any difference in the hook
+    command, keeps the entry user-authored and untouched.
+    """
+    if not isinstance(item, dict):
+        return False
+    if MANAGED_BY_KEY in item or MANAGED_ID_KEY in item:
+        return False
+    return item == {k: v for k, v in tagged.items() if k not in (MANAGED_BY_KEY, MANAGED_ID_KEY)}
+
+
 def _hook_event_list(settings: dict[str, Any], event: str) -> list[Any]:
     hooks = settings.get("hooks")
     if hooks is None:
@@ -69,9 +87,14 @@ def merge_hook_entry(
     """Idempotently upsert one managed hook entry under ``hooks.<event>``.
 
     The entry is tagged with the managed markers. If a managed entry with the
-    same id already exists it is replaced; otherwise the entry is appended.
-    User-authored entries are never moved or modified. Returns
-    ``(merged, changed, created)`` where ``created`` records whether the merge
+    same id already exists it is replaced; otherwise the entry is appended. An
+    untagged entry identical to what this merge writes is adopted in place
+    rather than duplicated (see :func:`_is_orphaned_entry`), and a repeat of the
+    owned entry is collapsed to one, so an external writer that strips the
+    markers cannot make the hook accumulate copies. Every other entry is never
+    moved or modified.
+
+    Returns ``(merged, changed, created)`` where ``created`` records whether the merge
     had to create the ``hooks`` object and/or the ``hooks.<event>`` list. Pass
     ``created`` to :func:`remove_hook_entry` so uninstall prunes only what the
     merge added and never a user-authored empty container.
@@ -83,17 +106,22 @@ def merge_hook_entry(
     existing = _hook_event_list(result, event)
     tagged: dict[str, Any] = {MANAGED_BY_KEY: MANAGED_BY, MANAGED_ID_KEY: managed_id}
     tagged.update({k: v for k, v in entry.items() if k not in (MANAGED_BY_KEY, MANAGED_ID_KEY)})
-    new_list = list(existing)
-    replaced = False
-    for index, item in enumerate(new_list):
-        if is_managed_entry(item, managed_id):
-            if item == tagged:
-                return result, False, created
-            new_list[index] = tagged
-            replaced = True
-            break
-    if not replaced:
+    new_list: list[Any] = []
+    placed = False
+    for item in existing:
+        if is_managed_entry(item, managed_id) or _is_orphaned_entry(item, tagged):
+            # The first occurrence keeps its position; any further copy of the
+            # same entry -- tagged or stripped -- is a duplicate of the one
+            # entry this installer owns and is dropped.
+            if not placed:
+                new_list.append(tagged)
+                placed = True
+            continue
+        new_list.append(item)
+    if not placed:
         new_list.append(tagged)
+    if new_list == list(existing):
+        return result, False, created
     hooks = result.setdefault("hooks", {})
     hooks[event] = new_list
     return result, True, created
@@ -119,7 +147,9 @@ def remove_hook_entry(
     the ``hooks.<event>`` list and/or the ``hooks`` object when, and only when,
     the merge created them. Without it, an emptied container is left in place so
     a user-authored empty container is never deleted. With it, a full
-    merge-then-remove round trip restores the file to its pre-merge shape.
+    merge-then-remove round trip restores the file to its pre-merge shape --
+    minus any stripped copy of the managed entry that the merge adopted, which
+    belongs to this installer and leaves with the entry it duplicated.
     Returns ``(merged, changed)``.
     """
     created = created or {}
