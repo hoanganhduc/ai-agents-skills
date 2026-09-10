@@ -337,6 +337,14 @@ def _require_durable_reaper_for_live_provisioning(config: Any) -> dict[str, Any]
 def runtime_workspace() -> Path:
     """Resolve the broker data workspace (config, state, and scope identity).
 
+    An explicit ``AAS_AUTOLOOP_COMPUTE_WORKSPACE`` pin is the operator's own
+    selection and outranks everything else, because the scheduled reaper and
+    the provisioner must derive one identity from one configuration file: if
+    they disagree, every lease-gated verb fails closed against its own billing
+    stopper.  The lane entrypoints already fail closed on a malformed pin, so
+    an unusable pin here simply falls through rather than restating that policy
+    in a second, differently worded gate.
+
     The managed runner exports ``AAS_RUNTIME_WORKSPACE``, but an immutable
     exact-pin generation exports its own read-only tree there, which carries no
     broker configuration, cannot hold broker state, and moves on every
@@ -345,6 +353,15 @@ def runtime_workspace() -> Path:
     otherwise fall back to ``workspace_root()``, whose environment the
     entrypoint has already normalized the same way for every lane.
     """
+    pinned = os.environ.get("AAS_AUTOLOOP_COMPUTE_WORKSPACE")
+    if pinned:
+        path = Path(pinned).expanduser()
+        if not path.is_absolute():
+            raise HetznerDriverError(
+                "AAS_AUTOLOOP_COMPUTE_WORKSPACE must name an absolute path"
+            )
+        if default_config_path(path).is_file():
+            return path.resolve()
     selected = os.environ.get("AAS_RUNTIME_WORKSPACE")
     if selected:
         path = Path(selected).expanduser()

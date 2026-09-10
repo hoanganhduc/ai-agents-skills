@@ -2615,6 +2615,89 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(captured["config"].install_id, "test-install")
         self.assertEqual(Path(captured["state_root"]).is_relative_to(ws.resolve()), True)
 
+    def test_runtime_workspace_prefers_the_compute_pin_over_a_configured_runner_workspace(self) -> None:
+        """The runner exports its own runtime workspace unconditionally, and that workspace
+        can carry a broker config of its own. An explicit operator pin must still win, or
+        the scheduled reaper and the provisioner derive different install scopes from the
+        same configuration file and every lease-gated verb fails closed."""
+        config = mock.Mock(install_id="same-install")
+        for name in ("runner-workspace", "pinned-workspace"):
+            config_dir = self.tmp / name / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "research-compute.toml").write_text("", encoding="utf-8")
+        runner = self.tmp / "runner-workspace"
+        pinned = self.tmp / "pinned-workspace"
+
+        with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(runner)}):
+            runner_scope = hetzner_driver.install_scope(config)
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AAS_RUNTIME_WORKSPACE": str(runner),
+                "AAS_AUTOLOOP_COMPUTE_WORKSPACE": str(pinned),
+            },
+        ):
+            resolved = hetzner_driver.runtime_workspace()
+            pinned_scope = hetzner_driver.install_scope(config)
+
+        self.assertEqual(resolved, pinned.resolve())
+        self.assertNotEqual(runner_scope, pinned_scope)
+
+    def test_runtime_workspace_ignores_a_compute_pin_without_broker_config(self) -> None:
+        """An absolute pin that carries no broker configuration cannot hold broker state,
+        so resolution falls through to the runner export exactly as before."""
+        runner = self.tmp / "runner-workspace"
+        (runner / "config").mkdir(parents=True)
+        (runner / "config" / "research-compute.toml").write_text("", encoding="utf-8")
+        pinned = self.tmp / "configless-pin"
+        pinned.mkdir()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AAS_RUNTIME_WORKSPACE": str(runner),
+                "AAS_AUTOLOOP_COMPUTE_WORKSPACE": str(pinned),
+            },
+        ):
+            resolved = hetzner_driver.runtime_workspace()
+        self.assertEqual(resolved, runner.resolve())
+
+    def test_runtime_workspace_rejects_a_relative_compute_pin(self) -> None:
+        with mock.patch.dict(os.environ, {"AAS_AUTOLOOP_COMPUTE_WORKSPACE": "relative/pin"}):
+            with self.assertRaises(hetzner_driver.HetznerDriverError):
+                hetzner_driver.runtime_workspace()
+
+    def test_reaper_main_prefers_the_compute_pin_over_a_configured_runner_workspace(self) -> None:
+        """The live failure this closes: the scheduled reaper inherits AAS_RUNTIME_WORKSPACE
+        from the runner, that workspace happens to hold its own research-compute.toml, and
+        the billing stopper silently guards a different lane than the operator configured."""
+        ws = _make_workspace(self.tmp / "pinned-ws")
+        runner = _make_workspace(
+            self.tmp / "runner-ws",
+            config_toml=CONFIG_TOML.replace(
+                'install_id = "test-install"', 'install_id = "runner-install"'
+            ),
+        )
+        captured = {}
+
+        def _fake_reap(*, config, state_root, dry_run, heartbeat_max_seconds):
+            captured["config"] = config
+            captured["state_root"] = state_root
+            return {"action": "reap", "errors": []}
+
+        overrides = {
+            "AAS_RUNTIME_WORKSPACE": str(runner),
+            "OPENCLAW_WORKSPACE": str(runner),
+            "CODEX_RUNTIME_WORKSPACE": str(runner),
+            "AAS_AUTOLOOP_COMPUTE_WORKSPACE": str(ws),
+        }
+        with mock.patch.dict(os.environ, overrides), \
+                mock.patch.object(hetzner_reaper, "reap", _fake_reap), \
+                contextlib.redirect_stdout(io.StringIO()):
+            exit_code = hetzner_reaper.main(["reap", "--dry-run"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["config"].install_id, "test-install")
+        self.assertTrue(Path(captured["state_root"]).is_relative_to(ws.resolve()))
+
     def test_host_pin_uses_the_plain_default_port_known_hosts_form(self) -> None:
         """OpenSSH looks up the plain host form for default-port connections; the bracketed
         [ip]:22 form matches only non-standard ports, so a bracketed pin would fail strict
