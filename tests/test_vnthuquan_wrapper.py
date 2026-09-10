@@ -429,8 +429,8 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
     DOCTOR_DOWN = {
         "ok": False,
         "version": "0.1.2.dev0",
-        "config_path": "/home/u/.config/vnthuquan/config.json",
-        "download_dir": "/home/u/Downloads/vnthuquan",
+        "config_path": "/home/.../.config/vnthuquan/config.json",
+        "download_dir": "/home/.../Downloads/vnthuquan",
         "download_dir_exists": False,
         "mirror": {
             "url": "http://vietnamthuquan.eu",

@@ -506,7 +506,7 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
     def test_live_config_files_refuse_a_pinned_agent_home(self) -> None:
         """A shared contract must gate on the runtime root it runs for, not one agent's home."""
         pinned = [f"~/{home}/workspace/config/research-compute.toml" for home in LIVE_CHECK_AGENT_HOMES]
-        pinned += ["/home/example/.claude/skills/zotero/config.json",   # absolute, home in the middle
+        pinned += ["/home/.../.claude/skills/zotero/config.json",   # absolute, home in the middle
                    "~\\.grok\\config.json",                            # Windows separators
                    "~/.OpenClaw/workspace/config.toml",                 # case-insensitive filesystems
                    "~/.config/OpenCode/config.json"]
