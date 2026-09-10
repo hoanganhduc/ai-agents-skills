@@ -502,7 +502,7 @@ def site_packages_bytes(venv: Path) -> int:
 
 
 def _check_adoptable(venv: Path, attested: Path) -> None:
-    """Step 3: an existing venv is adopted only when the attested Python built it."""
+    """An existing venv is adopted only when the attested Python built it."""
     attested_real = os.path.realpath(attested)
     values, _ = _read_pyvenv_cfg(Path(venv) / "pyvenv.cfg")
     bin_python = Path(venv) / "bin" / "python"

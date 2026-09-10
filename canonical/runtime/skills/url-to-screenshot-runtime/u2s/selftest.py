@@ -396,7 +396,8 @@ def main(argv: list[str]) -> int:
         "passed": sum(1 for _, ok, _ in c.results if ok),
         "total": len(c.results),
         "failures": [{"check": n, "detail": d} for n, ok, d in c.results if not ok],
-        # precedent offline-safety keys (machine-checked by validate_smoke_output)
+        # precedent offline-safety keys (machine-checked by the declarative runtime
+        # smoke contract in manifest/runtime.yaml)
         "status": "ok" if c.passed else "failed",
         "smoke_mode": "offline",
         "network_required": False,
