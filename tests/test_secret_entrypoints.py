@@ -2521,6 +2521,16 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             "~/.config/systemd/user/hetzner-reaper.timer",
             "owner-private 0600",
             "not evidence outside the agent's authority",
+            # A second scheduler leg does not add redundancy: the lease holds one
+            # scheduler record, so the leg that does not match the configuration
+            # fails on every pass while still reaping. The guide has to name that
+            # failure verbatim, or the operator reads a permanently red unit as a
+            # broken reaper and retires the wrong leg.
+            "Exactly one scheduler leg",
+            "reaper scheduler identity does not match configuration",
+            "system-scope `systemd`",
+            "300 seconds of slack",
+            "config_digest",
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, guide)
