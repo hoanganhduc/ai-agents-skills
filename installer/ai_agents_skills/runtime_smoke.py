@@ -28,20 +28,6 @@ from .state import load_state, sha256_file
 from .verify import verify, verify_artifact
 
 
-RUNTIME_SMOKE_SKILLS = (
-    "autonomous-research-loop-runtime",
-    "axiom-axle-mcp",
-    "deep-research-workflow",
-    "formal-skeleton-helper",
-    "get-available-resources",
-    "graph-verifier",
-    "lean-explore-mcp",
-    "lean-formalization-intake",
-    "lean-research-library",
-    "lean-strict-verification-gate",
-    "self-improving-agent",
-)
-
 DECLARED_RUNTIME_EXCLUSION_STATUSES = frozenset(
     {"manual-native", "doctor-only", "static-only"}
 )
@@ -2026,10 +2012,3 @@ def smoke_output_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
-
-
-def parse_json_stdout(stdout: str) -> dict[str, Any]:
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"runtime smoke command did not emit JSON: {exc}") from exc
