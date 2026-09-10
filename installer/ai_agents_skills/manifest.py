@@ -436,6 +436,11 @@ RUNTIME_POINTER_AUTHORITIES = frozenset({
     "AAS_ZOTERO_SECRETS_FILE", "AAS_CALIBRE_SECRETS_FILE", "AAS_FILE_DELIVERY_SECRETS_FILE",
     "SEND_EMAIL_SECRETS_FILE", "REMOTE_BRIDGE_SECRETS_FILE",
 })
+# Agent homes a live check must never pin, one per install target in manifest/target-state.yaml.
+# The contract is shared by every target, so a literal `~/.openclaw/...` gates all of them on one
+# agent's configuration; `{workspace}` expands per runtime root and is the portable form.
+LIVE_CHECK_AGENT_HOMES = (".openclaw", ".codex", ".claude", ".deepseek", ".copilot", ".gemini",
+                          ".grok", ".kimi-code", ".aider", ".chatgpt-local-coder", ".config/opencode")
 RUNTIME_LIVE_MUTATING_VERBS = {
     "zotero": frozenset({"add", "update", "trash", "delete", "send", "purge"}),
     "calibre": frozenset({"add", "update", "add-tag", "remove-tag", "remove", "sync", "clean", "convert"}),
@@ -463,6 +468,17 @@ RUNTIME_JSON_PATH_RE = re.compile(
 )
 RUNTIME_ENV_NAME_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 RUNTIME_SECRET_NAME_RE = re.compile(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|AUTH")
+
+
+def _pinned_agent_homes(path: str) -> list[str]:
+    # Case-folded so a home still matches on the case-insensitive filesystems macOS and Windows use.
+    parts = tuple(part.lower() for part in PurePosixPath(path.replace("\\", "/")).parts)
+    homes = []
+    for home in LIVE_CHECK_AGENT_HOMES:
+        run = tuple(home.split("/"))
+        if any(parts[start:start + len(run)] == run for start in range(len(parts) - len(run) + 1)):
+            homes.append(home)
+    return homes
 
 
 def _runtime_object(value: Any, allowed: set[str] | frozenset[str], owner: str) -> dict[str, Any]:
@@ -707,6 +723,12 @@ def _validate_runtime_case(skill: str, contract: Any, kind: str, runtime_source_
         paths = requires.get("config_files", [])
         if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
             raise ManifestError(f"{owner} requires.config_files must be a list of non-empty paths")
+        pinned = sorted({home for path in paths for home in _pinned_agent_homes(path)})
+        if pinned:
+            raise ManifestError(
+                f"{owner} requires.config_files pins an agent home ({', '.join(pinned)}); "
+                "use {workspace} so each runtime root gates on its own config"
+            )
         mutating = set(args) & RUNTIME_LIVE_MUTATING_VERBS.get(skill, frozenset())
         if skill == "hetzner-research-compute" and "reap" in args and "--dry-run" not in args:
             mutating.add("reap")
