@@ -5402,7 +5402,7 @@
               "AAS_COMPUTE_SECRETS_FILE"
             ],
             "config_files": [
-              "~/.openclaw/workspace/config/research-compute.toml"
+              "{workspace}/config/research-compute.toml"
             ]
           },
           "expect": {
@@ -5435,7 +5435,7 @@
               "AAS_COMPUTE_SECRETS_FILE"
             ],
             "config_files": [
-              "~/.openclaw/workspace/config/research-compute.toml"
+              "{workspace}/config/research-compute.toml"
             ]
           },
           "expect": {

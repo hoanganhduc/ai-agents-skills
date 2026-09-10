@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path, PurePosixPath
 
 from installer.ai_agents_skills.agents import DEFAULT_AGENT_NAMES
+from installer.ai_agents_skills.manifest import _pinned_agent_homes
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,14 @@ class TargetStateContractTests(unittest.TestCase):
             if not target.get("inventory_only")
         }
         self.assertEqual(installer_targets, set(DEFAULT_AGENT_NAMES))
+
+    def test_every_target_home_is_refused_inside_a_live_check_config_path(self) -> None:
+        """A live check is shared by every target, so no target's home may gate the others."""
+        for name, target in self.data["targets"].items():
+            home = target["home"]
+            with self.subTest(target=name, home=home):
+                self.assertTrue(_pinned_agent_homes(f"~/{home}/workspace/config/example.toml"),
+                                f"{name} home {home} is not covered by LIVE_CHECK_AGENT_HOMES")
 
     def test_file_delivery_queue_declares_distinct_host_authority_and_replay_state(self) -> None:
         queue = self.data["runtime_credential_authorities"]["file-delivery-queue"]

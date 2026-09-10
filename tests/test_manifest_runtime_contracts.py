@@ -29,6 +29,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills import manifest as runtime_manifest
 from installer.ai_agents_skills.manifest import (
+    LIVE_CHECK_AGENT_HOMES,
     REPO_ROOT,
     ManifestError,
     load_manifests,
@@ -501,6 +502,24 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
             self._refuses(self._contract("live_check", read_only=literal), "live_check", "read_only")
         for requires in (None, {"network": 1}, {"network": False}, {"network": True, "unknown": True}, {"network": True, "pointer_env": ["OPENAI_API_KEY"]}, {"network": True, "pointer_env": "AAS_SKILL_SECRETS_FILE"}, {"network": True, "pointer_env": [[]]}, {"network": True, "config_files": [""]}, {"network": True, "config_files": "~/.config/example.json"}):
             self._refuses(self._contract("live_check", requires=requires), "live_check", "requires")
+
+    def test_live_config_files_refuse_a_pinned_agent_home(self) -> None:
+        """A shared contract must gate on the runtime root it runs for, not one agent's home."""
+        pinned = [f"~/{home}/workspace/config/research-compute.toml" for home in LIVE_CHECK_AGENT_HOMES]
+        pinned += ["/home/example/.claude/skills/zotero/config.json",   # absolute, home in the middle
+                   "~\\.grok\\config.json",                            # Windows separators
+                   "~/.OpenClaw/workspace/config.toml",                 # case-insensitive filesystems
+                   "~/.config/OpenCode/config.json"]
+        for path in pinned:
+            with self.subTest(path=path):
+                self._refuses(self._contract("live_check", requires={"network": True, "config_files": [path]}),
+                              "live_check", "pins an agent home")
+        # `{workspace}` expands per runtime root; a vendor tool's own home and a bare XDG
+        # directory belong to no install target.
+        for path in ("{workspace}/config/research-compute.toml", "~/.kaggle/access_token",
+                     "~/.config/example.json", "~/opencode/config.json"):
+            with self.subTest(path=path):
+                self._validate(self._contract("live_check", requires={"network": True, "config_files": [path]}), "live_check")
 
     def test_live_checks_refuse_each_per_skill_mutating_verb(self) -> None:
         verbs = {
