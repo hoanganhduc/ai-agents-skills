@@ -136,10 +136,12 @@ In particular, the group-writable `~/.local/share/docling-venv` remains a
 direct-wrapper-only legacy environment.
 
 Execute `run_skill.sh` directly so its `#!/bin/bash -p` shebang applies. The
-launcher uses system Python when the skill venv is absent; unavailable
-third-party imports then fail at startup. A present but inadmissible venv
-stops the launch with exit `127` and its refusal reason. Override
-`AAS_SKILL_VENV` per invocation when a different admitted venv is required.
+launcher uses system Python only when `AAS_SKILL_VENV` is unset and the default
+`~/.agents_skills_venv` is absent; unavailable third-party imports then fail at
+startup. An `AAS_SKILL_VENV` that is set but missing, and a venv that is
+present but inadmissible, both stop the launch with exit `127` and its refusal
+reason. Override `AAS_SKILL_VENV` per invocation when a different admitted venv
+is required.
 
 ## Restored runtime secret projection
 

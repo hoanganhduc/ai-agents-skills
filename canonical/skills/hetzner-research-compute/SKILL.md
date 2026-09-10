@@ -14,9 +14,9 @@ On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
 `AAS_SKILL_VENV`). From the repository, run
 `make provision-skill-python ARGS="--apply --real-system"`
 and check it with `make verify-skill-python`.
-If the venv is absent, the launcher uses system Python; any unavailable
-third-party imports fail at startup. A refused venv stops the launch with
-exit `127` and a reason.
+If no venv is configured, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A venv that is configured but missing,
+or present but refused, stops the launch with exit `127` and a reason.
 
 This skill declares no Python modules; its stdlib commands can use system
 Python when the shared venv is absent.

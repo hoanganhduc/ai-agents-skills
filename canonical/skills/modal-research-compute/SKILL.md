@@ -14,9 +14,9 @@ On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
 `AAS_SKILL_VENV`). From the repository, run
 `make provision-skill-python ARGS="--apply --real-system"`
 and check it with `make verify-skill-python`.
-If the venv is absent, the launcher uses system Python; any unavailable
-third-party imports fail at startup. A refused venv stops the launch with
-exit `127` and a reason.
+If no venv is configured, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A venv that is configured but missing,
+or present but refused, stops the launch with exit `127` and a reason.
 
 ## Windows Runtime Commands
 
@@ -165,7 +165,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 - CPU-heavy combinatorial workloads should default to remote CPU or high-memory CPU, not GPU.
 - GPU use should be explicit in the manifest or clearly justified by the workload.
 - `doctor` and `plan` work without a deployed Modal app. Modal-backed submission and `deploy` need a Modal-authenticated host; GitHub Actions wait/fetch use an attempt-unique dispatch id plus the recorded exact GHA run id and `gh`, not Modal credentials. Unverifiable GHA timing stays reserved, while verified billed-equivalent usage remains accrued through the UTC billing cycle. Kaggle and Hetzner plans hand off to their lane drivers.
-- Linux hosts become Modal-ready after `python3 -m pip install --user --upgrade modal` and `modal token set` or `modal token new`.
+- Linux hosts become Modal-ready after `make provision-skill-python ARGS="--apply --real-system"` installs `modal` (`workspace/research_compute/requirements-modal.txt`) into the admitted skill venv, then `<skill-venv>/bin/modal token set` or `modal token new`. The managed launcher runs the interpreter isolated and pins the child `PATH` to `<skill-venv>/bin:/usr/bin:/bin`, so a `pip install --user` copy is neither importable nor on `PATH`.
 - Windows hosts should install `modal` into the selected Python environment and ensure `modal.exe` is on `PATH` so broker deploy can find it.
 - Broker state persists under the runtime memories tree, while fetched outputs materialize under the caller workspace by default.
 - One-time per machine, run `bootstrap`: it generates `research-compute.toml` from the example if absent (never overwriting an existing one), authenticates `gh`, checks deps, and runs `doctor`. Use this to set up a host that does not have the full system installer.
