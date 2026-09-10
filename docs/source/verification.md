@@ -235,9 +235,9 @@ descriptor-read, SHA-256 checked, copied into an isolated scratch runtime, and
 only the verified scratch runner is executed.
 
 The scratch copy is owner-controlled and passes the normal credential gate;
-neither harness relaxes `credential_runtime_enforcement` or any launcher check.
+neither harness relaxes `trusted_credential_launcher` or any launcher check.
 Each offline case uses a private synthetic HOME and drops inherited interpreter
-and venv overrides, so temporary runtime smoke (T2) uses system Python. Its
+and venv overrides, so temporary `runtime-smoke` uses system Python. Its
 environment includes secret canaries and the live-side-effect gate. The
 `credential_launch` section checks a positive credential-bearing launch and a
 negative launch with a group-writable scratch launcher: the latter must exit
@@ -246,16 +246,17 @@ credential-bearing offline contract, the canary is `skipped`, which fails
 `--require-complete-coverage`; it is `not-applicable` on Windows.
 
 Before replacing HOME, the harness observes the operator's `AAS_SKILL_VENV` or
-`~/.agents_skills_venv`. The `skill_venv` section reports `admitted`, `absent`, or
-`refused` with the reason. This observation does not fail system-only T2.
-Installed functional cases with nonempty `requires_python_modules` use the
-admitted real venv through an explicit `AAS_SKILL_VENV` while retaining the
-synthetic HOME. An absent venv or missing imports skips those cases with a
-reason; cases requiring no modules run on system Python when the venv is
-absent. A refused venv fails every installed functional case. Functional cases
-exclude parent secret canaries so their no-key fixtures remain no-key, and
-still pass through the normal launcher. `--require-functional` makes any
-skipped or failed functional row fail the installed-runtime result.
+`~/.agents_skills_venv`. The `skill_venv` section reports `admitted`, `absent`,
+or `refused` with the reason. This observation does not fail a system-only
+temporary `runtime-smoke`. Installed functional cases with nonempty
+`requires_python_modules` use the admitted real venv through an explicit
+`AAS_SKILL_VENV` while retaining the synthetic HOME. An absent venv or missing
+imports skips those cases with a reason; cases requiring no modules run on
+system Python when the venv is absent. A refused venv fails every installed
+functional case. Functional cases exclude parent secret canaries so their
+no-key fixtures remain no-key, and still pass through the normal launcher.
+`--require-functional` makes any skipped or failed functional row fail the
+installed-runtime result.
 
 `installed-runtime-smoke --live` additionally runs declared read-only live
 checks against the real installed runtime, real HOME, and operator environment,

@@ -13,9 +13,9 @@ On Linux, the managed launcher uses `~/.agents_skills_venv` (override with
 and check it with `make verify-skill-python`. This skill is opt-in; use the
 explicit skill selection shown here, or add `--include-opt-in` to provision
 all opt-in skills.
-If the venv is absent, the launcher uses system Python; any unavailable
-third-party imports fail at startup. A refused venv stops the launch with
-exit `127` and a reason.
+If no venv is configured, the launcher uses system Python; any unavailable
+third-party imports fail at startup. A venv that is configured but missing,
+or present but refused, stops the launch with exit `127` and a reason.
 
 ## Windows Runtime Commands
 
