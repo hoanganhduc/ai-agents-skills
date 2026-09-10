@@ -4059,6 +4059,41 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), "reaper lease publication runs as the agent user, not root")
         self.assertEqual(list(self.tmp.rglob("*")), before)
 
+    @_GETEUID_POSIX_SKIP
+    def test_write_reaper_lease_rejects_a_foreign_scheduler_identity(self) -> None:
+        """A second scheduler leg cannot attest. The lease is one file holding one scheduler
+        record, so an operator who installs both a cron and a systemd leg gets a leg that fails
+        permanently rather than one that alternates."""
+        before = list(self.tmp.rglob("*"))
+        with self.assertRaises(hetzner_reaper.HetznerReaperError) as raised:
+            hetzner_reaper.write_reaper_lease(
+                config=self.config, scheduler_kind="cron", scheduler_id="cron:user:other",
+            )
+        self.assertEqual(str(raised.exception), "reaper scheduler identity does not match configuration")
+        self.assertEqual(list(self.tmp.rglob("*")), before)
+
+    @_GETEUID_POSIX_SKIP
+    def test_write_reaper_lease_rejects_an_unknown_scheduler_kind(self) -> None:
+        before = list(self.tmp.rglob("*"))
+        with self.assertRaises(hetzner_reaper.HetznerReaperError) as raised:
+            hetzner_reaper.write_reaper_lease(
+                config=self.config, scheduler_kind="init.d",
+                scheduler_id=self.config.hetzner_reaper_scheduler_id,
+            )
+        self.assertEqual(str(raised.exception), "reaper scheduler identity does not match configuration")
+        self.assertEqual(list(self.tmp.rglob("*")), before)
+
+    def test_lease_verification_requires_a_configured_scheduler_id(self) -> None:
+        """An absolute lease path alone is not enough: without a configured scheduler id there is
+        nothing to bind the lease to, so live provisioning refuses before it opens the file."""
+        self.config.hetzner_reaper_scheduler_id = ""
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as raised:
+            hetzner_driver._verify_durable_reaper_lease(self.config)
+        self.assertEqual(
+            str(raised.exception),
+            "live provisioning requires absolute reaper_lease_file and reaper_scheduler_id",
+        )
+
     @_STATE_DACL_SKIP
     def test_reaper_deletes_expired_poweredoff_orphans_keeps_active(self) -> None:
         now = 2_000_000.0
