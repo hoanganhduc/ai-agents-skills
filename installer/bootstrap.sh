@@ -53,7 +53,7 @@ fi
 
 if [ "${1:-}" = "--run-python" ]; then
   shift
-  PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" "$@"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" "$@"
 fi
 
 PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" -m installer.ai_agents_skills "$@"

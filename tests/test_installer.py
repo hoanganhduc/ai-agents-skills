@@ -3856,6 +3856,60 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("release-check: docs-check static-check sanitize-check test runtime-smoke", text)
         self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
 
+    def test_bootstrap_run_python_does_not_leave_bytecode_beside_sources(self) -> None:
+        """``--run-python`` executes canonical scripts in-process during tests.
+
+        Without bytecode suppression the loader writes ``__pycache__`` beside the
+        source it just executed.  Inside ``canonical/`` that file is a denied
+        runtime-inventory source, so it fails the *next* run rather than the one
+        that produced it.  ``Makefile`` exports the suppression, which is why the
+        leak only surfaces when the entrypoint is launched directly -- and why
+        this test clears the variable from the child environment first.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            module = work / "leaky_probe.py"
+            module.write_text("VALUE = 1\n", encoding="utf-8")
+            driver = work / "driver.py"
+            driver.write_text(
+                "import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('leaky_probe', sys.argv[1])\n"
+                "module = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(module)\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ)
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(REPO_ROOT / "installer" / "bootstrap.sh"),
+                    "--run-python",
+                    str(driver),
+                    str(module),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+                timeout=120,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual([str(path.relative_to(work)) for path in work.rglob("__pycache__")], [])
+
+    def test_windows_bootstrap_suppresses_bytecode_for_run_python(self) -> None:
+        """The Windows lane reaches the same loader through ``make.ps1 test``.
+
+        PowerShell is absent from the Linux runners, so the guarantee is pinned by
+        reading the branch rather than by launching it.
+        """
+        text = (REPO_ROOT / "installer" / "bootstrap_windows.ps1").read_text(encoding="utf-8")
+        branch = text.split('$args[0] -eq "--run-python"', 1)[1]
+        self.assertIn('$env:PYTHONDONTWRITEBYTECODE = "1"', branch)
+
     def test_python_compat_workflow_installs_tomli_before_tests(self) -> None:
         text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
         compat_job = text.split("  python-compat:\n", 1)[1].split("\n  macos:\n", 1)[0]
