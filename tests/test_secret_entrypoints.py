@@ -1954,6 +1954,51 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         os.name == "posix",
         "native Windows secret loading requires the managed PowerShell authority engine",
     )
+    def test_pointer_rejection_names_the_pointer_not_a_placeholder(self) -> None:
+        """A rejected key must name the pointer that carried it.
+
+        ``load_pointer_secret_env`` used to parse without ``source=``, so every
+        allow-list rejection read ``<secret-json>``/``<secret-env>`` and never
+        said which pointer was at fault.
+        """
+        loader_path = RUNTIME_SOURCE / "runners" / "load_secret_env.py"
+        spec = importlib.util.spec_from_file_location(
+            "aas_test_load_secret_env_source",
+            loader_path,
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        allowed = frozenset({"AXLE_API_KEY"})
+        cases = (
+            ("json", "pointer.json", '{"HCLOUD_TOKEN": "must-not-leak"}', "<secret-json>"),
+            ("env", "pointer.env", "HCLOUD_TOKEN=must-not-leak\n", "<secret-env>"),
+        )
+        for file_format, name, payload, placeholder in cases:
+            with self.subTest(file_format=file_format):
+                with tempfile.TemporaryDirectory() as tmp:
+                    secret = Path(tmp) / name
+                    secret.write_text(payload, encoding="utf-8")
+                    secret.chmod(0o600)
+                    pointer = "AAS_PROVIDER_SECRETS_FILE"
+                    with self.assertRaises(module.SecretEnvError) as caught:
+                        module.load_pointer_secret_env(
+                            pointer,
+                            allowed_keys=allowed,
+                            environ={pointer: str(secret)},
+                            file_format=file_format,
+                        )
+                    message = str(caught.exception)
+                    self.assertIn(pointer, message)
+                    self.assertIn("unsupported key HCLOUD_TOKEN", message)
+                    self.assertNotIn(placeholder, message)
+                    self.assertNotIn("must-not-leak", message)
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "native Windows secret loading requires the managed PowerShell authority engine",
+    )
     def test_loader_detects_in_place_mutation_even_when_mtime_is_restored(self) -> None:
         loader_path = RUNTIME_SOURCE / "runners" / "load_secret_env.py"
         spec = importlib.util.spec_from_file_location(
