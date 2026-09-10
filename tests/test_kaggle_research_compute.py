@@ -21,6 +21,8 @@ sys.dont_write_bytecode = True  # never write __pycache__ into the canonical run
 
 import ast
 import base64
+import contextlib
+import importlib
 import io
 import json
 import os
@@ -684,6 +686,39 @@ class KaggleConfigAndProbeTests(unittest.TestCase):
         finally:
             kaggle_backend.KAGGLEHUB_VALIDATE = prev
             os.environ.pop("KAGGLE_API_TOKEN", None)
+
+    def test_default_validate_keeps_stdout_clean_for_the_json_envelope(self) -> None:
+        """The real (unmocked) validate path must leave stdout untouched: callers reserve stdout
+        for a single JSON envelope, and kagglehub binds its console handler to whatever
+        sys.stdout is at import time. A stub `kagglehub` on sys.path reproduces that binding
+        offline -- it captures sys.stdout in its module body and writes from whoami()."""
+        stub = (
+            "import sys\n"
+            "_BOUND = sys.stdout\n"
+            "def whoami():\n"
+            "    print('Kaggle credentials successfully validated.', file=_BOUND)\n"
+            "    return {'username': 'stub-user'}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "kagglehub.py").write_text(stub, encoding="utf-8")
+            importlib.invalidate_caches()
+            prev_module = sys.modules.pop("kagglehub", None)
+            sys.path.insert(0, tmp)
+            os.environ["KAGGLE_API_TOKEN"] = "tok"
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    result = kaggle_backend._default_kagglehub_validate(object())
+            finally:
+                os.environ.pop("KAGGLE_API_TOKEN", None)
+                sys.path.remove(tmp)
+                sys.modules.pop("kagglehub", None)
+                if prev_module is not None:
+                    sys.modules["kagglehub"] = prev_module
+        self.assertTrue(result["usable"])
+        self.assertEqual(result["username"], "stub-user")
+        self.assertEqual(out.getvalue(), "")  # the JSON envelope stays parseable
+        self.assertIn("successfully validated", err.getvalue())  # the banner still surfaces
 
     def test_gpu_budget_gate_fail_closed_over_cap_and_reserves(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

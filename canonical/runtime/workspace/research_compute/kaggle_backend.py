@@ -26,11 +26,13 @@ What makes Kaggle different (the quota model this file encodes):
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import math
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -115,9 +117,13 @@ def _default_kagglehub_validate(config: Any) -> dict[str, Any]:  # pragma: no co
     if not token_present():
         return {"usable": False, "username": None, "reason": "no_kaggle_api_token"}
     try:
-        import kagglehub
+        # kagglehub logs a validation banner and binds its console handler to whatever
+        # sys.stdout is at import time. Callers reserve stdout for a single JSON envelope,
+        # so import and call it with stdout pointed at stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            import kagglehub
 
-        info = kagglehub.whoami()
+            info = kagglehub.whoami()
         username = info.get("username") if isinstance(info, dict) else info
         if username:
             return {"usable": True, "username": str(username), "reason": "kagglehub_validated"}
