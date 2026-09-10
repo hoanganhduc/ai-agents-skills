@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -300,6 +302,310 @@ class BareInvocationHonoursJsonModeTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertIn("vnthuquan assistant wrapper", out)
 
+
+class UpstreamDefaultVenvIsFoundTests(unittest.TestCase):
+    """upstream's installer puts the executable where the wrapper never looked.
+
+    `scripts/install.sh` creates `VENV_PATH="${VNTHUQUAN_VENV:-$HOME/.vnthuquan}"` and
+    installs no `~/.local/bin` shim, while the resolver searched only `~/.local/bin` and
+    `~/.vnthuquan_venv`. A default upstream install therefore raised
+    `missing_executable` / 127, which is what both vnthuquan live checks reported.
+    """
+
+    def _venv_exe(self, home: Path, prefix: str) -> Path:
+        exe = home / prefix / "bin" / "vnthuquan"
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe.chmod(0o755)
+        return exe
+
+    def _venv_python(self, home: Path, prefix: str) -> Path:
+        python = home / prefix / "bin" / "python"
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        python.chmod(0o755)
+        return python
+
+    def _local_bin_shim(self, home: Path) -> Path:
+        shim = home / ".local" / "bin" / "vnthuquan"
+        shim.parent.mkdir(parents=True, exist_ok=True)
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+        return shim
+
+    def _resolve_with_home(self, home: Path):
+        with tempfile.TemporaryDirectory() as data_root:
+            wrapper = load_wrapper(Path(data_root))
+        with mock.patch.object(wrapper, "HOME", home), \
+                mock.patch.object(wrapper, "SOURCE_DIR", home / "no-such-source"):
+            return wrapper.resolve_vnthuquan()
+
+    @unittest.skipIf(os.name == "nt", "POSIX candidate order")
+    def test_the_upstream_default_venv_is_resolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            exe = self._venv_exe(home, ".vnthuquan")
+            cmd, shown, _python = self._resolve_with_home(home)
+            self.assertEqual(cmd, [str(exe)])
+            self.assertEqual(shown, str(exe))
+
+    @unittest.skipIf(os.name == "nt", "POSIX candidate order")
+    def test_the_historical_venv_still_wins_when_both_exist(self) -> None:
+        """Adding the upstream default must not re-point an existing install."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            historical = self._venv_exe(home, ".vnthuquan_venv")
+            self._venv_exe(home, ".vnthuquan")
+            cmd, _shown, _python = self._resolve_with_home(home)
+            self.assertEqual(cmd, [str(historical)])
+
+    @unittest.skipIf(os.name == "nt", "POSIX candidate order")
+    def test_no_install_anywhere_is_still_missing_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Exception) as caught:
+                self._resolve_with_home(Path(tmp))
+            self.assertEqual(getattr(caught.exception, "code", None), "missing_executable")
+            self.assertEqual(getattr(caught.exception, "exit_code", None), 127)
+
+
+    @unittest.skipIf(os.name == "nt", "POSIX venv layout")
+    def test_the_resolved_command_reports_its_own_venv_interpreter(self) -> None:
+        """The venv that owns the console script also owns the Python it runs under.
+
+        Reporting a PATH lookup answers a different question: the managed launcher
+        fixes PATH to /usr/bin:/bin, so the name resolves to the system interpreter
+        for a command that is not running under it, and `doctor` names the wrong one.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._venv_exe(home, ".vnthuquan")
+            python = self._venv_python(home, ".vnthuquan")
+            _cmd, _shown, reported = self._resolve_with_home(home)
+        self.assertEqual(reported, str(python))
+        self.assertNotEqual(reported, shutil.which("python3"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX venv layout")
+    def test_a_shim_without_a_sibling_interpreter_still_reports_a_real_one(self) -> None:
+        """~/.local/bin is not a venv, so no interpreter sits beside the shim there.
+
+        The fallback still has to name a Python that exists rather than a guessed name.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._local_bin_shim(home)
+            _cmd, _shown, reported = self._resolve_with_home(home)
+        self.assertEqual(reported, sys.executable)
+        self.assertTrue(Path(reported).is_file())
+
+    def test_detection_survives_a_host_with_no_python3_on_path(self) -> None:
+        """A host that ships `python` without `python3` makes a name lookup return None.
+
+        Detection has to answer with whatever interpreter the host actually has.
+        """
+
+        with tempfile.TemporaryDirectory() as data_root:
+            wrapper = load_wrapper(Path(data_root))
+        only_python = lambda name: "/usr/bin/python" if name == "python" else None
+        with mock.patch.object(wrapper.sys, "executable", ""), \
+                mock.patch.object(wrapper.shutil, "which", side_effect=only_python):
+            self.assertEqual(wrapper.host_interpreter(), "/usr/bin/python")
+
+
+class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
+    """A dead site and a missing install must not answer with the same payload.
+
+    `require_success` collapses every nonzero package exit into one
+    `package_error` envelope, so `doctor` reported "the site is unreachable" and
+    "the package is not installed" identically, minus every field the wrapper had
+    already resolved. The read-only probes print a complete JSON verdict and only
+    then return 5, so both halves of the answer exist at once and the wrapper has
+    to keep them.
+    """
+
+    #: Verbatim from `vnthuquan doctor --json` against the live site, which has
+    #: moved off the URL the package probes and answers 404 on both mirrors.
+    DOCTOR_DOWN = {
+        "ok": False,
+        "version": "0.1.2.dev0",
+        "config_path": "/home/u/.config/vnthuquan/config.json",
+        "download_dir": "/home/u/Downloads/vnthuquan",
+        "download_dir_exists": False,
+        "mirror": {
+            "url": "http://vietnamthuquan.eu",
+            "ok": False,
+            "status_code": 404,
+            "elapsed_seconds": 0.066,
+            "error": "Not Found",
+        },
+    }
+
+    #: Verbatim from `vnthuquan mirrors check --json` against the same site.
+    MIRRORS_DOWN = {
+        "ok": False,
+        "mirrors": [
+            {
+                "url": "http://vietnamthuquan.eu",
+                "ok": False,
+                "status_code": 404,
+                "elapsed_seconds": 0.067,
+                "error": "Not Found",
+            },
+            {
+                "url": "http://vnthuquan.net",
+                "ok": False,
+                "status_code": 404,
+                "elapsed_seconds": 0.765,
+                "error": "Not Found",
+            },
+        ],
+    }
+
+    CONFIG_SHOW = {"ok": True, "config": {"default_mirror": "http://vietnamthuquan.eu"}}
+
+    def _wrapper(self, responses, *, installed: bool = True):
+        """The wrapper talking to a package that answers `responses` and nothing else.
+
+        `responses` pairs the leading words of a package argv with the
+        (status, stdout, stderr) triple `run_pkg` would have returned; a dict
+        stdout is serialised the way the package serialises it. `installed=False`
+        makes the resolver report the install missing instead.
+        """
+
+        import json as _json
+
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        wrapper = load_wrapper(Path(root.name))
+
+        def run_pkg(args, *, json_mode=True):
+            key = " ".join(args)
+            for prefix, (status, stdout, stderr) in responses:
+                if key.startswith(prefix):
+                    text = stdout if isinstance(stdout, str) else _json.dumps(stdout)
+                    return status, text, stderr
+            raise AssertionError(f"unexpected package call: {key}")
+
+        def resolve():
+            if not installed:
+                raise wrapper.WrapperError("vnthuquan command not found", "missing_executable", 127)
+            return ["vnthuquan"], "/opt/vnthuquan/bin/vnthuquan", "/opt/vnthuquan/bin/python"
+
+        for name, replacement in (
+            ("run_pkg", run_pkg),
+            ("resolve_vnthuquan", resolve),
+            ("package_version", lambda: "0.1.2.dev0" if installed else None),
+        ):
+            patcher = mock.patch.object(wrapper, name, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return wrapper
+
+    def _doctor_on_a_dead_site(self):
+        wrapper = self._wrapper(
+            [
+                ("config show", (0, self.CONFIG_SHOW, "")),
+                ("doctor", (5, self.DOCTOR_DOWN, "")),
+            ]
+        )
+        return wrapper.doctor()
+
+    def test_a_dead_site_still_reports_the_install_the_wrapper_resolved(self) -> None:
+        payload = self._doctor_on_a_dead_site()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_code"], "package_error")
+        self.assertTrue(payload["local_ready"])
+        self.assertFalse(payload["live_site_ready"])
+        self.assertTrue(payload["diagnose"]["ready"])
+
+    def test_the_mirror_verdict_survives_the_nonzero_exit(self) -> None:
+        """The package printed why it failed; collapsing the exit must not lose it."""
+
+        payload = self._doctor_on_a_dead_site()
+        self.assertEqual(payload["package_payload"]["mirror"]["status_code"], 404)
+        self.assertEqual(payload["package_payload"]["mirror"]["url"], "http://vietnamthuquan.eu")
+
+    def test_a_dead_site_and_a_missing_install_are_told_apart(self) -> None:
+        """The two failures the wrapper used to report identically."""
+
+        dead_site = self._doctor_on_a_dead_site()
+        missing = self._wrapper([], installed=False).doctor()
+        self.assertFalse(dead_site["ok"])
+        self.assertFalse(missing["ok"])
+        self.assertNotEqual(dead_site["local_ready"], missing["local_ready"])
+        self.assertTrue(dead_site["local_ready"])
+        self.assertFalse(missing["local_ready"])
+        self.assertNotIn("package_payload", missing)
+
+    def test_mirrors_check_on_a_dead_site_keeps_the_per_mirror_rows(self) -> None:
+        wrapper = self._wrapper(
+            [
+                ("config show", (0, self.CONFIG_SHOW, "")),
+                ("mirrors check", (5, self.MIRRORS_DOWN, "")),
+            ]
+        )
+        payload = wrapper.mirrors(["check"])
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["subcommand"], "check")
+        self.assertEqual(payload["default_mirror"], "http://vietnamthuquan.eu")
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual([row["status_code"] for row in payload["mirrors"]], [404, 404])
+        self.assertEqual([row["latency_ms"] for row in payload["mirrors"]], [67, 765])
+        self.assertNotIn("elapsed_seconds", payload["mirrors"][0])
+
+    def test_the_reported_message_is_a_reason_not_the_whole_payload(self) -> None:
+        """With nothing on stderr the message was the JSON `package_payload` repeats.
+
+        Text mode prints `error: <message>`, so the payload arrived twice and the
+        reason arrived once, buried.
+        """
+
+        payload = self._doctor_on_a_dead_site()
+        self.assertEqual(payload["message"], "mirror unreachable -- http://vietnamthuquan.eu: Not Found")
+
+    def test_mirrors_check_names_every_mirror_that_failed(self) -> None:
+        wrapper = self._wrapper(
+            [
+                ("config show", (0, self.CONFIG_SHOW, "")),
+                ("mirrors check", (5, self.MIRRORS_DOWN, "")),
+            ]
+        )
+        message = wrapper.mirrors(["check"])["message"]
+        self.assertIn("http://vietnamthuquan.eu: Not Found", message)
+        self.assertIn("http://vnthuquan.net: Not Found", message)
+
+    def test_a_failed_search_reports_the_reason_and_the_query(self) -> None:
+        """`search` is the only live check that exercises the surface the skill uses.
+
+        The package answers a failed search with its own `error` object, so the
+        row has to name the HTTP failure rather than repeat the payload.
+        """
+
+        failure = {"ok": False, "error": {"type": "SearchError", "message": "Search failed with HTTP 405", "exit_code": 1}}
+        wrapper = self._wrapper([("search", (1, failure, ""))])
+        payload = wrapper.search(["Kim Dung", "--limit", "3"])
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], "Search failed with HTTP 405")
+        self.assertEqual(payload["query"], "Kim Dung")
+        self.assertEqual(payload["package_payload"], failure)
+
+    def test_a_package_that_printed_no_verdict_invents_none(self) -> None:
+        """A crash leaves nothing to merge, and nothing may be filled in for it."""
+
+        wrapper = self._wrapper(
+            [
+                ("config show", (0, self.CONFIG_SHOW, "")),
+                ("doctor", (1, "", "Traceback (most recent call last):\nRuntimeError: boom")),
+            ]
+        )
+        payload = wrapper.doctor()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_code"], "package_error")
+        self.assertTrue(payload["local_ready"])
+        self.assertFalse(payload["live_site_ready"])
+        self.assertNotIn("package_payload", payload)
+        self.assertIn("RuntimeError: boom", payload["message"])
 
 if __name__ == "__main__":
     unittest.main()

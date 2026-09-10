@@ -6546,7 +6546,8 @@
           },
           "args": [
             "mirrors",
-            "check"
+            "check",
+            "--json"
           ],
           "timeout_seconds": 120,
           "read_only": true,
@@ -6585,7 +6586,8 @@
             "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
           },
           "args": [
-            "doctor"
+            "doctor",
+            "--json"
           ],
           "timeout_seconds": 120,
           "read_only": true,
@@ -6606,6 +6608,53 @@
               {
                 "path": "live_site_ready",
                 "equals": true
+              }
+            ]
+          }
+        },
+        "search": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "macos": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "wsl": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+            "windows": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+            "windows_ps1": "workspace/skills/vnthuquan/run_vnthuquan.ps1"
+          },
+          "args": [
+            "search",
+            "Kim Dung",
+            "--limit",
+            "3",
+            "--json"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "ok",
+                "equals": true
+              },
+              {
+                "path": "command",
+                "equals": "search"
+              },
+              {
+                "path": "query",
+                "equals": "Kim Dung"
+              },
+              {
+                "path": "results",
+                "type": "array"
+              },
+              {
+                "path": "results",
+                "min_len": 1
               }
             ]
           }

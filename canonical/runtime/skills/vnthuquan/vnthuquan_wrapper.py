@@ -209,28 +209,76 @@ def ensure_config() -> None:
     CONFIG_PATH.write_text(json.dumps(default_config(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+# Venv prefixes searched for the packaged `vnthuquan`, in order. `.vnthuquan_venv` is this
+# wrapper's own historical convention; `.vnthuquan` is what upstream's scripts/install.sh
+# creates by default (`VENV_PATH="${VNTHUQUAN_VENV:-$HOME/.vnthuquan}"`), and it installs no
+# ~/.local/bin shim, so a default upstream install was invisible here and every command
+# failed with missing_executable / 127.
+VENV_PREFIXES = (".vnthuquan_venv", ".vnthuquan")
+
+
+def venv_interpreter(bin_dir: Path) -> str | None:
+    """The interpreter belonging to the venv whose scripts directory is ``bin_dir``.
+
+    A venv keeps its interpreter beside its console scripts, so the venv that owns the
+    resolved ``vnthuquan`` is also the thing that answers which Python that command
+    runs under. Looking a name up on PATH answers a different question: the managed
+    launcher fixes PATH to /usr/bin:/bin, so it reports the system interpreter for a
+    command that is not running under it.
+    """
+
+    names = ("python.exe", "pythonw.exe") if os.name == "nt" else ("python", "python3")
+    for name in names:
+        candidate = bin_dir / name
+        if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+            return str(candidate)
+    return None
+
+
+def host_interpreter() -> str | None:
+    """The interpreter to fall back on when no venv owns the command.
+
+    ``sys.executable`` is the one already running this wrapper, so it exists and is a
+    real Python. A PATH lookup only guesses at a name, and a host that ships ``python``
+    without ``python3`` -- or the launcher's fixed PATH -- turns that guess into None.
+    """
+
+    if sys.executable:
+        return sys.executable
+    for name in ("python3", "python", "py"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
 def resolve_vnthuquan() -> tuple[list[str], str, str | None]:
     if os.name == "nt":
-        windows_exe = HOME / ".vnthuquan_venv" / "Scripts" / "vnthuquan.exe"
-        if windows_exe.is_file():
-            return [str(windows_exe)], str(windows_exe), str(HOME / ".vnthuquan_venv" / "Scripts" / "python.exe")
-        windows_python = HOME / ".vnthuquan_venv" / "Scripts" / "python.exe"
-        if windows_python.is_file():
-            return [str(windows_python), "-m", "vnthuquan"], f"{windows_python} -m vnthuquan", str(windows_python)
-        python = shutil.which("python") or shutil.which("py")
+        for prefix in VENV_PREFIXES:
+            windows_exe = HOME / prefix / "Scripts" / "vnthuquan.exe"
+            if windows_exe.is_file():
+                scripts_dir = HOME / prefix / "Scripts"
+                return ([str(windows_exe)], str(windows_exe),
+                        venv_interpreter(scripts_dir) or host_interpreter())
+        for prefix in VENV_PREFIXES:
+            windows_python = HOME / prefix / "Scripts" / "python.exe"
+            if windows_python.is_file():
+                return [str(windows_python), "-m", "vnthuquan"], f"{windows_python} -m vnthuquan", str(windows_python)
+        python = host_interpreter()
         if python:
             return [python, "-m", "vnthuquan"], f"{python} -m vnthuquan", python
         raise WrapperError("vnthuquan command not found", "missing_executable", 127)
 
     candidates = [
         HOME / ".local" / "bin" / "vnthuquan",
-        HOME / ".vnthuquan_venv" / "bin" / "vnthuquan",
+        *(HOME / prefix / "bin" / "vnthuquan" for prefix in VENV_PREFIXES),
     ]
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            return [str(candidate)], str(candidate), shutil.which("python3")
+            return ([str(candidate)], str(candidate),
+                    venv_interpreter(candidate.parent) or host_interpreter())
     if SOURCE_DIR.is_dir():
-        python = shutil.which("python3") or shutil.which("python")
+        python = host_interpreter()
         if python:
             return [python, "-m", "vnthuquan"], f"{python} -m vnthuquan", python
     raise WrapperError("vnthuquan command not found", "missing_executable", 127)
@@ -349,6 +397,93 @@ def require_success(command: str, args: list[str]) -> dict[str, Any]:
         return payload
     data = parse_json(stdout)
     return data
+
+
+def package_verdict(stdout: Any) -> dict[str, Any] | None:
+    """The package's own JSON verdict, when it printed one before exiting nonzero.
+
+    A read-only probe such as ``doctor`` or ``mirrors check`` prints a complete
+    payload and only then returns 5, so the verdict outlives the failure.
+    """
+
+    if not isinstance(stdout, str) or not stdout.strip():
+        return None
+    try:
+        return parse_json(stdout)
+    except WrapperError:
+        return None
+
+
+def mirror_rows(value: Any, subcommand: str) -> Any:
+    """Per-mirror rows with the latency field renamed for the wrapper payload.
+
+    Only ``check`` reports live status; ``list`` returns plain URLs and passes
+    through untouched.
+    """
+
+    if subcommand != "check" or not isinstance(value, list):
+        return value
+    rows = []
+    for item in value:
+        if isinstance(item, dict):
+            converted = dict(item)
+            elapsed = converted.pop("elapsed_seconds", None)
+            converted["latency_ms"] = round(float(elapsed) * 1000) if elapsed is not None else None
+            rows.append(converted)
+    return rows
+
+
+def failure_reason(verdict: dict[str, Any], exit_code: Any) -> str:
+    """A one-line reason drawn from a verdict the package printed on stdout.
+
+    ``require_success`` falls back to stdout when the package wrote nothing to
+    stderr, so the whole JSON payload became the "error message" -- which text
+    mode then printed after ``error: ``. The payload is carried verbatim under
+    ``package_payload`` already, so the message only has to say what went wrong.
+    The package states the reason in one of three shapes: an explicit ``error``
+    object, one mirror under ``mirror`` (``doctor``), or every mirror under
+    ``mirrors`` (``mirrors check``).
+    """
+
+    error = verdict.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])
+    rows: list[dict[str, Any]] = []
+    single = verdict.get("mirror")
+    if isinstance(single, dict):
+        rows.append(single)
+    listed = verdict.get("mirrors")
+    if isinstance(listed, list):
+        rows.extend(row for row in listed if isinstance(row, dict))
+    reasons = []
+    for row in rows:
+        if row.get("ok"):
+            continue
+        detail = row.get("error") or row.get("status_code")
+        reasons.append(f"{row.get('url')}: {detail}" if detail else str(row.get("url")))
+    if reasons:
+        return "mirror unreachable -- " + "; ".join(reasons)
+    return f"vnthuquan exited {exit_code}; see package_payload"
+
+
+def merge_package_failure(payload: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Keep what the wrapper already knows when the package reports a failure.
+
+    ``require_success`` collapses every nonzero package exit into one
+    ``package_error`` envelope, so "the site is unreachable" and "the install is
+    broken" reach the caller in the same shape. The wrapper resolved the
+    executable itself and the package printed its own verdict, so both answers
+    are in hand; merging them keeps the evidence needed to tell the two apart.
+    """
+
+    merged = dict(data)
+    merged.update({key: value for key, value in payload.items() if key not in data})
+    verdict = package_verdict(data.get("package_stdout"))
+    if verdict is not None:
+        merged["package_payload"] = verdict
+        if str(merged.get("message", "")).strip() == str(data.get("package_stdout", "")).strip():
+            merged["message"] = failure_reason(verdict, merged.get("exit_code"))
+    return merged
 
 
 def has_help(args: list[str]) -> bool:
@@ -638,7 +773,7 @@ def diagnose() -> dict[str, Any]:
         version = package_version()
         ready = bool(version)
     except WrapperError as exc:
-        cmd, executable, python = [], None, shutil.which("python3")
+        cmd, executable, python = [], None, host_interpreter()
         version = None
         ready = False
         error = str(exc)
@@ -690,7 +825,10 @@ def doctor() -> dict[str, Any]:
         return payload
     data = require_success("doctor", ["doctor", "--resources"])
     if data.get("ok") is False and "error_code" in data:
-        return data
+        merged = merge_package_failure(payload, data)
+        verdict = merged.get("package_payload")
+        merged["live_site_ready"] = bool(verdict.get("ok", False)) if isinstance(verdict, dict) else False
+        return merged
     payload.update(
         {
             "ok": bool(data.get("ok", False)),
@@ -711,23 +849,19 @@ def mirrors(args: list[str]) -> dict[str, Any]:
     if subcommand not in {"list", "check", "use", "reset"}:
         return normalize_error("mirrors", f"unsupported mirrors subcommand: {subcommand}", "usage", 2)
     data = require_success("mirrors", ["mirrors", *args])
-    if data.get("ok") is False and "error_code" in data:
-        return data
     payload = base_payload("mirrors")
-    payload["ok"] = bool(data.get("ok", True))
     payload["subcommand"] = subcommand
     payload["wrapper_consumed_flags"] = ["--yes"] if yes else []
     payload["default_mirror"] = default_mirror()
-    mirrors_value = data.get("mirrors", [])
-    if subcommand == "check":
-        normalized = []
-        for item in mirrors_value:
-            if isinstance(item, dict):
-                converted = dict(item)
-                elapsed = converted.pop("elapsed_seconds", None)
-                converted["latency_ms"] = round(float(elapsed) * 1000) if elapsed is not None else None
-                normalized.append(converted)
-        mirrors_value = normalized
+    if data.get("ok") is False and "error_code" in data:
+        merged = merge_package_failure(payload, data)
+        verdict = merged.get("package_payload")
+        rows = mirror_rows(verdict.get("mirrors", []) if isinstance(verdict, dict) else [], subcommand)
+        merged["mirrors"] = rows
+        merged["count"] = len(rows) if isinstance(rows, list) else None
+        return merged
+    payload["ok"] = bool(data.get("ok", True))
+    mirrors_value = mirror_rows(data.get("mirrors", []), subcommand)
     payload["mirrors"] = mirrors_value
     payload["count"] = len(mirrors_value) if isinstance(mirrors_value, list) else None
     payload["package_payload"] = data
@@ -874,14 +1008,14 @@ def display_query(args: list[str]) -> str:
 
 def search(args: list[str]) -> dict[str, Any]:
     data = require_success("search", ["search", *args])
-    if data.get("ok") is False and "error_code" in data:
-        return data
-    results = data.get("results", [])
     payload = base_payload("search")
+    payload["query"] = display_query(args)
+    if data.get("ok") is False and "error_code" in data:
+        return merge_package_failure(payload, data)
+    results = data.get("results", [])
     payload.update(
         {
             "ok": bool(data.get("ok", True)),
-            "query": display_query(args),
             "results": results,
             "count": len(results) if isinstance(results, list) else None,
             "package_payload": data,
