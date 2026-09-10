@@ -20,6 +20,34 @@ The protected `AAS_COMPUTE_SECRETS_FILE` pointer supplies the reaper's compute a
 The wrapper projects only the permitted Hetzner values. Tokens never belong in argv,
 unit files, leases, or an `hcloud context` file.
 
+## Exactly one scheduler leg attests
+
+The lease is one file holding one scheduler record, and both `attest` and the provisioner
+compare it against the scalar `reaper_scheduler_id`. A second scheduler leg therefore adds
+no redundancy: the leg whose identity does not match the configuration fails on every pass
+with
+
+```text
+reaper scheduler identity does not match configuration
+```
+
+Only the attestation fails. That leg's `reap` still runs and still deletes servers, so the
+symptom is a scheduler that reports failure forever while the lease stays fresh from the
+other leg. Read the leg's own output — `~/.local/state/ai-agents-skills/hetzner-reaper.log`
+for the crontab recipe, `systemctl --user status hetzner-reaper.service` for the timer — and
+retire one leg rather than trying to reconcile them.
+
+Three scheduler kinds are accepted: `cron`, `systemd-user`, and system-scope `systemd`. The
+last is accepted only when the unit runs as the agent account, because `attest` refuses to
+publish a lease as root; such a unit must set `User=` to that account and reach the same
+`$HOME`.
+
+Editing `project_identity`, `reaper_scheduler_id`, `max_server_hours`, or
+`max_concurrent_servers` changes the `config_digest` carried in the lease and invalidates
+the live one. Provisioning fails closed until the next successful pass republishes it, so
+after such an edit let one scheduler period elapse, or run `attest` once by hand, before the
+next `up`.
+
 ## User crontab (default)
 
 Configure the lease and scheduler identity in the broker's research-compute config:
@@ -43,6 +71,11 @@ exactly the scheduler ID passed below. Add this single line to that user's cront
 executed directly so its privileged-mode Bash shebang applies. Runtime variables
 are scoped to each invocation. The subshell's `umask 077` creates private state
 directories; existing parent directories must already be owner-controlled.
+
+`reaper_lease_max_age_seconds` is clamped to a hard 900-second ceiling whatever the config
+says, so the 10-minute period leaves 300 seconds of slack. A pass may run up to five minutes
+late without expiring the lease; a wholly skipped pass expires it, and provisioning fails
+closed until a later pass succeeds.
 
 ## systemd --user (alternative)
 
@@ -100,8 +133,13 @@ AAS_AUTOLOOP_COMPUTE_WORKSPACE="$HOME/.openclaw/workspace" \
 ```
 
 Doctor is read-only and exits zero even if the lease is absent or stale; inspect the
-lease fields and error message. Any old independently installed root scheduler must
-be handled by the user; this recipe does not disable it.
+lease fields and error message.
+
+A previously installed system-scope scheduler is not disabled by these recipes, and it is
+not harmless either: if its identity does not match `reaper_scheduler_id` it fails on every
+pass as described above, and if it does match it competes for the same single lease record.
+Retire it through whatever mechanism installed it before adopting a recipe here, or keep it
+as the one attesting leg and skip both recipes.
 
 ## Native Windows status (recovery only)
 
