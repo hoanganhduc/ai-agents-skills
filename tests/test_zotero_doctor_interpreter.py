@@ -6,6 +6,13 @@ PATH-resolved ``python3``, and Windows ships no ``python3`` at all, so the probe
 raised FileNotFoundError, swallowed it, and printed "Install in workspace venv"
 about a module that was already importable. The fix asks ``sys.executable``,
 which is what the other 47 interpreter-spawning sites in this repo do.
+
+The verdict for an unreachable tool is a second, separate question. getscipapers
+is not a zot dependency -- ``manifest/skills.yaml`` declares it for
+``getscipapers-requester`` only -- and the managed launcher fixes PATH to
+/usr/bin:/bin, so a user-local install can never be seen from here. Reporting the
+absence as ``ok: False`` failed the whole ``zot doctor`` live check on a healthy
+install, so it is now reported as a skipped optional integration.
 """
 
 from __future__ import annotations
@@ -77,13 +84,18 @@ class GetscipapersProbeTests(unittest.TestCase):
             "an absent PATH python3 must not be reported as an absent module",
         )
 
-    def test_a_genuinely_missing_module_is_still_reported(self) -> None:
+    def test_an_unreachable_optional_tool_is_reported_as_skipped(self) -> None:
+        """Neither probe finding it is not a zot fault: the tool is optional and the
+        managed launcher's fixed PATH hides a user-local install by construction. The
+        message still has to say the tool was not reached, so the report stays useful."""
+
         class Result:
             returncode = 1
 
         report = self._probe_with(lambda argv, **kw: Result(), lambda name: None)
-        self.assertFalse(report["ok"])
-        self.assertIn("Not found", report["message"])
+        self.assertTrue(report["ok"])
+        self.assertIn("Not reachable", report["message"])
+        self.assertIn("optional", report["message"])
 
     def test_an_executable_on_path_short_circuits_the_probe(self) -> None:
         def forbidden(argv, **kwargs):  # pragma: no cover - must not be reached
