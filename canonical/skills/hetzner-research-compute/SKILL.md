@@ -84,6 +84,12 @@ Linux (use the owner-controlled installed runtime for the current agent):
 ```bash
 # Any owner-controlled installed runtime is accepted; execute directly so #!/bin/bash -p applies.
 launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+# Pin the broker data workspace. The runner exports its own read-only runtime
+# workspace, so an unpinned lane derives a different install scope than the
+# scheduled reaper attests and every lease-gated verb fails closed. This must
+# name the same workspace as the reaper deployment in
+# references/reaper-deployment.md.
+export AAS_AUTOLOOP_COMPUTE_WORKSPACE="${AAS_AUTOLOOP_COMPUTE_WORKSPACE:-$HOME/.openclaw/workspace}"
 run() { "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 ```
 
@@ -117,7 +123,8 @@ On targets that install a local skill wrapper, that wrapper should forward to th
 runtime command target.
 
 ```bash
-skills/hetzner-research-compute/run_hetzner_research_compute.sh doctor
+AAS_AUTOLOOP_COMPUTE_WORKSPACE="$HOME/.openclaw/workspace" \
+  skills/hetzner-research-compute/run_hetzner_research_compute.sh doctor
 ```
 
 Windows:

@@ -2534,6 +2534,24 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, guide)
 
+    def test_hetzner_skill_examples_pin_the_broker_data_workspace(self) -> None:
+        skill = (
+            REPO
+            / "canonical"
+            / "skills"
+            / "hetzner-research-compute"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        # run_skill.sh exports its own read-only runtime workspace, which the
+        # driver resolves ahead of the working directory. An unpinned lane
+        # therefore derives a different install scope than the scheduled reaper
+        # attests, and every lease-gated verb fails closed against its own
+        # billing stopper.
+        self.assertIn("AAS_AUTOLOOP_COMPUTE_WORKSPACE", skill)
+        launcher_block = skill.split("launcher=", 1)[1].split("```", 1)[0]
+        self.assertIn("AAS_AUTOLOOP_COMPUTE_WORKSPACE", launcher_block)
+
+
 
 if __name__ == "__main__":
     unittest.main()
