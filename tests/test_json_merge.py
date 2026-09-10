@@ -148,5 +148,92 @@ class JsonMergeTests(unittest.TestCase):
             merge_hook_entry({"hooks": {"Stop": "oops"}}, "Stop", ENTRY, MID)
 
 
+class OrphanedEntryAdoptionTests(unittest.TestCase):
+    """A settings writer that drops unknown keys strips the managed markers.
+
+    The entry itself survives, so the next merge must recognise it as its own
+    orphan and re-tag it in place rather than appending a second copy.
+    """
+
+    def test_merge_adopts_untagged_orphan_of_its_own_entry(self) -> None:
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        settings = {"hooks": {"Stop": [orphan]}}
+        merged, changed, _ = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        self.assertTrue(changed)
+        stop = merged["hooks"]["Stop"]
+        self.assertEqual(len(stop), 1)
+        self.assertEqual(stop[0]["_managedBy"], MANAGED_BY)
+        self.assertEqual(stop[0]["_id"], MID)
+
+    def test_merge_collapses_repeated_untagged_orphans(self) -> None:
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        settings = {"hooks": {"Stop": [orphan, orphan]}}
+        merged, changed, _ = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        self.assertTrue(changed)
+        self.assertEqual(len(merged["hooks"]["Stop"]), 1)
+
+    def test_merge_collapses_an_orphan_beside_the_tagged_entry(self) -> None:
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        tagged, _, _ = merge_hook_entry({}, "Stop", ENTRY, MID)
+        tagged["hooks"]["Stop"].append(orphan)
+        merged, changed, _ = merge_hook_entry(tagged, "Stop", ENTRY, MID)
+        self.assertTrue(changed)
+        self.assertEqual(len(merged["hooks"]["Stop"]), 1)
+        self.assertIsNotNone(extract_hook_entry(merged, "Stop", MID))
+
+    def test_adoption_keeps_the_orphan_position_and_user_neighbours(self) -> None:
+        first = {"hooks": [{"type": "command", "command": "user-first"}]}
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        last = {"hooks": [{"type": "command", "command": "user-last"}]}
+        settings = {"hooks": {"Stop": [first, orphan, last]}}
+        merged, changed, _ = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        self.assertTrue(changed)
+        stop = merged["hooks"]["Stop"]
+        self.assertEqual(len(stop), 3)
+        self.assertEqual(stop[0], first)
+        self.assertEqual(stop[2], last)
+        self.assertEqual(stop[1]["_id"], MID)
+
+    def test_a_near_miss_entry_stays_user_authored(self) -> None:
+        # Same command, one extra field: not an exact copy, so not ours.
+        near_miss = {
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": "autoloop hook-check"}],
+        }
+        settings = {"hooks": {"Stop": [near_miss]}}
+        merged, changed, _ = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        self.assertTrue(changed)
+        stop = merged["hooks"]["Stop"]
+        self.assertEqual(len(stop), 2)
+        self.assertEqual(stop[0], near_miss)
+
+    def test_a_different_command_stays_user_authored(self) -> None:
+        user = {"hooks": [{"type": "command", "command": "autoloop hook-check --other"}]}
+        settings = {"hooks": {"Stop": [user]}}
+        merged, _, _ = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        stop = merged["hooks"]["Stop"]
+        self.assertEqual(len(stop), 2)
+        self.assertEqual(stop[0], user)
+
+    def test_adoption_is_idempotent(self) -> None:
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        once, _, _ = merge_hook_entry({"hooks": {"Stop": [orphan]}}, "Stop", ENTRY, MID)
+        twice, changed, _ = merge_hook_entry(once, "Stop", ENTRY, MID)
+        self.assertFalse(changed)
+        self.assertEqual(once, twice)
+
+    def test_uninstall_after_adoption_leaves_no_orphan_behind(self) -> None:
+        # Deliberate contract: an adopted orphan is this installer's own entry,
+        # so uninstall takes it with the managed entry instead of stranding a
+        # copy that fires a hook nobody owns.
+        orphan = {"hooks": [{"type": "command", "command": "autoloop hook-check"}]}
+        user = {"hooks": [{"type": "command", "command": "user-stop"}]}
+        settings = {"hooks": {"Stop": [user, orphan]}}
+        merged, _, created = merge_hook_entry(settings, "Stop", ENTRY, MID)
+        removed, changed = remove_hook_entry(merged, "Stop", MID, created)
+        self.assertTrue(changed)
+        self.assertEqual(removed, {"hooks": {"Stop": [user]}})
+
+
 if __name__ == "__main__":
     unittest.main()
