@@ -2561,6 +2561,20 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         launcher_block = skill.split("launcher=", 1)[1].split("```", 1)[0]
         self.assertIn("AAS_AUTOLOOP_COMPUTE_WORKSPACE", launcher_block)
 
+    def test_hetzner_docs_do_not_advertise_the_inert_stale_heartbeat_arm(self) -> None:
+        root = REPO / "canonical" / "skills" / "hetzner-research-compute"
+        skill = (root / "SKILL.md").read_text(encoding="utf-8")
+        offload = (root / "references" / "hetzner-offload.md").read_text(encoding="utf-8")
+        # server_labels never writes the `heartbeat` label the reap predicate reads, and
+        # labels are only ever set at create, so counting the arm among the live
+        # safeguards overstates what actually stops a runaway bill.
+        # test_server_labels_never_emit_a_heartbeat_label pins the code side.
+        self.assertNotIn("stale-heartbeat safeguards continue", skill)
+        self.assertNotIn("past-TTL, powered-off, stale-heartbeat, or orphaned", offload)
+        for doc, name in ((skill, "SKILL.md"), (offload, "hetzner-offload.md")):
+            with self.subTest(doc=name):
+                self.assertIn("inert by default", doc)
+
 
 
 if __name__ == "__main__":

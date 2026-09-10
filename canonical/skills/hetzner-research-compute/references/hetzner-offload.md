@@ -118,7 +118,7 @@ and timeout paths fetch checkpoints before destroy, so a run is always resumable
   the exact server identity returned by create and tears down that ID, retrying from its
   finalizer. Every delete path refetches the target by exact numeric ID, revalidates project
   and install scope, and, for predicate-based cleanup, rereads the authoritative ledger and
-  recomputes the fresh TTL/status/heartbeat/orphan predicate immediately before DELETE.
+  recomputes the fresh TTL/status/orphan predicate immediately before DELETE.
   `down` requires exactly one selector. Broad `down --all` and reaper `kill`
   require a fresh protected lease plus the exact phrase returned by the corresponding
   read-only dry run; changed target inventory invalidates the phrase.
@@ -135,8 +135,11 @@ is the load-bearing arm.
   COMPUTE even if the driver dies, and carries no token -- a server can only power itself off,
   then Arm 2 deletes the powered-off box.
 - **Arm 2 -- detached reaper.** `hetzner_reaper.py` lists the labelled servers and DELETEs any
-  that are past-TTL, powered-off, stale-heartbeat, or orphaned (job-id not in the local
-  active-jobs ledger). It MUST run detached -- a systemd timer/service or cron entry, never a
+  that are past-TTL, powered-off, or orphaned (job-id not in the local active-jobs ledger).
+  Its predicate carries a fourth reason, stale-heartbeat, that is inert by default: labels are
+  written only at create, `server_labels` never emits the `heartbeat` label the reason reads,
+  and no add-label path exists, so only a server labelled from outside this repo can trigger
+  it. Do not count it when reasoning about what stops a runaway bill. It MUST run detached -- a systemd timer/service or cron entry, never a
   session child, because a background child dies when the agent session restarts and a dead
   reaper is a server that bills forever. The systemd timer/service and cron templates plus a
   step-by-step install guide are in `references/reaper-deployment.md`. A post-success

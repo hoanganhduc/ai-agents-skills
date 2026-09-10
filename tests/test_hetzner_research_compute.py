@@ -2434,6 +2434,16 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(len(reconstructed), 64)
         self.assertNotIn("bundle-digest", labels)
 
+    def test_server_labels_never_emit_a_heartbeat_label(self) -> None:
+        """The reaper's stale-heartbeat arm reads a `heartbeat` label that nothing writes.
+        server_labels is the only label producer, labels are set only at create, and there is no
+        add-label path, so the arm is inert. Pin that: whoever adds a writer must also correct the
+        docs that describe the arm, because this test fails until they do."""
+        labels = hetzner_driver.server_labels(
+            "job-1", 6.0, self.config, bundle_digest="a" * 64,
+        )
+        self.assertNotIn("heartbeat", labels)
+
     def test_live_cli_requires_bundle_digest_for_create_and_upload(self) -> None:
         parser = hetzner_driver.build_parser()
         for argv in (
