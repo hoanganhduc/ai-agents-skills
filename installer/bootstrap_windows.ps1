@@ -61,6 +61,7 @@ if ($args.Count -gt 0 -and $args[0] -eq "--print-python") {
 }
 
 if ($args.Count -gt 0 -and $args[0] -eq "--run-python") {
+    $env:PYTHONDONTWRITEBYTECODE = "1"
     $Rest = @()
     if ($args.Count -gt 1) {
         $Rest = $args[1..($args.Count - 1)]
