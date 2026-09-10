@@ -255,8 +255,8 @@ def load_pointer_secret_env(
         raise SecretEnvError(f"{pointer_env} has surrounding whitespace")
     text = read_protected_secret_env(path_value, identity_out=identity_out)
     if file_format == "json":
-        return parse_secret_json_text(text, allowed_keys=allowed_keys)
-    return parse_secret_env_text(text, allowed_keys=allowed_keys)
+        return parse_secret_json_text(text, allowed_keys=allowed_keys, source=pointer_env)
+    return parse_secret_env_text(text, allowed_keys=allowed_keys, source=pointer_env)
 
 
 def build_parser() -> argparse.ArgumentParser:
