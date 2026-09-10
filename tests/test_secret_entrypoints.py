@@ -1720,6 +1720,64 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
             )
 
+    def test_outer_runner_retains_compute_workspace_pin_for_reaper_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._stage_entrypoint(
+                root,
+                skill="hetzner-research-compute",
+                wrapper="run_hetzner_reaper.sh",
+                python_entrypoint="hetzner_reaper.py",
+            )
+            runtime = wrapper.parents[3]
+            runner = runtime / "run_skill.sh"
+            self._copy_test_runner(runner)
+            runner.chmod(0o755)
+            compute_secrets = self._private_file(
+                root,
+                "compute.env",
+                "HCLOUD_TOKEN=restored-hcloud\n",
+            )
+            data_workspace = root / "data-workspace"
+            (data_workspace / "config").mkdir(parents=True)
+            (data_workspace / "config" / "research-compute.toml").write_text(
+                "", encoding="utf-8"
+            )
+            env = self._env(root)
+            env.update(
+                {
+                    "AAS_COMPUTE_SECRETS_FILE": str(compute_secrets),
+                    "AAS_AUTOLOOP_COMPUTE_WORKSPACE": str(data_workspace),
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(runner),
+                    "skills/hetzner-research-compute/run_hetzner_reaper.sh",
+                    "reap",
+                    "--dry-run",
+                ],
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            child = json.loads(completed.stdout)
+            self.assertEqual(child["HCLOUD_TOKEN"], "restored-hcloud")
+            # The scheduled reaper is the billing stopper: if the pin does not
+            # survive its credential launch it silently resolves a different
+            # research-compute.toml than the lane it is supposed to guard.
+            self.assertEqual(
+                child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
+            )
+
     def test_kaggle_doctor_resolves_canonical_access_token_without_cross_lane_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
