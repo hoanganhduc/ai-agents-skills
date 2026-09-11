@@ -34,6 +34,7 @@ from installer.ai_agents_skills.runtime_smoke import (
     run_runtime_smoke,
     run_smoke_case,
     runtime_command_target,
+    runtime_contract_command_target,
     runtime_smoke_coverage_rows,
     runtime_smoke_skill_names,
     selected_runtime_skills,
@@ -760,6 +761,50 @@ class RuntimeIntegrationTests(unittest.TestCase):
             runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),
             "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
         )
+
+    def test_every_runtime_lane_command_declares_a_windows_target(self) -> None:
+        """A lane that names a POSIX launcher must also name the Windows target.
+
+        The smoke runner resolves the command straight from the contract, so a
+        map without a Windows key makes the lane report "no native command in
+        contract" on Windows. runtime_command_target() hides that, because it
+        falls back to scanning declared files, so the gap only shows up in a
+        real Windows run.
+        """
+
+        manifests = load_manifests()
+
+        def command_maps(node: object, path: list[str]):
+            if isinstance(node, dict):
+                if isinstance(node.get("command"), dict):
+                    yield ".".join(path), node["command"]
+                for key, value in node.items():
+                    if key != "command":
+                        yield from command_maps(value, path + [str(key)])
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    yield from command_maps(value, path + [str(index)])
+
+        missing = []
+        for skill, spec in sorted(manifests["runtime"]["skills"].items()):
+            for lane in ("smoke", "functional_smoke", "live_check"):
+                for where, command in command_maps(spec.get(lane), [lane]):
+                    if not command.get("windows") and not command.get("windows_ps1"):
+                        missing.append(f"{skill}:{where}")
+        self.assertEqual(missing, [])
+
+    def test_posix_only_skills_resolve_their_documented_windows_command(self) -> None:
+        manifests = load_manifests()
+
+        for skill, expected in (
+            ("calibre", "skills/calibre/cal.py"),
+            ("research-digest-wrapper", "skills/research-digest-wrapper/research_digest.py"),
+        ):
+            for runner in ("run_skill.ps1", "run_skill.bat"):
+                self.assertEqual(
+                    runtime_contract_command_target(manifests, skill, "windows", runner),
+                    expected,
+                )
 
     def test_axiom_axle_runtime_smoke_skill_is_supported_and_uses_platform_launchers(self) -> None:
         manifests = load_manifests()
