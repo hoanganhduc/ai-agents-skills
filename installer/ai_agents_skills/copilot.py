@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .capabilities import (
     existing_parents,
@@ -281,7 +281,3 @@ def _surface(name: str, path: Path, writable: bool, scope: str) -> dict[str, Any
         "scope": scope,
         "installer_writes": writable,
     }
-
-
-def validate_copilot_statuses(statuses: Iterable[str]) -> list[str]:
-    return sorted({status for status in statuses if status not in COPILOT_PRECHECK_STATUSES})
