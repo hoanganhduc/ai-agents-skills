@@ -29,6 +29,7 @@ from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.post_install_smoke import run_post_install_smoke
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_denied_patterns, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import (
+    aggregate_runtime_status,
     make_trusted_scratch_directory,
     run_installed_runtime_smoke,
     run_runtime_smoke,
@@ -760,6 +761,36 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(
             runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),
             "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
+        )
+
+    def test_all_skipped_rows_do_not_aggregate_to_ok(self) -> None:
+        """A run where nothing executed must not report success.
+
+        Rows skip when a required Python module is missing or a live check has
+        no credentials. Treating a set of nothing-but-skipped rows as ok made
+        installed-runtime-smoke exit 0 on a run that proved nothing.
+        """
+
+        self.assertEqual(aggregate_runtime_status([]), "skipped")
+        self.assertEqual(
+            aggregate_runtime_status([{"status": "skipped"}, {"status": "skipped"}]),
+            "skipped",
+        )
+        self.assertEqual(
+            aggregate_runtime_status([{"status": "skipped"}, {"status": "ok"}]),
+            "ok",
+        )
+        self.assertEqual(
+            aggregate_runtime_status([{"status": "skipped"}, {"status": "failed"}]),
+            "failed",
+        )
+        self.assertEqual(
+            aggregate_runtime_status([{"status": "skipped"}, {"status": "degraded"}]),
+            "degraded",
+        )
+        self.assertEqual(
+            aggregate_runtime_status([{"status": "ok"}, {"status": "unsupported"}]),
+            "degraded",
         )
 
     def test_every_runtime_lane_command_declares_a_windows_target(self) -> None:
