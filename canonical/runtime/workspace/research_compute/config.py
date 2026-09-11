@@ -176,6 +176,12 @@ def modal_config_path() -> Path:
     return Path.home() / ".modal.toml"
 
 
+# System roots a reaper lease may never sit under. Both sides of the comparison
+# are resolved: macOS resolves /etc to /private/etc, so a candidate resolved
+# against an unresolved root matches nothing and the guard would fail open.
+LEASE_DENIED_ROOTS = ("/etc", "/usr", "/opt")
+
+
 def load_config(path: Path | None = None) -> BrokerConfig:
     config_path = (path or default_config_path()).expanduser().resolve()
     data = load_toml(config_path)
@@ -190,7 +196,8 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         "reaper_lease_file", "~/.local/state/ai-agents-skills/hetzner-reaper-lease.json"
     )).expanduser())
     lease_realpath = Path(reaper_lease_file).resolve()
-    if any(lease_realpath.is_relative_to(root) for root in ("/etc", "/usr", "/opt")):
+    denied_roots = (Path(root).resolve() for root in LEASE_DENIED_ROOTS)
+    if any(lease_realpath.is_relative_to(root) for root in denied_roots):
         raise ValueError(
             "reaper lease path must be owner-controlled; move it under $HOME "
             "(default ~/.local/state/ai-agents-skills/hetzner-reaper-lease.json)"
