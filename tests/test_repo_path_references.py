@@ -15,7 +15,9 @@ never touches.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -60,7 +62,29 @@ REJECTED_PREFIXES = ("/", "~", "$", "%", "-", "http", "#")
 
 
 def top_level_names() -> set[str]:
-    return {p.name for p in ROOT.iterdir() if p.name not in TRANSIENT_TOP_LEVEL}
+    """Top-level names this repository actually tracks.
+
+    Reading the directory instead would let any untracked scratch entry widen
+    the anchor set: an empty ``pip/`` is enough to make ``pip/foo`` in prose
+    read as a path claim and fail the scan. Git is the source of truth, and a
+    checkout without history falls back to the directory listing.
+    """
+
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover - no git
+        return {p.name for p in ROOT.iterdir() if p.name not in TRANSIENT_TOP_LEVEL}
+    names = {
+        os.fsdecode(entry).split("/", 1)[0]
+        for entry in completed.stdout.split(b"\0")
+        if entry
+    }
+    return names - TRANSIENT_TOP_LEVEL
 
 
 def looks_like_repo_path(token: str, top: set[str]) -> bool:
