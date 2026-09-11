@@ -6,6 +6,8 @@
 *.yml text eol=lf
 *.json text eol=lf
 *.html text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
 canonical/runtime/**/*.md text eol=lf
 canonical/runtime/**/*.txt text eol=lf
 canonical/runtime/**/*.tex text eol=lf
