@@ -684,8 +684,11 @@ def run_installed_runtime_smoke(
     if not credential_launch["results"]:
         credential_launch = {"status": "not-applicable" if target_platform == "windows" else "skipped",
                              "results": [], "reason": "no selected credential-bearing offline smoke"}
-    status = aggregate_runtime_status([*results, *functional_rows, *live_rows])
-    if status == "skipped" and reported_skills:
+    reported_rows = [*results, *functional_rows, *live_rows]
+    status = aggregate_runtime_status(reported_rows)
+    if not reported_rows and reported_skills:
+        # Live-only skills produce no offline row; that is coverage by design,
+        # not a run that skipped every check.
         status = "ok"
     if (credential_launch["status"] == "failed"
             or (require_complete_coverage and any(section["status"] == "skipped" for section in credential_sections))
@@ -2005,6 +2008,11 @@ def aggregate_runtime_status(results: list[dict[str, Any]]) -> str:
         return "failed"
     if statuses & {"degraded", "unsupported"}:
         return "degraded"
+    if statuses == {"skipped"}:
+        # Nothing ran. A missing Python module or an absent credential skips a
+        # row, so a whole run can skip without a single check executing; calling
+        # that "ok" would report success for a smoke that proved nothing.
+        return "skipped"
     return "ok"
 
 
