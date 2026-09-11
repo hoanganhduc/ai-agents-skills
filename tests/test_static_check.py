@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.static_check import (
+    NEWLINE_CRLF_EXEMPT_SUFFIXES,
+    NEWLINE_LF_SUFFIXES,
     bash_syntax_path,
     check_duplicate_keyword_spread,
     check_python_parse,
@@ -697,6 +699,66 @@ class ModuleDictConstantTests(unittest.TestCase):
         )
 
         self.assertEqual(constants, {})
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@unittest.skipUnless(
+    shutil.which("git") and (REPO_ROOT / ".git").exists(),
+    "reading the checkout rules needs git and a work tree",
+)
+class NewlinePolicyGitattributesTests(unittest.TestCase):
+    """The newline rule only holds if the checkout is pinned to match it.
+
+    ``check_newline_policy`` reads bytes off disk, so on Windows it sees
+    whatever ``core.autocrlf`` wrote at checkout time. A suffix policed there
+    but left unpinned in ``.gitattributes`` passes on Linux and fails on
+    Windows with one error per file -- a class of failure no Linux-only run can
+    see. These two sets are a pair, so widening one without the other fails
+    here first.
+    """
+
+    SAMPLES = ("sample{suffix}", "nested/dir/sample{suffix}")
+
+    def _eol_attributes(self, paths: list[str]) -> dict[str, str]:
+        """The eol git would apply to each path, keyed by path.
+
+        ``check-attr`` answers for a path whether or not it exists, which is
+        what this asks: the question is about the rule, not about a file.
+        """
+
+        completed = subprocess.run(
+            ["git", "check-attr", "eol", "-z", "--", *paths],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+        )
+        fields = [os.fsdecode(field) for field in completed.stdout.split(b"\0") if field]
+        return {fields[i]: fields[i + 2] for i in range(0, len(fields), 3)}
+
+    def _assert_pinned(self, suffixes: set[str], expected: str) -> None:
+        paths = [
+            sample.format(suffix=suffix)
+            for suffix in sorted(suffixes)
+            for sample in self.SAMPLES
+        ]
+        attributes = self._eol_attributes(paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    attributes.get(path),
+                    expected,
+                    f"static_check polices {Path(path).suffix} but .gitattributes "
+                    f"leaves {path} at eol={attributes.get(path)!r}; a Windows "
+                    f"checkout rewrites it and the newline rule then fails",
+                )
+
+    def test_every_lf_suffix_is_pinned_to_lf(self) -> None:
+        self._assert_pinned(NEWLINE_LF_SUFFIXES, "lf")
+
+    def test_every_crlf_exempt_suffix_is_pinned_to_crlf(self) -> None:
+        self._assert_pinned(NEWLINE_CRLF_EXEMPT_SUFFIXES, "crlf")
+
 
 if __name__ == "__main__":
     unittest.main()
