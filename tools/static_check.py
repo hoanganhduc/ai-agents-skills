@@ -353,18 +353,25 @@ def check_windows_path_hazards(files: list[Path]) -> list[str]:
     return errors
 
 
+# Windows script hosts still expect CRLF, so .ps1 and .bat are read but never
+# held to the LF rule; every other scanned suffix is cross-platform text.
+NEWLINE_CRLF_EXEMPT_SUFFIXES = {".ps1", ".bat"}
+NEWLINE_LF_SUFFIXES = {".sh", ".py", ".html", ".md", ".yaml", ".yml", ".json", ".toml"}
+
+
 def check_newline_policy(files: list[Path]) -> list[str]:
     errors: list[str] = []
     for path in files:
-        if path.suffix.lower() not in {".sh", ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".ps1", ".bat", ".html"}:
+        suffix = path.suffix.lower()
+        if suffix not in NEWLINE_LF_SUFFIXES | NEWLINE_CRLF_EXEMPT_SUFFIXES:
             continue
         try:
             data = path.read_bytes()
         except OSError as exc:
             errors.append(f"newline:{path}:{exc}")
             continue
-        if path.suffix.lower() in {".sh", ".py", ".html"} and b"\r\n" in data:
-            errors.append(f"newline:{path}:expected LF for Python/POSIX shell/HTML")
+        if suffix in NEWLINE_LF_SUFFIXES and b"\r\n" in data:
+            errors.append(f"newline:{path}:expected LF for cross-platform text")
     return errors
 
 
