@@ -495,7 +495,7 @@ class BoundedCommandTests(unittest.TestCase):
             self.assertFalse(Path("/proc", str(pid)).exists())
 
     def test_relative_tool_candidate_is_bound_to_an_absolute_path(self) -> None:
-        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             tool = Path(tmp) / "tool"
             tool.write_text("tool", encoding="utf-8")
             candidate = os.path.relpath(tool, Path.cwd())
