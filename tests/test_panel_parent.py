@@ -32,6 +32,8 @@ sys.path.insert(0, str(RUNTIME_DIR))
 import panel_parent as pp  # noqa: E402
 import provider_resources as pr  # noqa: E402
 
+from tests._provider_fixture import ProviderAttestationFixture  # noqa: E402
+
 
 class PanelProviderCredentialScopeTests(unittest.TestCase):
     def test_each_attested_provider_receives_only_its_explicit_secret_keys(self) -> None:
@@ -83,55 +85,9 @@ _TEST_PROVIDER_FAMILIES = {
 }
 
 
-class _ProviderAttestationFixture:
+class _ProviderAttestationFixture(ProviderAttestationFixture):
     def __init__(self) -> None:
-        safe_parent = Path(os.path.realpath(Path.home()))
-        self._temporary = tempfile.TemporaryDirectory(
-            prefix=".aas-provider-fixture-", dir=safe_parent
-        )
-        self.root = Path(self._temporary.name)
-        self.paths: dict[str, Path] = {}
-        self.environment: dict[str, str] = {}
-        python = str(Path(os.path.realpath(sys.executable)))
-        for provider, family in _TEST_PROVIDER_FAMILIES.items():
-            dependency_root = self.root / "providers" / provider
-            dependency_root.mkdir(parents=True, mode=0o700)
-            if os.name == "posix":
-                (self.root / "providers").chmod(0o700)
-                dependency_root.chmod(0o700)
-            suffix = ".exe" if os.name == "nt" else ""
-            path = dependency_root / f"{provider}{suffix}"
-            if os.name == "nt":  # pragma: no cover - Windows CI fixture
-                path.write_bytes(Path(python).read_bytes())
-            else:
-                path.write_text(
-                    f"#!/bin/sh\nexec {shlex.quote(python)} \"$@\"\n",
-                    encoding="utf-8",
-                )
-                path.chmod(0o700)
-            digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-            key = provider.upper()
-            self.paths[provider] = path
-            self.environment.update(
-                {
-                    f"AAS_AUTOLOOP_ATTESTED_BIN_{key}": str(path),
-                    f"AAS_AUTOLOOP_ATTESTED_SHA256_{key}": digest,
-                    f"AAS_AUTOLOOP_ATTESTED_UPSTREAM_{key}": family,
-                    f"AAS_AUTOLOOP_ATTESTED_MODEL_{key}": f"{provider}-test-model",
-                    f"AAS_AUTOLOOP_ATTESTED_DEPENDENCY_ROOT_{key}": str(
-                        dependency_root
-                    ),
-                }
-            )
-
-    def cleanup(self) -> None:
-        self._temporary.cleanup()
-
-    def __enter__(self) -> "_ProviderAttestationFixture":
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        self.cleanup()
+        super().__init__(_TEST_PROVIDER_FAMILIES)
 
 
 def _provider_binary(name: str) -> str | None:
