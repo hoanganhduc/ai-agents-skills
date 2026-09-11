@@ -2930,6 +2930,31 @@ class HetznerDriverTests(unittest.TestCase):
                     "(default ~/.local/state/ai-agents-skills/hetzner-reaper-lease.json)",
                 )
 
+    def test_a_symlinked_denied_root_is_still_refused(self) -> None:
+        """Resolving only the candidate lets a symlinked root through.
+
+        macOS resolves /etc to /private/etc, so /etc/reaper-lease.json resolved
+        to a path under no listed root and the guard let a root-owned lease
+        pass. The subTest above cannot see that: on Linux those three roots are
+        real directories. A temporary symlinked root reproduces the shape on
+        every platform, so the regression is caught where CI actually runs.
+        """
+
+        real_root = self.tmp / "private" / "denied"
+        real_root.mkdir(parents=True)
+        linked_root = self.tmp / "denied"
+        linked_root.symlink_to(real_root, target_is_directory=True)
+        with mock.patch.object(rc_config, "LEASE_DENIED_ROOTS", (str(linked_root),)):
+            with self.assertRaises(ValueError) as raised:
+                _config_text(
+                    self.tmp / "refused-symlinked-root",
+                    CONFIG_TOML.replace(
+                        "[hetzner]",
+                        f'[hetzner]\nreaper_lease_file = "{linked_root}/reaper-lease.json"',
+                    ),
+                )
+        self.assertIn("owner-controlled", str(raised.exception))
+
     @_GETEUID_POSIX_SKIP
     def test_reaper_lease_binding_mismatch_message(self) -> None:
         self.config.hetzner_reaper_scheduler_id = "cron:user:me"
