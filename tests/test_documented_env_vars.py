@@ -36,7 +36,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 NAME = re.compile(r"\b((?:AAS|OPENCLAW|ARL)_[A-Z0-9_]*[A-Z0-9])\b")
 
-DOC_GLOBS = ("canonical/**/*.md", "docs/**/*.md", "targets/**/*.md", "tools/**/*.md")
+# Where a variable may be documented. research/ is out of scope on purpose:
+# it holds dated investigation notes, not shipped guidance, so a name that
+# survives only there is still undocumented for a reader of this repository.
+DOC_GLOBS = (
+    "canonical/**/*.md",
+    "docs/**/*.md",
+    "manifest/**/*.md",
+    "targets/**/*.md",
+    "tools/**/*.md",
+)
 DOC_FILES = ("README.md", "SPEC.md")
 
 # Not code: version control and caches carry no claims, `docs/` is generated
