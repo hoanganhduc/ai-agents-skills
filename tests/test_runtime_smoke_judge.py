@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -147,6 +148,35 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(env["HOME"], str(self.smoke_dir / "home"))
         self.assertEqual(stat.S_IMODE(Path(env["HOME"]).stat().st_mode), 0o700)
         self.assertFalse((Path(env["HOME"]) / ".agents_skills_venv").exists())
+
+    def test_smoke_path_entries_lead_with_the_running_interpreter(self):
+        """The pinned PATH is only useful if a supported interpreter is on it.
+
+        ``/usr/bin:/bin`` alone offers the platform python3: macOS ships a 3.9
+        stub that run_skill.sh refuses at its 3.10 floor, and a CI Linux
+        python3 is not the interpreter the smoke dependencies were installed
+        into. Both made every skill fail on a runner while passing here.
+        """
+
+        with patch.object(sys, "executable", "/opt/py311/bin/python"):
+            self.assertEqual(smoke.smoke_path_entries(), ["/opt/py311/bin", "/usr/bin", "/bin"])
+        with patch.object(sys, "executable", "/usr/bin/python3"):
+            self.assertEqual(smoke.smoke_path_entries(), ["/usr/bin", "/bin"])
+
+    @unittest.skipIf(os.name == "nt", "smoke_env pins PATH on POSIX only")
+    def test_smoke_env_path_can_launch_a_supported_interpreter(self):
+        env = smoke.smoke_env(manifests_for(offline=contract()), "example", self.workspace)
+        entries = env["PATH"].split(os.pathsep)
+
+        self.assertEqual(entries[-2:], ["/usr/bin", "/bin"])
+        self.assertIn(os.path.dirname(sys.executable), entries)
+        interpreter = Path(entries[0]) / "python3"
+        self.assertTrue(interpreter.exists(), f"{entries[0]} carries no python3")
+        reported = subprocess.run(
+            [str(interpreter), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True, check=True, text=True, encoding="utf-8",
+        ).stdout.strip()
+        self.assertGreaterEqual(tuple(int(part) for part in reported.split(".")), (3, 10), reported)
 
     def test_fixtures_expand_content_copy_sources_and_refuse_symlink_escape(self):
         source = self.root / "source"
