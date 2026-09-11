@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -1515,6 +1516,31 @@ def _private_smoke_directory(path: Path, smoke_dir: Path) -> None:
         current = current.parent
 
 
+def smoke_path_entries() -> list[str]:
+    """The PATH a smoke child gets: the running interpreter, then the base.
+
+    ``/usr/bin:/bin`` alone offers only whatever python3 the platform ships.
+    macOS ships the 3.9 command line tools stub, below the 3.10 floor
+    ``run_skill.sh`` enforces, so every skill exits 127 before it starts; a
+    Linux runner ships a python3 that is not the interpreter the smoke
+    dependencies were installed into, so a skill importing one of them fails on
+    the import. Lead with the directory holding the interpreter already running
+    this process, which ``installer/bootstrap.sh`` resolved against that same
+    floor.
+
+    Naming that directory rather than linking the binary into the workspace is
+    deliberate: CPython finds ``pyvenv.cfg`` beside the path it was invoked
+    through, so a link planted outside a venv quietly demotes it to its base
+    interpreter and the child runs against the wrong site-packages.
+    """
+
+    base = ["/usr/bin", "/bin"]
+    interpreter_bin = os.path.dirname(sys.executable)
+    if not interpreter_bin or interpreter_bin in base:
+        return base
+    return [interpreter_bin, *base]
+
+
 def materialize_smoke_fixtures(
     contract: dict[str, Any], workspace: Path, *, skill_venv: str | None = None,
 ) -> None:
@@ -1550,7 +1576,7 @@ def smoke_env(
     _private_smoke_directory(home, smoke_dir)
     env["HOME"] = str(home)
     if os.name == "posix":
-        env["PATH"] = "/usr/bin:/bin"
+        env["PATH"] = os.pathsep.join(smoke_path_entries())
     env["AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE"] = "1"
     env["AAS_RUNTIME_WORKSPACE"] = str(workspace)
     env["PYTHONUTF8"] = "1"
