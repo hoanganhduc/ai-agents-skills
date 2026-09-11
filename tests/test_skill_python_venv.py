@@ -189,6 +189,21 @@ def set_cfg(venv: Path, key: str, value: str) -> None:
     write_cfg(venv, [f"{key} = {value}" if line.split("=")[0].strip() == key else line for line in lines])
 
 
+def write_regular_binary(path: Path) -> None:
+    """Put a plain executable file where a symlink to the interpreter belongs.
+
+    These fixtures used to copy the attested ``/usr/bin/python3`` into place,
+    which macOS refuses: System Integrity Protection fails the metadata copy with
+    ``PermissionError: [Errno 1] Operation not permitted``.  Nothing under test
+    runs the file -- the checks it drives ask only whether the path is a regular
+    file rather than a symlink, and whether it resolves somewhere other than the
+    attested interpreter -- so synthesized bytes stand in for the copy exactly.
+    """
+
+    path.write_bytes(b"#!/bin/sh\nexit 1\n")
+    path.chmod(0o755)
+
+
 def cfg_version_xy(venv: Path) -> str:
     for line in cfg_lines(venv):
         key, _, value = line.partition("=")
@@ -506,7 +521,7 @@ class ApplyTests(SkillPythonCase):
         with self.assertRaisesRegex(SkillPythonError, "does not resolve to the attested system Python"):
             attested_base_python("/bin/sh", preflight_ensurepip=False)
         copied = self.root / "python3"
-        shutil.copy2(self.attested, copied)
+        write_regular_binary(copied)
         with self.assertRaises(SkillPythonError):
             attested_base_python(str(copied), preflight_ensurepip=False)
         with self.assertRaises(SkillPythonError):
@@ -666,7 +681,7 @@ class AdmissionTests(SkillPythonCase):
         with self.subTest("bin/python copied not symlinked refused"):
             venv = self.fresh_venv("copied")
             (venv / "bin" / "python").unlink()
-            shutil.copy2(self.attested, venv / "bin" / "python")
+            write_regular_binary(venv / "bin" / "python")
             self.assertEqual(self.admit(venv), (False, "skill Python venv bin/python is not a symlink"))
         with self.subTest("bin/python to /bin/sh refused"):
             venv = self.fresh_venv("shell")
@@ -825,7 +840,7 @@ class AdmissionTests(SkillPythonCase):
         fixtures.append(("dotted", f"{venv.parent}/./{venv.name}"))
         venv = self.fresh_venv("p-copied")
         (venv / "bin" / "python").unlink()
-        shutil.copy2(self.attested, venv / "bin" / "python")
+        write_regular_binary(venv / "bin" / "python")
         fixtures.append(("copied bin/python", venv))
         venv = self.fresh_venv("p-sh")
         (venv / "bin" / "python").unlink()

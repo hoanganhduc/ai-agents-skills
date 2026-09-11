@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -133,8 +132,14 @@ class LoadSecretEnvChildLaunchTests(unittest.TestCase):
         (no_cfg / "bin").mkdir(parents=True, mode=0o700)
         (no_cfg / "bin" / "python").symlink_to(attested)
         copied = self.make_venv("copied")
-        (copied / "bin" / "python").unlink()
-        shutil.copy2(attested, copied / "bin" / "python")
+        regular = copied / "bin" / "python"
+        regular.unlink()
+        # Synthesized bytes rather than a copy of the attested interpreter: macOS
+        # carries a rootless extended attribute on /usr/bin/python3 that fails the
+        # metadata half of a file copy with EPERM, and the loader asks only whether
+        # bin/python is a symlink, never what the file would execute.
+        regular.write_bytes(b"#!/bin/sh\nexit 1\n")
+        regular.chmod(0o755)
         shell = self.make_venv("shell")
         (shell / "bin" / "python").unlink()
         (shell / "bin" / "python").symlink_to("/bin/sh")
