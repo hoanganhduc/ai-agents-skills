@@ -2371,7 +2371,8 @@
         "command": {
           "linux": "workspace/skills/calibre/run_cal.sh",
           "macos": "workspace/skills/calibre/run_cal.sh",
-          "wsl": "workspace/skills/calibre/run_cal.sh"
+          "wsl": "workspace/skills/calibre/run_cal.sh",
+          "windows": "workspace/skills/calibre/cal.py"
         },
         "args": [
           "doctor"
@@ -2412,7 +2413,8 @@
           "command": {
             "linux": "workspace/skills/calibre/run_cal.sh",
             "macos": "workspace/skills/calibre/run_cal.sh",
-            "wsl": "workspace/skills/calibre/run_cal.sh"
+            "wsl": "workspace/skills/calibre/run_cal.sh",
+            "windows": "workspace/skills/calibre/cal.py"
           },
           "args": [
             "--help"
@@ -2432,7 +2434,8 @@
           "command": {
             "linux": "workspace/skills/calibre/run_cal.sh",
             "macos": "workspace/skills/calibre/run_cal.sh",
-            "wsl": "workspace/skills/calibre/run_cal.sh"
+            "wsl": "workspace/skills/calibre/run_cal.sh",
+            "windows": "workspace/skills/calibre/cal.py"
           },
           "args": [
             "doctor"
@@ -2469,7 +2472,8 @@
           "command": {
             "linux": "workspace/skills/calibre/run_cal.sh",
             "macos": "workspace/skills/calibre/run_cal.sh",
-            "wsl": "workspace/skills/calibre/run_cal.sh"
+            "wsl": "workspace/skills/calibre/run_cal.sh",
+            "windows": "workspace/skills/calibre/cal.py"
           },
           "args": [
             "doctor"
@@ -2513,7 +2517,8 @@
           "command": {
             "linux": "workspace/skills/calibre/run_cal.sh",
             "macos": "workspace/skills/calibre/run_cal.sh",
-            "wsl": "workspace/skills/calibre/run_cal.sh"
+            "wsl": "workspace/skills/calibre/run_cal.sh",
+            "windows": "workspace/skills/calibre/cal.py"
           },
           "args": [
             "list-shelves"
@@ -5781,7 +5786,8 @@
         "command": {
           "linux": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
           "macos": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
-          "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh"
+          "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+          "windows": "workspace/skills/research-digest-wrapper/research_digest.py"
         },
         "args": [
           "list-topics"
@@ -5827,7 +5833,8 @@
           "command": {
             "linux": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
             "macos": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
-            "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh"
+            "wsl": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+            "windows": "workspace/skills/research-digest-wrapper/research_digest.py"
           },
           "args": [
             "doctor"
@@ -7033,7 +7040,8 @@
           "command": {
             "linux": "workspace/skills/zotero/run_zot.sh",
             "macos": "workspace/skills/zotero/run_zot.sh",
-            "wsl": "workspace/skills/zotero/run_zot.sh"
+            "wsl": "workspace/skills/zotero/run_zot.sh",
+            "windows": "workspace/skills/zotero/zot.py"
           },
           "args": [
             "--help"
@@ -7060,7 +7068,8 @@
           "command": {
             "linux": "workspace/skills/zotero/run_zot.sh",
             "macos": "workspace/skills/zotero/run_zot.sh",
-            "wsl": "workspace/skills/zotero/run_zot.sh"
+            "wsl": "workspace/skills/zotero/run_zot.sh",
+            "windows": "workspace/skills/zotero/zot.py"
           },
           "args": [
             "doctor",
@@ -7090,7 +7099,8 @@
           "command": {
             "linux": "workspace/skills/zotero/run_zot.sh",
             "macos": "workspace/skills/zotero/run_zot.sh",
-            "wsl": "workspace/skills/zotero/run_zot.sh"
+            "wsl": "workspace/skills/zotero/run_zot.sh",
+            "windows": "workspace/skills/zotero/zot.py"
           },
           "args": [
             "doctor",
@@ -7130,7 +7140,8 @@
           "command": {
             "linux": "workspace/skills/zotero/run_zot.sh",
             "macos": "workspace/skills/zotero/run_zot.sh",
-            "wsl": "workspace/skills/zotero/run_zot.sh"
+            "wsl": "workspace/skills/zotero/run_zot.sh",
+            "windows": "workspace/skills/zotero/zot.py"
           },
           "args": [
             "list-collections",
