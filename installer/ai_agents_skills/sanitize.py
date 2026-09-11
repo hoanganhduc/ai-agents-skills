@@ -19,6 +19,14 @@ EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
 LINUX_HOME_PATTERN = re.compile(r"/home/[^/\s`'\")]+")
 WINDOWS_HOME_PATTERN = re.compile(r"(?:/windows/Users|/mnt/[a-z]/Users)/[^/\s`'\")]+", re.IGNORECASE)
 WINDOWS_NATIVE_HOME_PATTERN = re.compile(r"[A-Za-z]:\\Users\\[^\\\s`'\")]+")
+# A macOS home carries the account name exactly like ``/home/<user>`` does, so it
+# is scrubbed the same way. It runs after the Windows patterns because those
+# already consumed ``/windows/Users/...`` and ``/mnt/<drive>/Users/...``.
+MACOS_HOME_PATTERN = re.compile(r"/Users/[^/\s`'\")]+")
+# ``/root`` is deliberately absent: it names no account and the hetzner lane uses
+# it as a legitimate remote path (``hetzner_driver.REMOTE_DIR``). The OpenClaw
+# leak table in ``openclaw_target_paths.py`` does flag it, because there the
+# concern is a host path escaping into a generated artifact rather than identity.
 
 
 def sanitize_text(text: str, canonical_name: str | None = None) -> str:
@@ -32,6 +40,7 @@ def sanitize_text(text: str, canonical_name: str | None = None) -> str:
 
     result = WINDOWS_HOME_PATTERN.sub("<WINDOWS_HOME>", result)
     result = WINDOWS_NATIVE_HOME_PATTERN.sub("<WINDOWS_HOME>", result)
+    result = MACOS_HOME_PATTERN.sub("<MACOS_HOME>", result)
     result = LINUX_HOME_PATTERN.sub("<LINUX_HOME>", result)
     result = EMAIL_PATTERN.sub("<EMAIL>", result)
     for pattern in TOKEN_PATTERNS:
@@ -61,6 +70,7 @@ def has_sensitive_material(text: str) -> bool:
         has_non_placeholder_match(LINUX_HOME_PATTERN, text)
         or has_non_placeholder_match(WINDOWS_HOME_PATTERN, text)
         or has_non_placeholder_match(WINDOWS_NATIVE_HOME_PATTERN, text)
+        or has_non_placeholder_match(MACOS_HOME_PATTERN, text)
     ):
         return True
     home = str(Path.home())

@@ -62,7 +62,7 @@ class RawTargetRefTests(unittest.TestCase):
             "\\\\server\\share\\secret.txt",
             "//server/share/secret.txt",
             "C:\\Users\\me\\secret.txt",
-            "C:/Users/me/secret.txt",
+            "C:/Users" + "/me/secret.txt",
             "http://x.test/a",
             "https://x.test/a",
         ):

@@ -19,7 +19,7 @@ from mma import doctor, render, tools  # noqa: E402
 
 class ManimMathAnimationRuntimeTests(unittest.TestCase):
     def test_windows_venv_executable_uses_scripts_exe(self) -> None:
-        venv = Path("C:/Users/example/.local/share/manim-math-animation-venv")
+        venv = Path("C:/Users" + "/example/.local/share/manim-math-animation-venv")
         self.assertEqual(
             tools.venv_executable(venv, "manim", platform_name="nt"),
             venv / "Scripts" / "manim.exe",

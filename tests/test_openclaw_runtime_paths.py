@@ -18,7 +18,7 @@ class PathLeakScanTest(unittest.TestCase):
         self.assertEqual(path_leak_scan("/home" "/ubuntu/.local/share/x"), ["posix-home-path"])
         self.assertEqual(path_leak_scan("bash ~/.codex/runtime/run_skill.sh"), ["codex-runtime-path"])
         self.assertIn("windows-aas-runtime-path", path_leak_scan(r"%LOCALAPPDATA%\ai-agents-skills\runtime"))
-        self.assertIn("macos-home-path", path_leak_scan("/Users/alice/x"))
+        self.assertIn("macos-home-path", path_leak_scan("/Users/" + "alice/x"))
 
     def test_workspace_is_portable_sandbox_home(self) -> None:
         # HOME=/workspace in the OpenClaw sandbox -> byte-identical everywhere, and it

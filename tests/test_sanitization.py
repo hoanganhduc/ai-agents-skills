@@ -41,6 +41,7 @@ class SanitizationTests(unittest.TestCase):
         ("wsl windows home", "/windows/Users/exampleuser/.codex", "<WINDOWS_HOME>"),
         ("mounted windows home", "/mnt/c/Users/exampleuser/.codex", "<WINDOWS_HOME>"),
         ("native windows home", "C:\\Users\\exampleuser\\.codex", "<WINDOWS_HOME>"),
+        ("macos home", "/Users/exampleuser/Library", "<MACOS_HOME>"),
         ("email", "person@example.com", "<EMAIL>"),
     )
 
@@ -107,6 +108,13 @@ class SanitizationTests(unittest.TestCase):
         self.assertFalse(has_sensitive_material("inspect `/windows/Users/...` from Linux"))
         self.assertTrue(has_sensitive_material("/home/exampleuser/file"))
         self.assertTrue(has_sensitive_material("/windows/Users/exampleuser/.codex"))
+        self.assertTrue(has_sensitive_material("/Users/exampleuser/Library"))
+        self.assertFalse(has_sensitive_material("<MACOS_HOME>"))
+        # A mounted Windows home is consumed by the Windows patterns first, so
+        # the macOS pattern never double-reports it.
+        self.assertEqual(sanitize_text("/mnt/c/Users/exampleuser/x"), "<WINDOWS_HOME>/x")
+        # /root names no account and stays readable; see sanitize.MACOS_HOME_PATTERN.
+        self.assertFalse(has_sensitive_material("/root/job-bundle"))
 
     def test_sanitization_check_skips_local_virtualenvs(self) -> None:
         self.assertIn(".venv", sanitization_check.SKIP_DIRS)
