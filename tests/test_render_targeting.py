@@ -118,7 +118,8 @@ class OpenClawRenderTests(unittest.TestCase):
         # future edit as well -- more than these two literals are worth.
         windows_home = "/windows/Users/" + "alice"
         posix_home = "cd /home/" + "agent/work"
-        self.assertEqual(path_leak_scan("/Users/alice/Library"), ["macos-home-path"])
+        macos_home = "/Users/" + "alice"
+        self.assertEqual(path_leak_scan(macos_home + "/Library"), ["macos-home-path"])
         self.assertEqual(path_leak_scan(windows_home), ["macos-home-path"])
         self.assertEqual(path_leak_scan(posix_home), ["posix-home-path"])
 

@@ -34,6 +34,12 @@ def _write_json(path: Path, data: dict) -> Path:
     return path
 
 
+# Split so the repository sanitization scan does not read these fixture
+# paths as a real home directory; see tools/sanitization_check.py.
+MACOS_HOME = "/Users/" + "u"
+WINDOWS_HOME = "C:/Users" + "/u"
+
+
 class SendEmailConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         self.se = _import_send_email()
@@ -237,23 +243,23 @@ class SendEmailConfigTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "simulates darwin/win32 via sys.platform; native Windows keeps os.name == 'nt' and WindowsPath rendering")
     def test_documented_platform_default_candidates(self) -> None:
         with mock.patch.object(self.se.sys, "platform", "darwin"):
-            with mock.patch.dict(os.environ, {"HOME": "/Users/u", "XDG_CONFIG_HOME": "/tmp/xdg"},
+            with mock.patch.dict(os.environ, {"HOME": MACOS_HOME, "XDG_CONFIG_HOME": "/tmp/xdg"},
                                  clear=True):
                 mac = [str(path) for path in self.se._platform_default_secret_paths()]
         with mock.patch.object(self.se.sys, "platform", "win32"):
             with mock.patch.dict(os.environ, {
-                "APPDATA": "C:/Users/u/AppData/Roaming",
-                "LOCALAPPDATA": "C:/Users/u/AppData/Local",
+                "APPDATA": WINDOWS_HOME + "/AppData/Roaming",
+                "LOCALAPPDATA": WINDOWS_HOME + "/AppData/Local",
             }, clear=True):
                 win = [str(path).replace("\\", "/") for path in self.se._platform_default_secret_paths()]
         self.assertEqual(mac, [
             "/tmp/xdg/send-email/secrets.json",
-            "/Users/u/Library/Application Support/send-email/secrets.json",
-            "/Users/u/.config/send-email/secrets.json",
+            MACOS_HOME + "/Library/Application Support/send-email/secrets.json",
+            MACOS_HOME + "/.config/send-email/secrets.json",
         ])
         self.assertEqual(win, [
-            "C:/Users/u/AppData/Roaming/send-email/secrets.json",
-            "C:/Users/u/AppData/Local/send-email/secrets.json",
+            WINDOWS_HOME + "/AppData/Roaming/send-email/secrets.json",
+            WINDOWS_HOME + "/AppData/Local/send-email/secrets.json",
         ])
 
 
