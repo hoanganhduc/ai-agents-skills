@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import operator
 import re
+import tempfile
 import unittest
 from collections import Counter
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import MappingProxyType
+from unittest.mock import patch
 
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.render import render_artifact_content
+from tools import sync_writing_policy
 
 
 INSTRUCTIONS = REPO_ROOT / "canonical" / "instructions"
@@ -31,6 +39,17 @@ def heading_slugs(text: str) -> set[str]:
 
 
 class WritingStyleSystemTests(unittest.TestCase):
+    def test_policy_indexes_record_normalized_document_hashes(self) -> None:
+        for name in sync_writing_policy.INDEX_SPECS:
+            with self.subTest(index=name):
+                index = load_json(f"canonical/instructions/{name}")
+                reference = sync_writing_policy.reference_of(index, name)
+                self.assertNotIn("pending", index["content_hash"])
+                self.assertEqual(
+                    index["content_hash"],
+                    sync_writing_policy.document_digest(reference),
+                )
+
     def test_policy_and_overlay_indexes_resolve_to_markdown_anchors(self) -> None:
         policy = load_json("canonical/instructions/writing-style-settings.index.json")
         overlays = [
@@ -298,6 +317,188 @@ class WritingStyleSystemTests(unittest.TestCase):
         self.assertIn("Sentence Openings", overlay)
         self.assertIn("Let ... be ...", normalized_overlay)
         self.assertIn("command-style openings", normalized_overlay)
+
+
+class SyncWritingPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.root = Path(self.temporary_directory.name)
+        self.instructions = self.root / "canonical" / "instructions"
+        self.instructions.mkdir(parents=True)
+        self.patches = (
+            patch.object(sync_writing_policy, "REPO_ROOT", self.root),
+            patch.object(sync_writing_policy, "INSTRUCTIONS_ROOT", self.instructions),
+            patch.object(
+                sync_writing_policy,
+                "INDEX_SPECS",
+                MappingProxyType({
+                    "policy.index.json": (
+                        "policy_ref",
+                        "canonical/instructions/policy.md",
+                    )
+                }),
+            ),
+        )
+        for active_patch in self.patches:
+            active_patch.start()
+            self.addCleanup(active_patch.stop)
+
+    def test_document_digest_normalizes_lf_and_crlf(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_bytes(b"first\nsecond\n")
+        lf_digest = sync_writing_policy.document_digest(
+            "canonical/instructions/policy.md"
+        )
+
+        document.write_bytes(b"first\r\nsecond\r\n")
+        crlf_digest = sync_writing_policy.document_digest(
+            "canonical/instructions/policy.md"
+        )
+
+        expected = "sha256:" + hashlib.sha256(b"first\nsecond\n").hexdigest()
+        self.assertEqual(lf_digest, expected)
+        self.assertEqual(crlf_digest, expected)
+
+    def test_production_index_mapping_is_immutable(self) -> None:
+        with self.assertRaises(TypeError):
+            operator.setitem(
+                sync_writing_policy.INDEX_SPECS,
+                "unexpected.index.json",
+                ("policy_ref", "canonical/instructions/unexpected.md"),
+            )
+
+    def test_check_rejects_placeholder_and_write_repairs_drift(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_bytes(b"first\r\nsecond\r\n")
+        index_path = self.instructions / "policy.index.json"
+        index_path.write_text(
+            json.dumps(
+                {
+                    "policy_ref": "canonical/instructions/policy.md",
+                    "content_hash": "pending-computed-by-gate",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(sync_writing_policy.main(["--check"]), 1)
+            self.assertEqual(sync_writing_policy.main(["--write"]), 0)
+            self.assertEqual(sync_writing_policy.main(["--check"]), 0)
+
+        repaired = json.loads(index_path.read_text(encoding="utf-8"))
+        expected = "sha256:" + hashlib.sha256(b"first\nsecond\n").hexdigest()
+        self.assertEqual(repaired["content_hash"], expected)
+        self.assertNotIn(b"\r\n", index_path.read_bytes())
+
+    def test_document_reference_must_stay_in_instructions(self) -> None:
+        outside = self.root / "outside.md"
+        outside.write_text("outside\n", encoding="utf-8")
+        invalid_references = (
+            str(outside.resolve()),
+            "../outside.md",
+            "canonical/instructions/../outside.md",
+            "canonical\\instructions\\policy.md",
+        )
+        for reference in invalid_references:
+            with self.subTest(reference=reference):
+                with self.assertRaises(SystemExit):
+                    sync_writing_policy.document_digest(reference)
+
+    def test_document_reference_rejects_symlink(self) -> None:
+        target = self.instructions / "target.md"
+        target.write_text("target\n", encoding="utf-8")
+        link = self.instructions / "link.md"
+        try:
+            link.symlink_to(target)
+        except OSError as exc:
+            self.skipTest(f"symlink creation is unavailable: {exc}")
+
+        specs = {
+            "policy.index.json": (
+                "policy_ref",
+                "canonical/instructions/link.md",
+            )
+        }
+        with patch.object(sync_writing_policy, "INDEX_SPECS", specs):
+            with self.assertRaises(SystemExit):
+                sync_writing_policy.document_digest("canonical/instructions/link.md")
+
+    def test_index_reference_must_match_its_fixed_document(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_text("policy\n", encoding="utf-8")
+        index_path = self.instructions / "policy.index.json"
+        for reference in (
+            "canonical/instructions/other.md",
+            "canonical/instructions/policy.md:secret",
+        ):
+            with self.subTest(reference=reference):
+                index_path.write_text(
+                    json.dumps(
+                        {
+                            "policy_ref": reference,
+                            "content_hash": "pending-computed-by-gate",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(SystemExit):
+                    sync_writing_policy.main(["--check"])
+
+    def test_duplicate_index_keys_are_rejected(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_text("policy\n", encoding="utf-8")
+        index_path = self.instructions / "policy.index.json"
+        index_path.write_bytes(
+            b'{"hostile\\u001b[31m":1,"hostile\\u001b[31m":2,'
+            b'"policy_ref":"canonical/instructions/policy.md",'
+            b'"content_hash":"pending-computed-by-gate"}'
+        )
+
+        with self.assertRaises(SystemExit) as raised:
+            sync_writing_policy.main(["--check"])
+        message = str(raised.exception)
+        self.assertNotIn("\x1b", message)
+        self.assertIn("\\x1b", message)
+
+    def test_symlinked_index_cannot_modify_its_target(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_text("policy\n", encoding="utf-8")
+        victim = self.root / "victim.json"
+        original = (
+            b'{"policy_ref":"canonical/instructions/policy.md",'
+            b'"content_hash":"pending-computed-by-gate"}'
+        )
+        victim.write_bytes(original)
+        index_path = self.instructions / "policy.index.json"
+        try:
+            index_path.symlink_to(victim)
+        except OSError as exc:
+            self.skipTest(f"symlink creation is unavailable: {exc}")
+
+        with self.assertRaises(SystemExit):
+            sync_writing_policy.main(["--write"])
+        self.assertEqual(victim.read_bytes(), original)
+
+    def test_failed_atomic_replace_preserves_original_index(self) -> None:
+        document = self.instructions / "policy.md"
+        document.write_text("policy\n", encoding="utf-8")
+        index_path = self.instructions / "policy.index.json"
+        original = json.dumps(
+            {
+                "policy_ref": "canonical/instructions/policy.md",
+                "content_hash": "pending-computed-by-gate",
+            }
+        ).encode("utf-8")
+        index_path.write_bytes(original)
+
+        with patch.object(sync_writing_policy.os, "replace", side_effect=OSError("full disk")):
+            with self.assertRaises(OSError):
+                sync_writing_policy.main(["--write"])
+
+        self.assertEqual(index_path.read_bytes(), original)
+        self.assertEqual(list(self.instructions.glob(".policy.index.json.*.tmp")), [])
 
 
 if __name__ == "__main__":

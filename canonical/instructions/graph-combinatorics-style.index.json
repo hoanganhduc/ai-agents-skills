@@ -3,7 +3,7 @@
   "overlay_version": "2026-09-12",
   "overlay_ref": "canonical/instructions/graph-combinatorics-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "pending-computed-by-gate",
+  "content_hash": "sha256:4c6d8993f0962a2e50006f9ecf8f81f947901c1f533bc820167cda87ad324d44",
   "requirements": [
     {
       "id": "WS-GRAPH-0001",
