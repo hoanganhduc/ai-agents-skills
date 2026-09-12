@@ -694,6 +694,27 @@ class RuntimeSmokeManifestTests(unittest.TestCase):
                 seen += 1
         self.assertGreaterEqual(seen, 19)
 
+    def test_offline_smoke_does_not_pin_ambient_module_availability(self) -> None:
+        """An offline contract forbids package installation, so whether an optional
+        third-party module happens to be importable is an observation about the host,
+        not a contract the run can hold anyone to.  Pinning one with ``equals`` makes
+        the verdict depend on the runner's site-packages: ``modal`` is present on some
+        developer hosts and on no CI runner, which is how ``modal_sdk_available``
+        turned the linux job red.  Assert the shape and leave the value to the host."""
+        ambient = {
+            "docling": {"docling_import", "docling_cli"},
+            "modal-research-compute": {"modal_sdk_available", "modal_cli_available"},
+        }
+        manifests = load_manifests()
+        for skill, fields in ambient.items():
+            spec = manifests["runtime"]["skills"][skill]["smoke"]
+            self.assertEqual(spec["mode"], "offline", skill)
+            self.assertEqual(spec["safety"]["package_install"], "forbidden", skill)
+            for assertion in spec["expect"].get("stdout_json", []):
+                if assertion["path"] in fields:
+                    with self.subTest(skill=skill, path=assertion["path"]):
+                        self.assertNotIn("equals", assertion)
+
     def test_manifest_validation_rejects_a_bad_functional_or_live_case(self) -> None:
         manifests = load_manifests()
         for kind in ("functional_smoke", "live_check"):
