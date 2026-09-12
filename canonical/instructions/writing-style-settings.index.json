@@ -2,7 +2,7 @@
   "schema_version": "writing-style.policy-index.v1",
   "policy_version": "2026-06-20",
   "policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "pending-computed-by-gate",
+  "content_hash": "sha256:5b7b9054e2ddea61830bbc14eec27beb8fcf60c45930240d6b7baf1249c19ba1",
   "requirements": [
     {
       "id": "WS-GEN-0001",

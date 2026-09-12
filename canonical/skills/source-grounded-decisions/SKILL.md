@@ -9,8 +9,9 @@ metadata:
 
 Do not implement version- or spec-sensitive details from memory — training data goes
 stale and APIs, flags, and schemas change. Ground the decision in an authoritative
-source the user can check, and cite it. Composes with `research-verification-gate`
-and `claim-preserving-writing`.
+source the user can check, and cite it. Composes with the
+`research-verification-gate` skill and the `claim-preserving-writing.md`
+instruction document.
 
 ## When to use
 
