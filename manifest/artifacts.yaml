@@ -53,7 +53,8 @@
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:writing-style-settings",
-        "instruction-doc:math-manuscript-style"
+        "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style"
       ]
     },
     "workflow-instructions": {
@@ -67,6 +68,7 @@
         "instruction-doc:context-discipline",
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -138,6 +140,7 @@
       "artifacts": [
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style",
         "instruction-doc:claim-preserving-writing",
         "template:draft-claim-ledger",
         "template:draft-revision-map"
@@ -183,6 +186,7 @@
         "instruction-doc:context-discipline",
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -773,7 +777,9 @@
           "claude",
           "deepseek",
           "opencode",
-          "antigravity"
+          "antigravity",
+          "grok",
+          "kimi"
         ],
         "depends_on_skills": [
           "draft-writing"
@@ -787,7 +793,9 @@
           "claude",
           "deepseek",
           "opencode",
-          "antigravity"
+          "antigravity",
+          "grok",
+          "kimi"
         ]
       },
       "math-manuscript-style": {
@@ -798,7 +806,22 @@
           "claude",
           "deepseek",
           "opencode",
-          "antigravity"
+          "antigravity",
+          "grok",
+          "kimi"
+        ]
+      },
+      "graph-combinatorics-style": {
+        "description": "Graph-theoretic and combinatorial terminology, notation, and sentence-construction overlay.",
+        "source": "graph-combinatorics-style.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity",
+          "grok",
+          "kimi"
         ]
       },
       "research-quick-actions": {

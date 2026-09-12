@@ -963,6 +963,7 @@ class ManifestTests(unittest.TestCase):
             artifacts,
             [
                 ("instruction-doc", "claim-preserving-writing"),
+                ("instruction-doc", "graph-combinatorics-style"),
                 ("instruction-doc", "math-manuscript-style"),
                 ("instruction-doc", "writing-style-settings"),
                 ("template", "draft-claim-ledger"),

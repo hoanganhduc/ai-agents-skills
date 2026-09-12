@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.overlay-index.v1",
-  "overlay_version": "2026-06-20",
+  "overlay_version": "2026-09-12",
   "overlay_ref": "canonical/instructions/math-manuscript-style.md",
   "base_policy_ref": "canonical/instructions/writing-style-settings.md",
   "content_hash": "pending-computed-by-gate",
@@ -31,7 +31,7 @@
       "scope": "math manuscripts",
       "severity": "soft",
       "relationship_to_general": "specializes",
-      "markdown_anchor": "common-terminology",
+      "markdown_anchor": "terminology-and-jargon",
       "source_ledger_ids": ["ML-0010"],
       "test_ids": ["WS-T-0103"]
     },
@@ -81,9 +81,839 @@
       "scope": "math manuscripts",
       "severity": "soft",
       "relationship_to_general": "specializes",
-      "markdown_anchor": "equations",
+      "markdown_anchor": "equations-and-numbers",
       "source_ledger_ids": ["ML-0015"],
       "test_ids": ["WS-T-0108"]
+    },
+    {
+      "id": "WS-MATH-0009",
+      "title": "Define every variable where it first appears",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0017"],
+      "test_ids": ["WS-T-0109"]
+    },
+    {
+      "id": "WS-MATH-0010",
+      "title": "State important definitions twice in complementary ways",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0018"],
+      "test_ids": ["WS-T-0110"]
+    },
+    {
+      "id": "WS-MATH-0011",
+      "title": "Use one notation for one thing",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0019"],
+      "test_ids": ["WS-T-0111"]
+    },
+    {
+      "id": "WS-MATH-0012",
+      "title": "Let notation carry what matters and hide what does not",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0020"],
+      "test_ids": ["WS-T-0112"]
+    },
+    {
+      "id": "WS-MATH-0013",
+      "title": "Introduce notation only for what recurs",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0021"],
+      "test_ids": ["WS-T-0113"]
+    },
+    {
+      "id": "WS-MATH-0014",
+      "title": "Avoid subscripted subscripts",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0022"],
+      "test_ids": ["WS-T-0114"]
+    },
+    {
+      "id": "WS-MATH-0015",
+      "title": "Name peripheral objects blandly, and never after yourself",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0023"],
+      "test_ids": ["WS-T-0115"]
+    },
+    {
+      "id": "WS-MATH-0016",
+      "title": "Stay compatible with the notation of the literature",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0024"],
+      "test_ids": ["WS-T-0116"]
+    },
+    {
+      "id": "WS-MATH-0017",
+      "title": "Separate symbols of different formulas with words",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0025"],
+      "test_ids": ["WS-T-0117"]
+    },
+    {
+      "id": "WS-MATH-0018",
+      "title": "Never begin a sentence with a symbol",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0026"],
+      "test_ids": ["WS-T-0118"]
+    },
+    {
+      "id": "WS-MATH-0019",
+      "title": "Do not use logical symbols as prose abbreviations",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0027"],
+      "test_ids": ["WS-T-0119"]
+    },
+    {
+      "id": "WS-MATH-0020",
+      "title": "Keep the connective words that carry the argument",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0028"],
+      "test_ids": ["WS-T-0120"]
+    },
+    {
+      "id": "WS-MATH-0021",
+      "title": "A sentence must survive its formulas being elided",
+      "scope": "math manuscripts",
+      "severity": "heuristic",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0029"],
+      "test_ids": ["WS-T-0121"]
+    },
+    {
+      "id": "WS-MATH-0022",
+      "title": "Tie consecutive formulas together with commentary",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "prose-carries-the-argument",
+      "source_ledger_ids": ["ML-0030"],
+      "test_ids": ["WS-T-0122"]
+    },
+    {
+      "id": "WS-MATH-0023",
+      "title": "Do not use jargon the argument does not need",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0031"],
+      "test_ids": ["WS-T-0123"]
+    },
+    {
+      "id": "WS-MATH-0024",
+      "title": "Avoid noun strings used as adjectives",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0032"],
+      "test_ids": ["WS-T-0124"]
+    },
+    {
+      "id": "WS-MATH-0025",
+      "title": "Preserve distinctions between near-synonyms",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0033"],
+      "test_ids": ["WS-T-0125"]
+    },
+    {
+      "id": "WS-MATH-0026",
+      "title": "The sentence before a statement must be complete or end with a colon",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "statements",
+      "source_ledger_ids": ["ML-0034"],
+      "test_ids": ["WS-T-0126"]
+    },
+    {
+      "id": "WS-MATH-0027",
+      "title": "Keep statements free of definitions and discussion",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "statements",
+      "source_ledger_ids": ["ML-0035"],
+      "test_ids": ["WS-T-0127"]
+    },
+    {
+      "id": "WS-MATH-0028",
+      "title": "Write proofs forwards and keep them locally linear",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0036"],
+      "test_ids": ["WS-T-0128"]
+    },
+    {
+      "id": "WS-MATH-0029",
+      "title": "Prefer a direct proof to contradiction when both are available",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0037"],
+      "test_ids": ["WS-T-0129"]
+    },
+    {
+      "id": "WS-MATH-0030",
+      "title": "Announce every skipped step",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0038"],
+      "test_ids": ["WS-T-0130"]
+    },
+    {
+      "id": "WS-MATH-0031",
+      "title": "Do not nest proof environments",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0039"],
+      "test_ids": ["WS-T-0131"]
+    },
+    {
+      "id": "WS-MATH-0032",
+      "title": "State quantifiers in an unambiguous order",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "quantifiers",
+      "source_ledger_ids": ["ML-0040"],
+      "test_ids": ["WS-T-0132"]
+    },
+    {
+      "id": "WS-MATH-0033",
+      "title": "Use each or every for universal quantification",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "quantifiers",
+      "source_ledger_ids": ["ML-0041"],
+      "test_ids": ["WS-T-0133"]
+    },
+    {
+      "id": "WS-MATH-0034",
+      "title": "Prefer active voice and unambiguous pronouns",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "voice-and-sentences",
+      "source_ledger_ids": ["ML-0042"],
+      "test_ids": ["WS-T-0134"]
+    },
+    {
+      "id": "WS-MATH-0035",
+      "title": "Do not echo an unusual word in an unrelated passage",
+      "scope": "math manuscripts",
+      "severity": "heuristic",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-sentences",
+      "source_ledger_ids": ["ML-0043"],
+      "test_ids": ["WS-T-0135"]
+    },
+    {
+      "id": "WS-MATH-0036",
+      "title": "Start a manuscript from the author's article template",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0088"],
+      "test_ids": ["WS-T-0136"]
+    },
+    {
+      "id": "WS-MATH-0037",
+      "title": "Delete the template files the manuscript does not use",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0089"],
+      "test_ids": ["WS-T-0137"]
+    },
+    {
+      "id": "WS-MATH-0038",
+      "title": "Cross-reference with \\cref",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0090"],
+      "test_ids": ["WS-T-0138"]
+    },
+    {
+      "id": "WS-MATH-0039",
+      "title": "Manage the bibliography with biblatex",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0091"],
+      "test_ids": ["WS-T-0139"]
+    },
+    {
+      "id": "WS-MATH-0040",
+      "title": "Follow the venue's camera-ready instructions exactly",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "overrides",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0092"],
+      "test_ids": ["WS-T-0140"]
+    },
+    {
+      "id": "WS-MATH-0041",
+      "title": "Draw figures with TikZ through the tikz-draw skill",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0093"],
+      "test_ids": ["WS-T-0141"]
+    },
+    {
+      "id": "WS-MATH-0042",
+      "title": "Enumerate the parts of a statement and mirror them in the proof",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "enumerated-statements-and-their-proofs",
+      "source_ledger_ids": ["ML-0094"],
+      "test_ids": ["WS-T-0142"]
+    },
+    {
+      "id": "WS-MATH-0043",
+      "title": "Cite in an abstract only in full, never by number or author-year",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "abstracts",
+      "source_ledger_ids": ["ML-0095"],
+      "test_ids": ["WS-T-0143"]
+    },
+    {
+      "id": "WS-MATH-0044",
+      "title": "Write the abstract to survive separation from the paper",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "abstracts",
+      "source_ledger_ids": ["ML-0096"],
+      "test_ids": ["WS-T-0144"]
+    },
+    {
+      "id": "WS-MATH-0045",
+      "title": "Follow the field's conventions for which letters denote what",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0097"],
+      "test_ids": ["WS-T-0145"]
+    },
+    {
+      "id": "WS-MATH-0046",
+      "title": "Put the controlled quantity on the left and the main term first",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "notation-economy",
+      "source_ledger_ids": ["ML-0098"],
+      "test_ids": ["WS-T-0146"]
+    },
+    {
+      "id": "WS-MATH-0047",
+      "title": "Start a section at each turning point and keep a lemma near its use",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0099"],
+      "test_ids": ["WS-T-0147"]
+    },
+    {
+      "id": "WS-MATH-0048",
+      "title": "Put milestones early and technical machinery late",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0100"],
+      "test_ids": ["WS-T-0148"]
+    },
+    {
+      "id": "WS-MATH-0049",
+      "title": "Send different-in-kind material to an appendix and peripheral results to remarks",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0101"],
+      "test_ids": ["WS-T-0149"]
+    },
+    {
+      "id": "WS-MATH-0050",
+      "title": "Never delay the punch line to the last page",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0102"],
+      "test_ids": ["WS-T-0150"]
+    },
+    {
+      "id": "WS-MATH-0051",
+      "title": "Give a toy case before a general result",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0103"],
+      "test_ids": ["WS-T-0151"]
+    },
+    {
+      "id": "WS-MATH-0052",
+      "title": "Mark heuristic reasoning as heuristic",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0104"],
+      "test_ids": ["WS-T-0152"]
+    },
+    {
+      "id": "WS-MATH-0053",
+      "title": "Give most care where the statements suddenly get stronger",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0105"],
+      "test_ids": ["WS-T-0153"]
+    },
+    {
+      "id": "WS-MATH-0054",
+      "title": "An undefined term halts the reader completely",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0106"],
+      "test_ids": ["WS-T-0154"]
+    },
+    {
+      "id": "WS-MATH-0055",
+      "title": "State the key point of the paper prominently",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "introductions",
+      "source_ledger_ids": ["ML-0107"],
+      "test_ids": ["WS-T-0155"]
+    },
+    {
+      "id": "WS-MATH-0056",
+      "title": "Compare against the literature and name the new difficulties",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "introductions",
+      "source_ledger_ids": ["ML-0108"],
+      "test_ids": ["WS-T-0156"]
+    },
+    {
+      "id": "WS-MATH-0057",
+      "title": "State the main results and where they are proved",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "introductions",
+      "source_ledger_ids": ["ML-0109"],
+      "test_ids": ["WS-T-0157"]
+    },
+    {
+      "id": "WS-MATH-0058",
+      "title": "Show with counterexamples that the result cannot be improved",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "introductions",
+      "source_ledger_ids": ["ML-0110"],
+      "test_ids": ["WS-T-0158"]
+    },
+    {
+      "id": "WS-MATH-0059",
+      "title": "Title sections by what they contain",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "introductions",
+      "source_ledger_ids": ["ML-0111"],
+      "test_ids": ["WS-T-0159"]
+    },
+    {
+      "id": "WS-MATH-0060",
+      "title": "Neither understate nor overstate the results",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "describing-results",
+      "source_ledger_ids": ["ML-0112"],
+      "test_ids": ["WS-T-0160"]
+    },
+    {
+      "id": "WS-MATH-0061",
+      "title": "State openly where the result is unsatisfactory",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "describing-results",
+      "source_ledger_ids": ["ML-0113"],
+      "test_ids": ["WS-T-0161"]
+    },
+    {
+      "id": "WS-MATH-0062",
+      "title": "Record the open questions the work leaves",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "describing-results",
+      "source_ledger_ids": ["ML-0114"],
+      "test_ids": ["WS-T-0162"]
+    },
+    {
+      "id": "WS-MATH-0063",
+      "title": "Mark every assertion made without proof or citation",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "describing-results",
+      "source_ledger_ids": ["ML-0115"],
+      "test_ids": ["WS-T-0163"]
+    },
+    {
+      "id": "WS-MATH-0064",
+      "title": "Be candid about progress towards a conjecture used as motivation",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "describing-results",
+      "source_ledger_ids": ["ML-0116"],
+      "test_ids": ["WS-T-0164"]
+    },
+    {
+      "id": "WS-MATH-0065",
+      "title": "Spend detail where the reader cannot reconstruct the step",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "detail",
+      "source_ledger_ids": ["ML-0117"],
+      "test_ids": ["WS-T-0165"]
+    },
+    {
+      "id": "WS-MATH-0066",
+      "title": "Omit what is routine to an expert in the field",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "detail",
+      "source_ledger_ids": ["ML-0118"],
+      "test_ids": ["WS-T-0166"]
+    },
+    {
+      "id": "WS-MATH-0067",
+      "title": "State an obscure prior lemma in full with a precise citation",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "detail",
+      "source_ledger_ids": ["ML-0119"],
+      "test_ids": ["WS-T-0167"]
+    },
+    {
+      "id": "WS-MATH-0068",
+      "title": "Leave every omission as a circumscribed small problem",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "detail",
+      "source_ledger_ids": ["ML-0120"],
+      "test_ids": ["WS-T-0168"]
+    },
+    {
+      "id": "WS-MATH-0069",
+      "title": "Encapsulate an intermediate fact the argument would otherwise carry",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "lemmas",
+      "source_ledger_ids": ["ML-0121"],
+      "test_ids": ["WS-T-0169"]
+    },
+    {
+      "id": "WS-MATH-0070",
+      "title": "State a lemma to be easy to use, not easy to prove",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "lemmas",
+      "source_ledger_ids": ["ML-0122"],
+      "test_ids": ["WS-T-0170"]
+    },
+    {
+      "id": "WS-MATH-0071",
+      "title": "Restate the running hypotheses inside the lemma",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "lemmas",
+      "source_ledger_ids": ["ML-0123"],
+      "test_ids": ["WS-T-0171"]
+    },
+    {
+      "id": "WS-MATH-0072",
+      "title": "Merge two lemmas that are only useful together",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "lemmas",
+      "source_ledger_ids": ["ML-0124"],
+      "test_ids": ["WS-T-0172"]
+    },
+    {
+      "id": "WS-MATH-0073",
+      "title": "A shorter paper is not automatically a simpler one",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restraint",
+      "source_ledger_ids": ["ML-0125"],
+      "test_ids": ["WS-T-0173"]
+    },
+    {
+      "id": "WS-MATH-0074",
+      "title": "Optimise readability, not constants or generality",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restraint",
+      "source_ledger_ids": ["ML-0126"],
+      "test_ids": ["WS-T-0174"]
+    },
+    {
+      "id": "WS-MATH-0075",
+      "title": "Do not weaken hypotheses past the point of need",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restraint",
+      "source_ledger_ids": ["ML-0127"],
+      "test_ids": ["WS-T-0175"]
+    },
+    {
+      "id": "WS-MATH-0076",
+      "title": "Include cheap consequences and cut disproportionate sections",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restraint",
+      "source_ledger_ids": ["ML-0128"],
+      "test_ids": ["WS-T-0176"]
+    },
+    {
+      "id": "WS-MATH-0077",
+      "title": "Paraphrase earlier work rather than copying it",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-attribution",
+      "source_ledger_ids": ["ML-0129"],
+      "test_ids": ["WS-T-0177"]
+    },
+    {
+      "id": "WS-MATH-0078",
+      "title": "Reserve quotation for historical points",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-attribution",
+      "source_ledger_ids": ["ML-0130"],
+      "test_ids": ["WS-T-0178"]
+    },
+    {
+      "id": "WS-MATH-0079",
+      "title": "Write in your own voice rather than an imitation",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-attribution",
+      "source_ledger_ids": ["ML-0131"],
+      "test_ids": ["WS-T-0179"]
+    },
+    {
+      "id": "WS-MATH-0080",
+      "title": "Assign credit accurately and separate opinion from record",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-attribution",
+      "source_ledger_ids": ["ML-0132"],
+      "test_ids": ["WS-T-0180"]
+    },
+    {
+      "id": "WS-MATH-0081",
+      "title": "Avoid witty, philosophical or knowingly obscure asides",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-attribution",
+      "source_ledger_ids": ["ML-0133"],
+      "test_ids": ["WS-T-0181"]
+    },
+    {
+      "id": "WS-MATH-0082",
+      "title": "Do not submit while still finding errors or adding results",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "before-submitting",
+      "source_ledger_ids": ["ML-0134"],
+      "test_ids": ["WS-T-0182"]
+    },
+    {
+      "id": "WS-MATH-0083",
+      "title": "Check citations against the primary sources",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "before-submitting",
+      "source_ledger_ids": ["ML-0135"],
+      "test_ids": ["WS-T-0183"]
+    },
+    {
+      "id": "WS-MATH-0084",
+      "title": "Careless English suggests a careless paper",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "before-submitting",
+      "source_ledger_ids": ["ML-0136"],
+      "test_ids": ["WS-T-0184"]
+    },
+    {
+      "id": "WS-MATH-0085",
+      "title": "Send colleagues a proofread draft",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "before-submitting",
+      "source_ledger_ids": ["ML-0137"],
+      "test_ids": ["WS-T-0185"]
+    },
+    {
+      "id": "WS-MATH-0086",
+      "title": "Set every mathematical symbol in math mode, including bare variables",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "how-notation-is-written-here",
+      "source_ledger_ids": ["ML-0138"],
+      "test_ids": ["WS-T-0186"]
+    },
+    {
+      "id": "WS-MATH-0087",
+      "title": "Put a comma after an introductory word or phrase",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-sentences",
+      "source_ledger_ids": ["ML-0139"],
+      "test_ids": ["WS-T-0187"]
+    },
+    {
+      "id": "WS-MATH-0088",
+      "title": "Search for an existing concept before defining a new one",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0140"],
+      "test_ids": ["WS-T-0188"]
+    },
+    {
+      "id": "WS-MATH-0089",
+      "title": "Justify a coined concept against the closest existing one",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0141"],
+      "test_ids": ["WS-T-0189"]
+    },
+    {
+      "id": "WS-MATH-0090",
+      "title": "Choose the simpler and more common word",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "terminology-and-jargon",
+      "source_ledger_ids": ["ML-0142"],
+      "test_ids": ["WS-T-0190"]
+    },
+    {
+      "id": "WS-MATH-0091",
+      "title": "Emphasise a term with \\emph at its point of definition",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0143"],
+      "test_ids": ["WS-T-0191"]
     }
   ]
 }
