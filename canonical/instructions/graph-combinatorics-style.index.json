@@ -1,0 +1,449 @@
+{
+  "schema_version": "writing-style.overlay-index.v1",
+  "overlay_version": "2026-09-12",
+  "overlay_ref": "canonical/instructions/graph-combinatorics-style.md",
+  "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
+  "content_hash": "pending-computed-by-gate",
+  "requirements": [
+    {
+      "id": "WS-GRAPH-0001",
+      "title": "Distinguish maximal from maximum",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "extremal-words",
+      "source_ledger_ids": ["ML-0044"],
+      "test_ids": ["WS-T-0201"]
+    },
+    {
+      "id": "WS-GRAPH-0002",
+      "title": "A graph is not a set of vertices",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "objects-and-their-sets",
+      "source_ledger_ids": ["ML-0045"],
+      "test_ids": ["WS-T-0202"]
+    },
+    {
+      "id": "WS-GRAPH-0003",
+      "title": "Use order and size with their standard meanings",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "objects-and-their-sets",
+      "source_ledger_ids": ["ML-0046"],
+      "test_ids": ["WS-T-0203"]
+    },
+    {
+      "id": "WS-GRAPH-0004",
+      "title": "Distinguish a set from its cardinality",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "objects-and-their-sets",
+      "source_ledger_ids": ["ML-0047"],
+      "test_ids": ["WS-T-0204"]
+    },
+    {
+      "id": "WS-GRAPH-0005",
+      "title": "Distinguish a clique from a complete subgraph",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "objects-and-their-sets",
+      "source_ledger_ids": ["ML-0048"],
+      "test_ids": ["WS-T-0205"]
+    },
+    {
+      "id": "WS-GRAPH-0006",
+      "title": "Call the members of a partition its parts",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "objects-and-their-sets",
+      "source_ledger_ids": ["ML-0049"],
+      "test_ids": ["WS-T-0206"]
+    },
+    {
+      "id": "WS-GRAPH-0007",
+      "title": "An operator is not a number",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "operators-are-not-numbers",
+      "source_ledger_ids": ["ML-0050"],
+      "test_ids": ["WS-T-0207"]
+    },
+    {
+      "id": "WS-GRAPH-0008",
+      "title": "Set multi-character operators in roman",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "operators-are-not-numbers",
+      "source_ledger_ids": ["ML-0051"],
+      "test_ids": ["WS-T-0208"]
+    },
+    {
+      "id": "WS-GRAPH-0009",
+      "title": "Big-Oh denotes a class of functions",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "operators-are-not-numbers",
+      "source_ledger_ids": ["ML-0052"],
+      "test_ids": ["WS-T-0209"]
+    },
+    {
+      "id": "WS-GRAPH-0010",
+      "title": "A class symbol is not a graph",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0053"],
+      "test_ids": ["WS-T-0210"]
+    },
+    {
+      "id": "WS-GRAPH-0011",
+      "title": "Keep edges called edges",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0054"],
+      "test_ids": ["WS-T-0211"]
+    },
+    {
+      "id": "WS-GRAPH-0012",
+      "title": "Say components, not connected components",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0055"],
+      "test_ids": ["WS-T-0212"]
+    },
+    {
+      "id": "WS-GRAPH-0013",
+      "title": "Do not write vertex-disjoint for disjoint",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0056"],
+      "test_ids": ["WS-T-0213"]
+    },
+    {
+      "id": "WS-GRAPH-0014",
+      "title": "Use pairwise rather than mutually",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0057"],
+      "test_ids": ["WS-T-0214"]
+    },
+    {
+      "id": "WS-GRAPH-0015",
+      "title": "Use adjectival forms of personal names",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0058"],
+      "test_ids": ["WS-T-0215"]
+    },
+    {
+      "id": "WS-GRAPH-0016",
+      "title": "Prefer degree list to degree sequence",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "naming-structures",
+      "source_ledger_ids": ["ML-0059"],
+      "test_ids": ["WS-T-0216"]
+    },
+    {
+      "id": "WS-GRAPH-0017",
+      "title": "Write xy-path, never x-y path",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "paths-and-deletion",
+      "source_ledger_ids": ["ML-0060"],
+      "test_ids": ["WS-T-0217"]
+    },
+    {
+      "id": "WS-GRAPH-0018",
+      "title": "Use minus for deletion and set-minus for set difference",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "paths-and-deletion",
+      "source_ledger_ids": ["ML-0061"],
+      "test_ids": ["WS-T-0218"]
+    },
+    {
+      "id": "WS-GRAPH-0019",
+      "title": "An edge joins its ends",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "paths-and-deletion",
+      "source_ledger_ids": ["ML-0062"],
+      "test_ids": ["WS-T-0219"]
+    },
+    {
+      "id": "WS-GRAPH-0020",
+      "title": "A hyphen binds a parameter to its property",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0063"],
+      "test_ids": ["WS-T-0220"]
+    },
+    {
+      "id": "WS-GRAPH-0021",
+      "title": "Bracket a compound parameter",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0064"],
+      "test_ids": ["WS-T-0221"]
+    },
+    {
+      "id": "WS-GRAPH-0022",
+      "title": "Hyphenate edge analogues",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0065"],
+      "test_ids": ["WS-T-0222"]
+    },
+    {
+      "id": "WS-GRAPH-0023",
+      "title": "Hyphenate a two-word adjective before its noun",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0066"],
+      "test_ids": ["WS-T-0223"]
+    },
+    {
+      "id": "WS-GRAPH-0024",
+      "title": "An adverb takes no hyphen",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0067"],
+      "test_ids": ["WS-T-0224"]
+    },
+    {
+      "id": "WS-GRAPH-0025",
+      "title": "Follow the settled hyphenation of negations",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "hyphens",
+      "source_ledger_ids": ["ML-0068"],
+      "test_ids": ["WS-T-0225"]
+    },
+    {
+      "id": "WS-GRAPH-0026",
+      "title": "Use a colon in set-builder notation",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "set-and-sequence-notation",
+      "source_ledger_ids": ["ML-0069"],
+      "test_ids": ["WS-T-0226"]
+    },
+    {
+      "id": "WS-GRAPH-0027",
+      "title": "Avoid the define-and-assert colon-equals",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "set-and-sequence-notation",
+      "source_ledger_ids": ["ML-0070"],
+      "test_ids": ["WS-T-0227"]
+    },
+    {
+      "id": "WS-GRAPH-0028",
+      "title": "Write an indexed list without its second element",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "set-and-sequence-notation",
+      "source_ledger_ids": ["ML-0071"],
+      "test_ids": ["WS-T-0228"]
+    },
+    {
+      "id": "WS-GRAPH-0029",
+      "title": "A variable does not equal a list",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "set-and-sequence-notation",
+      "source_ledger_ids": ["ML-0072"],
+      "test_ids": ["WS-T-0229"]
+    },
+    {
+      "id": "WS-GRAPH-0030",
+      "title": "Do not define and assert in one breath",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-statements",
+      "source_ledger_ids": ["ML-0073"],
+      "test_ids": ["WS-T-0230"]
+    },
+    {
+      "id": "WS-GRAPH-0031",
+      "title": "Where defines, such that restricts",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-statements",
+      "source_ledger_ids": ["ML-0074"],
+      "test_ids": ["WS-T-0231"]
+    },
+    {
+      "id": "WS-GRAPH-0032",
+      "title": "Such that conditions an object, so that describes an action",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-statements",
+      "source_ledger_ids": ["ML-0075"],
+      "test_ids": ["WS-T-0232"]
+    },
+    {
+      "id": "WS-GRAPH-0033",
+      "title": "Say proper when a coloring must be proper",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-statements",
+      "source_ledger_ids": ["ML-0076"],
+      "test_ids": ["WS-T-0233"]
+    },
+    {
+      "id": "WS-GRAPH-0034",
+      "title": "Do not juxtapose two formulas with only a comma",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0077"],
+      "test_ids": ["WS-T-0234"]
+    },
+    {
+      "id": "WS-GRAPH-0035",
+      "title": "Treat a notational expression as a noun",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0078"],
+      "test_ids": ["WS-T-0235"]
+    },
+    {
+      "id": "WS-GRAPH-0036",
+      "title": "Do not compare a word with a relational symbol",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0079"],
+      "test_ids": ["WS-T-0236"]
+    },
+    {
+      "id": "WS-GRAPH-0037",
+      "title": "Join hypothesis and conclusion in one sentence",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0080"],
+      "test_ids": ["WS-T-0237"]
+    },
+    {
+      "id": "WS-GRAPH-0038",
+      "title": "Open with When or For when then is dropped",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0081"],
+      "test_ids": ["WS-T-0238"]
+    },
+    {
+      "id": "WS-GRAPH-0039",
+      "title": "Write a restriction in words",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0082"],
+      "test_ids": ["WS-T-0239"]
+    },
+    {
+      "id": "WS-GRAPH-0040",
+      "title": "Do not put a possessive on notation",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0083"],
+      "test_ids": ["WS-T-0240"]
+    },
+    {
+      "id": "WS-GRAPH-0041",
+      "title": "Name induction and its hypothesis correctly",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0084"],
+      "test_ids": ["WS-T-0241"]
+    },
+    {
+      "id": "WS-GRAPH-0042",
+      "title": "Best possible takes no article",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0085"],
+      "test_ids": ["WS-T-0242"]
+    },
+    {
+      "id": "WS-GRAPH-0043",
+      "title": "Use fewer for counts and less for quantities",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sentence-construction",
+      "source_ledger_ids": ["ML-0086"],
+      "test_ids": ["WS-T-0243"]
+    },
+    {
+      "id": "WS-GRAPH-0044",
+      "title": "Place a citation next to the name it credits",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "attribution",
+      "source_ledger_ids": ["ML-0087"],
+      "test_ids": ["WS-T-0244"]
+    }
+  ]
+}
