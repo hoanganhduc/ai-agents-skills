@@ -3071,7 +3071,7 @@
             },
             {
               "path": "docling_import",
-              "equals": false
+              "type": "boolean"
             }
           ]
         },
@@ -5014,7 +5014,7 @@
           "stdout_json": [
             {
               "path": "modal_sdk_available",
-              "equals": true
+              "type": "boolean"
             },
             {
               "path": "modal_ready",
