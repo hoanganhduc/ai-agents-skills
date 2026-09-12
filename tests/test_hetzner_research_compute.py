@@ -2872,8 +2872,12 @@ class HetznerDriverTests(unittest.TestCase):
             (foreign, 0o755, foreign, True),
         )
         for uid, mode, explicit_owner, accepted in cases:
+            # Patch ``Path.stat``, not ``os.stat``: on Python 3.10 ``pathlib`` binds
+            # ``stat = os.stat`` into ``_NormalAccessor`` at import time, so patching the
+            # module's ``os`` never reaches ``current.stat()`` and the predicate below runs
+            # against a real syscall on a path that does not exist.
             with self.subTest(uid=uid, mode=oct(mode), owner_uid=explicit_owner), mock.patch.object(
-                hetzner_driver.os, "stat",
+                Path, "stat",
                 return_value=mock.Mock(st_uid=uid, st_mode=stat.S_IFDIR | mode),
             ):
                 if accepted:
