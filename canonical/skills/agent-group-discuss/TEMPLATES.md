@@ -192,7 +192,7 @@ Roles:
 
 | # | Role | Reasoning | Task |
 |---|------|-----------|------|
-| 1 | Correctness Reviewer | R4 | Read proofs line by line, verify claims, and flag correctness issues by severity |
+| 1 | Correctness Reviewer | R4 | Run a global pass, then a local pass; flag issues by scope and severity |
 | 2 | Exposition Reviewer | R3 | Review clarity, structure, notation, motivation, and readability |
 | 3 | Literature Reviewer | R3 | Review novelty claims, related work positioning, and citation accuracy |
 
@@ -200,20 +200,50 @@ Rounds:
 
 Round 1:
 
-- Correctness: report issues with section, severity, and concrete fix suggestions
-- Exposition: report readability and explanation issues with rewrite suggestions
-- Literature: report novelty or citation issues and missing references
+- Correctness, **global pass first**: skim for large-scale structure rather than
+  reading closely, and ask whether there is a counterexample to the stated
+  result, whether a hypothesis that ought to be crucial goes unused, and whether
+  the same argument applied to a parallel claim would prove something false.
+- Correctness, **then local pass**: read line by line for invalid implications,
+  circular justification, and a term used with two meanings in different places.
+  Concentrate this pass where the statements suddenly get stronger — where a
+  claim proved for one value is amplified to many, or transferred between
+  dimensions or scales. That is where the powering idea sits, and where a flaw
+  most often is.
+- Exposition: report readability and explanation issues with rewrite
+  suggestions, including any undefined term or missing step that would halt a
+  reader completely, and any place where heuristic reasoning is not marked as
+  heuristic.
+- Literature: report novelty or citation issues and missing references; check
+  citations against primary sources rather than against another paper's
+  reference list, and flag any claim of progress towards a famous conjecture
+  that the work does not support.
+
+Every finding carries a **scope**: `global` when the claim or the whole approach
+fails, `local` when one step fails. A reviewer must not report a local fix for
+what is actually a global failure.
 
 Round 2:
 
 - orchestrator reconciles overlap and produces a single prioritized action list:
-  - critical correctness issues
+  - global correctness issues, ahead of everything else
+  - critical local correctness issues
   - significant exposition problems
   - missing or wrong citations
   - minor issues
   - cosmetic suggestions
 
-For Codex review outputs, findings should still be ordered by severity.
+Global outranks local because a local error can often be worked around, while a
+counterexample invalidates the proof as it stands and every reasonable
+perturbation of it. If the global pass finds one, say so plainly rather than
+burying it among line-level notes.
+
+For Codex review outputs, findings should still be ordered by severity within
+each scope.
+
+The global/local distinction and its detection methods are adapted from Terence
+Tao, "On local and global errors in mathematical papers and how to detect them";
+`paper-review` carries the same material for single-reviewer runs.
 
 ---
 

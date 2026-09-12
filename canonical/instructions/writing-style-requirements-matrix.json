@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.requirements-matrix.v1",
-  "generated_for_release": "2026-06-20",
+  "generated_for_release": "2026-09-12",
   "requirements": [
     {
       "id": "WS-GEN-0001",
@@ -8,7 +8,7 @@
       "scope": "all writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-briefing", "research-report-reviewer", "research-verification-gate", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0001"],
       "mechanical_status": "deterministic"
     },
@@ -18,7 +18,7 @@
       "scope": "all writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "research-verification-gate", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0002"],
       "mechanical_status": "deterministic"
     },
@@ -28,7 +28,7 @@
       "scope": "all writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0003"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -38,7 +38,7 @@
       "scope": "all writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "research-verification-gate", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0004"],
       "mechanical_status": "deterministic"
     },
@@ -48,7 +48,7 @@
       "scope": "all writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0005"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -58,7 +58,7 @@
       "scope": "finalizable writing-producing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-verification-gate", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0006"],
       "mechanical_status": "deterministic"
     },
@@ -68,7 +68,7 @@
       "scope": "all writing-producing sessions",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "source-research", "agent-group-discuss", "prose", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0007"],
       "mechanical_status": "deterministic"
     },
@@ -78,7 +78,7 @@
       "scope": "research-paper and research-note writing workflows",
       "canonical_destination": "canonical/instructions/writing-style-settings.md",
       "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0008"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -88,7 +88,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0101"],
       "mechanical_status": "deterministic"
     },
@@ -98,7 +98,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0102"],
       "mechanical_status": "deterministic"
     },
@@ -108,7 +108,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0103"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -118,7 +118,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0104"],
       "mechanical_status": "deterministic"
     },
@@ -128,7 +128,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0105"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -138,7 +138,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0106"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -148,7 +148,7 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0107"],
       "mechanical_status": "reviewed-non-mechanical"
     },
@@ -158,9 +158,1279 @@
       "scope": "math manuscripts",
       "canonical_destination": "canonical/instructions/math-manuscript-style.md",
       "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
-      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0108"],
       "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0009",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 11",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0109"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0010",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 11",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0110"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0011",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 14",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0111"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0012",
+      "source_location": "Tao, Use good notation",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0112"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0013",
+      "source_location": "Tao, Use good notation",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0113"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0014",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 15",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0114"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0015",
+      "source_location": "Tao, Use good notation",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0115"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0016",
+      "source_location": "Tao, Use good notation",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0116"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0017",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 1",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0117"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0018",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 2; West, Grammar and technical writing",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0118"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0019",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 3",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0119"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0020",
+      "source_location": "Tao, Take advantage of the English language",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0120"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0021",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 13",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0121"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0022",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 10",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0122"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0023",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 26",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0123"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0024",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 26",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0124"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0025",
+      "source_location": "Halmos, in Knuth et al., Mathematical Writing (1989), section 42",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0125"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0026",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), rule 4",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0126"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0027",
+      "source_location": "Tsitsiklis, Tips on writing papers with mathematical content (2019)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0127"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0028",
+      "source_location": "Tsitsiklis, Tips on writing papers with mathematical content (2019)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0128"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0029",
+      "source_location": "Halmos, in Knuth et al., Mathematical Writing (1989), section 42",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0129"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0030",
+      "source_location": "Tsitsiklis, Tips on writing papers with mathematical content (2019)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0130"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0031",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0131"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0032",
+      "source_location": "Tsitsiklis, Tips on writing papers with mathematical content (2019)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0132"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0033",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0133"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0034",
+      "source_location": "Tsitsiklis, Tips on writing papers with mathematical content (2019); Knuth et al., rule 6",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0134"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0035",
+      "source_location": "Halmos, in Knuth et al., Mathematical Writing (1989), section 42",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0135"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-GRAPH-0001",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0201"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0002",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0202"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0003",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0203"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0004",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0204"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0005",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0205"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0006",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0206"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0007",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0207"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0008",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0208"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0009",
+      "source_location": "West, Grammar and technical writing; Tsitsiklis (2019)",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0209"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0010",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0210"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0011",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0211"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GRAPH-0012",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0212"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0013",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0213"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-GRAPH-0014",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0214"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0015",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0215"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0016",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0216"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GRAPH-0017",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0217"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0018",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0218"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0019",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0219"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0020",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0220"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0021",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0221"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0022",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0222"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0023",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0223"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0024",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0224"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0025",
+      "source_location": "West, Grammar and technical writing; Knuth et al., rule 21",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0225"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0026",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0226"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0027",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0227"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0028",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0228"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0029",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0229"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0030",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0230"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0031",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0231"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0032",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0232"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0033",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0233"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0034",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0234"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0035",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0235"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-GRAPH-0036",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0236"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0037",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0237"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0038",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0238"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0039",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0239"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0040",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0240"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0041",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0241"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0042",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0242"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0043",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0243"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GRAPH-0044",
+      "source_location": "West, Grammar and technical writing",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0244"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0036",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0136"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0037",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0137"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0038",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0138"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0039",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0139"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0040",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0140"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0041",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0141"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0042",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0142"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0043",
+      "source_location": "AMS Author Handbook (American Mathematical Society), section on abstracts",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0143"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0044",
+      "source_location": "AMS Author Handbook; arXiv metadata guidance (info.arxiv.org/help/prep.html)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0144"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0045",
+      "source_location": "Terence Tao, On writing, implicit notational conventions",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0145"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0046",
+      "source_location": "Terence Tao, On writing, implicit notational conventions",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0146"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0047",
+      "source_location": "Terence Tao, On writing, organise the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0147"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0048",
+      "source_location": "Terence Tao, On writing, organise the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0148"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0049",
+      "source_location": "Terence Tao, On writing, organise the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0149"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0050",
+      "source_location": "Terence Tao, On writing, organise the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0150"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0051",
+      "source_location": "Terence Tao, On writing, motivate the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0151"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0052",
+      "source_location": "Terence Tao, On writing, motivate the paper",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0152"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0053",
+      "source_location": "Terence Tao, On writing, on jumps in difficulty",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0153"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0054",
+      "source_location": "Terence Tao, On writing, on compilation errors in mathematical reading",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0154"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0055",
+      "source_location": "Terence Tao, On writing, use the introduction to sell the key points",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0155"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0056",
+      "source_location": "Terence Tao, On writing, use the introduction to sell the key points",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0156"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0057",
+      "source_location": "Terence Tao, On writing, use the introduction to sell the key points",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0157"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0058",
+      "source_location": "Terence Tao, On writing, use the introduction to sell the key points",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0158"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0059",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0159"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0060",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0160"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0061",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0161"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0062",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0162"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0063",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0163"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0064",
+      "source_location": "Terence Tao, On writing, describe the results accurately",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0164"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0065",
+      "source_location": "Terence Tao, On writing, give appropriate amounts of detail",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0165"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0066",
+      "source_location": "Terence Tao, On writing, give appropriate amounts of detail",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0166"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0067",
+      "source_location": "Terence Tao, On writing, give appropriate amounts of detail",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0167"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0068",
+      "source_location": "Terence Tao, On writing, give appropriate amounts of detail",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0168"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0069",
+      "source_location": "Terence Tao, On writing, create lemmas",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0169"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0070",
+      "source_location": "Terence Tao, On writing, create lemmas",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0170"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0071",
+      "source_location": "Terence Tao, On writing, create lemmas",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0171"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0072",
+      "source_location": "Terence Tao, On writing, create lemmas",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0172"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0073",
+      "source_location": "Terence Tao, On writing, do not over-optimise",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0173"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0074",
+      "source_location": "Terence Tao, On writing, do not over-optimise",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0174"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0075",
+      "source_location": "Terence Tao, On writing, do not over-optimise",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0175"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0076",
+      "source_location": "Terence Tao, On writing, maximising the results-to-effort ratio",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0176"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0077",
+      "source_location": "Terence Tao, On writing, write in your own voice",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0177"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0078",
+      "source_location": "Terence Tao, On writing, write in your own voice",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0178"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0079",
+      "source_location": "Terence Tao, On writing, write in your own voice",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0179"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0080",
+      "source_location": "Terence Tao, On writing, write professionally",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0180"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0081",
+      "source_location": "Terence Tao, On writing, write professionally",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0181"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0082",
+      "source_location": "Terence Tao, On writing, submit a final draft, not a first draft",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0182"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0083",
+      "source_location": "Terence Tao, On writing, proofread and double-check your paper before submission",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0183"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0084",
+      "source_location": "Terence Tao, On writing, write professionally",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0184"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0085",
+      "source_location": "Terence Tao, On writing, submit a final draft, not a first draft",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0185"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0086",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0186"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0087",
+      "source_location": "user-requirement; departs from West, Grammar and technical writing",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0187"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0088",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0188"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0089",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0189"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0090",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0190"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0091",
+      "source_location": "user-requirement; West, Grammar and technical writing (italics for defined words)",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0191"],
+      "mechanical_status": "deterministic"
     }
   ],
   "non_mechanical_rationales": [

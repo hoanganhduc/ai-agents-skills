@@ -33,20 +33,28 @@ def heading_slugs(text: str) -> set[str]:
 class WritingStyleSystemTests(unittest.TestCase):
     def test_policy_and_overlay_indexes_resolve_to_markdown_anchors(self) -> None:
         policy = load_json("canonical/instructions/writing-style-settings.index.json")
-        overlay = load_json("canonical/instructions/math-manuscript-style.index.json")
+        overlays = [
+            load_json("canonical/instructions/math-manuscript-style.index.json"),
+            load_json("canonical/instructions/graph-combinatorics-style.index.json"),
+        ]
 
         self.assertEqual(policy["schema_version"], "writing-style.policy-index.v1")
-        self.assertEqual(overlay["schema_version"], "writing-style.overlay-index.v1")
+        for overlay in overlays:
+            self.assertEqual(overlay["schema_version"], "writing-style.overlay-index.v1")
 
         policy_text = (REPO_ROOT / policy["policy_ref"]).read_text(encoding="utf-8")
-        overlay_text = (REPO_ROOT / overlay["overlay_ref"]).read_text(encoding="utf-8")
         policy_slugs = heading_slugs(policy_text)
-        overlay_slugs = heading_slugs(overlay_text)
 
         policy_ids = {row["id"] for row in policy["requirements"]}
-        overlay_ids = {row["id"] for row in overlay["requirements"]}
         self.assertEqual(policy_ids, {f"WS-GEN-{idx:04d}" for idx in range(1, 9)})
-        self.assertEqual(overlay_ids, {f"WS-MATH-{idx:04d}" for idx in range(1, 9)})
+
+        # The overlays grow as rules are added, so assert contiguity from 0001
+        # rather than a fixed ceiling: a gap means an id was allocated and never
+        # written up, which is the failure worth catching.
+        for overlay, prefix in zip(overlays, ("WS-MATH", "WS-GRAPH")):
+            overlay_ids = {row["id"] for row in overlay["requirements"]}
+            expected = {f"{prefix}-{idx:04d}" for idx in range(1, len(overlay_ids) + 1)}
+            self.assertEqual(overlay_ids, expected)
 
         for row in policy["requirements"]:
             with self.subTest(requirement=row["id"]):
@@ -54,15 +62,40 @@ class WritingStyleSystemTests(unittest.TestCase):
                 self.assertTrue(row["source_ledger_ids"])
                 self.assertTrue(row["test_ids"])
 
-        for row in overlay["requirements"]:
-            with self.subTest(requirement=row["id"]):
-                self.assertIn(row["markdown_anchor"], overlay_slugs)
-                self.assertTrue(row["source_ledger_ids"])
-                self.assertTrue(row["test_ids"])
+        for overlay in overlays:
+            overlay_slugs = heading_slugs(
+                (REPO_ROOT / overlay["overlay_ref"]).read_text(encoding="utf-8")
+            )
+            for row in overlay["requirements"]:
+                with self.subTest(requirement=row["id"]):
+                    self.assertIn(row["markdown_anchor"], overlay_slugs)
+                    self.assertTrue(row["source_ledger_ids"])
+                    self.assertTrue(row["test_ids"])
+
+    def test_every_overlay_requirement_cites_a_source(self) -> None:
+        """A rule nobody can trace is a rule nobody can defend.
+
+        The ledger row behind each requirement carries the wording the rule came
+        from and where that wording was published, so a later reader can check
+        whether the rule is a field convention or one author's preference.
+        """
+        ledger = load_json("canonical/instructions/writing-style-migration-ledger.json")
+        rows = {row["edge_id"]: row for row in ledger["rows"]}
+        for name in ("math-manuscript-style", "graph-combinatorics-style"):
+            overlay = load_json(f"canonical/instructions/{name}.index.json")
+            for row in overlay["requirements"]:
+                with self.subTest(requirement=row["id"]):
+                    self.assertTrue(row["source_ledger_ids"])
+                    for edge in row["source_ledger_ids"]:
+                        self.assertIn(edge, rows)
+                        self.assertTrue(rows[edge]["source_location"].strip())
+                        self.assertTrue(rows[edge]["old_rule_text"].strip())
 
     def test_migration_matrix_registry_and_scan_sources_have_no_dangling_ids(self) -> None:
         policy = load_json("canonical/instructions/writing-style-settings.index.json")
-        overlay = load_json("canonical/instructions/math-manuscript-style.index.json")
+        math_overlay = load_json("canonical/instructions/math-manuscript-style.index.json")
+        graph_overlay = load_json("canonical/instructions/graph-combinatorics-style.index.json")
+        overlay_rows = math_overlay["requirements"] + graph_overlay["requirements"]
         ledger = load_json("canonical/instructions/writing-style-migration-ledger.json")
         matrix = load_json("canonical/instructions/writing-style-requirements-matrix.json")
         acceptance = load_json("canonical/instructions/writing-style-acceptance-traceability.json")
@@ -70,7 +103,7 @@ class WritingStyleSystemTests(unittest.TestCase):
         scan_sources = load_json("canonical/instructions/writing-style-id-scan-sources.json")
 
         active_ids = {row["id"] for row in policy["requirements"]}
-        active_ids |= {row["id"] for row in overlay["requirements"]}
+        active_ids |= {row["id"] for row in overlay_rows}
         ledger_ids = {row["edge_id"] for row in ledger["rows"]}
         matrix_ids = {row["id"] for row in matrix["requirements"]}
         acceptance_ids = {row["id"] for row in acceptance["criteria"]}
@@ -79,7 +112,7 @@ class WritingStyleSystemTests(unittest.TestCase):
         self.assertEqual(matrix_ids, active_ids)
         self.assertEqual(acceptance_ids, {f"AC-{idx:04d}" for idx in range(1, 44)})
 
-        for row in policy["requirements"] + overlay["requirements"]:
+        for row in policy["requirements"] + overlay_rows:
             with self.subTest(requirement=row["id"]):
                 self.assertTrue(set(row["source_ledger_ids"]).issubset(ledger_ids))
 
@@ -117,6 +150,7 @@ class WritingStyleSystemTests(unittest.TestCase):
             "writing-style-id-scan-sources.json": "id-scan-sources.schema.json",
             "writing-style-settings.index.json": "policy-index.schema.json",
             "math-manuscript-style.index.json": "overlay-index.schema.json",
+            "graph-combinatorics-style.index.json": "overlay-index.schema.json",
             "writing-style-migration-ledger.json": "migration-ledger.schema.json",
             "writing-style-requirements-matrix.json": "requirements-matrix.schema.json",
             "writing-style-acceptance-traceability.json": "acceptance-traceability.schema.json",

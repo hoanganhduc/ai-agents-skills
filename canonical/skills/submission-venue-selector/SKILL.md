@@ -27,6 +27,38 @@ Before writing a deliverable report, load `writing-style-settings.md` and record
 the active style profile. For mathematical, TCS, graph-theoretic, Lean, or
 LaTeX manuscripts, also load `math-manuscript-style.md`.
 
+## Judging The Manuscript, Not Only The Venue
+
+A shortlist is a comparison between two things: how strong the draft is, and
+what a venue accepts. Scoring only the second is how a list ends up one tier too
+ambitious. Score the draft against the four groups in
+`references/scoring-rubric.md` — correctness, novelty, professionalism,
+presentation — and record which groups came out weak.
+
+Four rules follow from that comparison. They are editorial judgement, so state
+them in the report as reasoning rather than as scores.
+
+- **Do not put a borderline paper into a top venue.** A paper that is a solid
+  application of mostly standard techniques has a low chance at a venue whose
+  referees are looking for something to be enthusiastic about, however correct
+  it is.
+- **Check the editorial board before ranking a venue.** At least one member must
+  be close enough to the subject to judge the work properly. A venue with no
+  such member belongs lower in the list whatever its reputation.
+- **Precedent outranks reputation.** Where similar papers were actually accepted
+  is the strongest signal available, which is why this skill refuses to deliver
+  a ranking without comparator-paper evidence.
+- **Do not plan two simultaneous submissions of unrelated papers to the same
+  venue.** Reports get confused with each other, editors avoid appearing to
+  favour one author, and the weaker report tends to sink both.
+
+When a rejection is the starting point, treat the referee feedback as input to
+the draft and move down the selectivity ladder rather than resubmitting at the
+same level.
+
+Source: Terence Tao, "Submit to an appropriate journal",
+`https://terrytao.wordpress.com/advice-on-writing-papers/submit-to-an-appropriate-journal/`.
+
 ## Routing Boundary
 
 Use this skill for:

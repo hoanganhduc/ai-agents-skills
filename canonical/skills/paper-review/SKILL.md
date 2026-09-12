@@ -83,6 +83,42 @@ review-only request unless the user also asked to formalize or prove.
   patch manuscripts, retrieve extra nonessential artifacts, or begin fixes
   unless the user explicitly asks for those actions.
 
+## Local And Global Errors
+
+Adapted from Terence Tao, "On local and global errors in mathematical papers and
+how to detect them". The two kinds need different reading, and a review that
+runs only one of them misses the other entirely.
+
+A **local error** is a low-level objection to a specific step: an implication
+that does not hold, a circularity where A is justified by B and B by A, or a
+term used with two different meanings in different places. Finding them means
+reading a substantial part of the paper line by line and checking that each
+definition is used consistently.
+
+A **global error** is a high-level objection showing the argument would prove
+something known or strongly suspected to be false. The strongest form is a
+counterexample to the main claim. Finding them means skimming for the
+large-scale structure rather than reading closely, then asking:
+
+- is there a counterexample to the stated result
+- does a hypothesis that ought to be crucial go mysteriously unused
+- would the same argument, applied to a parallel claim, prove something false
+
+**Global errors are the more serious.** A local error can often be worked
+around; a counterexample invalidates the proof as it stands and every
+reasonable perturbation of it. Run the global pass first: it is quicker, and a
+global error makes the line-by-line pass unnecessary.
+
+The two passes also differ in what they deliver. A global objection says the
+result is wrong but not where; a local objection names the exact step. Report
+both kinds distinctly, and never present a local fix for what is actually a
+global failure.
+
+Concentrate the line-by-line pass where the statements suddenly get stronger —
+where something proved for one value is amplified to hold for many, or where an
+argument is transferred between dimensions or scales. That is where the idea
+powering the proof sits, and where a flaw is most likely to be.
+
 ## Recommended output format
 
 ### Summary
@@ -97,6 +133,7 @@ review-only request unless the user also asked to formalize or prove.
 For each issue:
 
 - **Severity**: critical / major / minor / suggestion
+- **Scope**: global (the claim or the whole approach fails) / local (this step fails)
 - **Type**: logic / math / consistency / notation / presentation / missing / unsupported
 - **Location**: page, section, line, or paragraph reference
 - **Quote**: short supporting quote when helpful
