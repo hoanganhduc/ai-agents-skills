@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.migration-ledger.v1",
-  "generated_for_release": "2026-09-12",
+  "generated_for_release": "2026-09-13",
   "rows": [
     {
       "edge_id": "ML-0001",
@@ -20,7 +20,7 @@
       "normalized_rule_text": "Separate claims, evidence, assumptions, caveats, and gaps.",
       "classification_tags": ["general", "claim-evidence"],
       "normative_requirement_ids": ["WS-GEN-0002"],
-      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/claim-preserving-writing.md"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/skills/draft-writing/SKILL.md", "canonical/templates/draft-claim-ledger.md", "canonical/templates/draft-revision-map.md"],
       "disposition": "merge",
       "reviewer_status": "approved"
     },
@@ -1574,6 +1574,380 @@
       "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
       "disposition": "migrate",
       "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0144",
+      "source_location": "Trzeciak, Writing Mathematical Papers in English (rev. ed., 2005), pp. 16, 29-30, 47; Strunk and White, The Elements of Style, 4th-edition text, rule I.11; Krantz, A Primer of Mathematical Writing (2nd ed., 2017), section 1.4",
+      "old_rule_text": "An opening participial phrase must refer to the grammatical subject that performs its action.",
+      "normalized_rule_text": "Attach an opening participial phrase to the grammatical subject it modifies, or replace it with an explicit clause.",
+      "classification_tags": ["general", "grammar", "modifiers", "domain-reference"],
+      "normative_requirement_ids": ["WS-GEN-0009"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0145",
+      "source_location": "Trzeciak, Writing Mathematical Papers in English (rev. ed., 2005), pp. 44-45; Strunk and White, The Elements of Style, rule I.3; Krantz, A Primer of Mathematical Writing (2nd ed., 2017), section 1.11",
+      "old_rule_text": "Restrictive and nonrestrictive clauses require different comma treatment, and mathematical scope must remain unambiguous.",
+      "normalized_rule_text": "Punctuate restrictive and nonrestrictive clauses by meaning and insert commas where omission would obscure scope.",
+      "classification_tags": ["general", "grammar", "commas", "scope", "domain-reference"],
+      "normative_requirement_ids": ["WS-GEN-0010"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0146",
+      "source_location": "Trzeciak, Writing Mathematical Papers in English (rev. ed., 2005), pp. 23, 46; Merriam-Webster, A vs. An: When to Use Indefinite Articles, accessed 2026-09-13",
+      "old_rule_text": "The choice between a and an follows pronunciation, including before symbols and abbreviations.",
+      "normalized_rule_text": "Choose a or an by the sound that follows rather than by the first written letter.",
+      "classification_tags": ["general", "grammar", "articles", "pronunciation"],
+      "normative_requirement_ids": ["WS-GEN-0011"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0147",
+      "source_location": "user requirement; clause audit of the retired language-style compatibility source",
+      "old_rule_text": "Use theorem, proposition, lemma, and corollary environments instead of a generic Statement environment.",
+      "normalized_rule_text": "Use the mathematical statement environment that names the result's role.",
+      "classification_tags": ["math", "latex", "statements", "user-requirement"],
+      "normative_requirement_ids": ["WS-MATH-0092"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0148",
+      "source_location": "Holst, Scientific Paper Writing (2015), section 5.3, pp. 69-79; Krantz, A Primer of Mathematical Writing (2nd ed., 2017), section 2.5, pp. 68-69",
+      "old_rule_text": "An abstract should state the problem or context, main result, novelty, and only the method needed to understand the contribution.",
+      "normalized_rule_text": "Give a mathematical abstract its essential context, result, novelty, limitation, and contribution-bearing method.",
+      "classification_tags": ["math", "abstract", "craft-reference"],
+      "normative_requirement_ids": ["WS-MATH-0093"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0149",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), section 37, pp. 91-92",
+      "old_rule_text": "Running prose should remain readable when headings or parenthetical citations are removed for inspection.",
+      "normalized_rule_text": "Use omission only as a readability test; delivered prose retains required citations and attribution.",
+      "classification_tags": ["math", "prose", "readability", "domain-reference"],
+      "normative_requirement_ids": ["WS-MATH-0094"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0150",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), sections 18-21, pp. 37-46",
+      "old_rule_text": "Use an illustration when prose leaves a structure opaque, keep it near the explanation, and make related examples build on one another.",
+      "normalized_rule_text": "Use and place a figure for semantic clarity without turning the writing rule into figure-generation authority.",
+      "classification_tags": ["math", "figures", "examples", "domain-reference"],
+      "normative_requirement_ids": ["WS-MATH-0051", "WS-MATH-0095"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0151",
+      "source_location": "user requirement; general standard-source policy, with Diestel and West retained only as candidate graph-theory references",
+      "old_rule_text": "Do not omit a graph-theoretic definition as standard without checking a standard source; named textbooks are suggestions rather than fixed authority.",
+      "normalized_rule_text": "Verify a standard source before omitting a basic graph definition, without canonizing one author or edition.",
+      "classification_tags": ["graph", "definitions", "source-verification", "user-requirement"],
+      "normative_requirement_ids": ["WS-MATH-0001", "WS-GRAPH-0045"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md", "canonical/instructions/graph-combinatorics-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0152",
+      "source_location": "retired claim-preserving-writing compatibility document; clause-level audit completed 2026-09-13",
+      "old_rule_text": "After substantive rewriting, track added, removed, strengthened, weakened, unsupported, caveat-changed, and support-changed claims; remove or explicitly accept unsupported additions.",
+      "normalized_rule_text": "Audit every semantic revision delta and require support or explicit acceptance before readiness.",
+      "classification_tags": ["general", "claims", "revision", "retired-source"],
+      "normative_requirement_ids": ["WS-GEN-0002"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/skills/draft-writing/SKILL.md", "canonical/templates/draft-revision-map.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0153",
+      "source_location": "Holst, Scientific Paper Writing (2015), sections 4.2 and 6.1, pp. 47-49, 108-114",
+      "old_rule_text": "Identify the main claim before drafting and align sections, figures, tables, and evidence with it.",
+      "normalized_rule_text": "Record the primary claim and map every substantive draft component to the claim it supports.",
+      "classification_tags": ["math", "claims", "drafting", "craft-reference"],
+      "normative_requirement_ids": ["WS-GEN-0002"],
+      "destination_docs": ["canonical/templates/draft-claim-ledger.md", "canonical/skills/draft-writing/SKILL.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0154",
+      "source_location": "Holst, Scientific Paper Writing (2015), section 6.1.1, pp. 115-116, corrected by COPE Text Recycling Guidelines",
+      "old_rule_text": "Cosmetic alteration does not make reused text or figures original; legitimate reuse depends on transparency, attribution, copyright, license, and venue rules.",
+      "normalized_rule_text": "Disclose and cite self-reuse and obtain permission when the governing terms require it.",
+      "classification_tags": ["math", "attribution", "text-recycling", "ethics-correction"],
+      "normative_requirement_ids": ["WS-MATH-0077"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "supersede",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0155",
+      "source_location": "Holst, Scientific Paper Writing (2015), section 5.12 and related publication tactics, corrected by current ICMJE reference guidance",
+      "old_rule_text": "References must be selected for relevance and support rather than to influence editors, reviewers, or metrics.",
+      "normalized_rule_text": "Forbid citation manipulation while preserving relevant self-citation and accurate credit.",
+      "classification_tags": ["math", "citations", "ethics-correction"],
+      "normative_requirement_ids": ["WS-MATH-0080"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "supersede",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0156",
+      "source_location": "Krantz, A Primer of Mathematical Writing (2nd ed., 2017), sections 1.3.3, 1.6.1, 5.6.4 and 5.7.6-5.7.11; Knuth et al., Mathematical Writing (1989), sections 6-8 and 34-41",
+      "old_rule_text": "Separate mathematical, structural, prose, notation, and surface-copyediting passes and recheck after production edits.",
+      "normalized_rule_text": "Use multiple review passes and verify that editorial changes preserve mathematics and references.",
+      "classification_tags": ["math", "proofreading", "revision", "domain-reference"],
+      "normative_requirement_ids": ["WS-MATH-0082", "WS-MATH-0084"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0157",
+      "source_location": "Trzeciak, Writing Mathematical Papers in English (rev. ed., 2005), Word Order, pp. 40-43",
+      "old_rule_text": "Place only and other scope-bearing modifiers next to the expression they modify.",
+      "normalized_rule_text": "Keep scope-bearing modifiers adjacent to their targets.",
+      "classification_tags": ["math", "quantifiers", "scope", "domain-reference"],
+      "normative_requirement_ids": ["WS-MATH-0032"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0158",
+      "source_location": "Holst, Scientific Paper Writing (2015), section 14.2; Krantz, A Primer of Mathematical Writing (2nd ed., 2017), sections 2.7.7-2.7.10 and 5.7.4-5.7.6",
+      "old_rule_text": "Every reviewer request needs a recorded disposition and any resulting semantic change must remain auditable.",
+      "normalized_rule_text": "Close review comments through a redacted disposition map without granting reviewers edit authority.",
+      "classification_tags": ["general", "review", "revision", "privacy"],
+      "normative_requirement_ids": ["WS-GEN-0002"],
+      "destination_docs": ["canonical/templates/draft-revision-map.md", "canonical/templates/writing-review.md", "canonical/skills/draft-writing/SKILL.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0159",
+      "source_location": "local safeguard derived from AMS and zbMATH assigned-material restrictions; reviewed 2026-09-13",
+      "old_rule_text": "Determine service, provenance, artifact, terms, destination, purpose, retention, and deletion conditions before any content-accessing tool call.",
+      "normalized_rule_text": "Fail closed on unknown or mixed review-material provenance before content access.",
+      "classification_tags": ["math-review", "provenance", "confidentiality", "local-safeguard"],
+      "normative_requirement_ids": ["WS-MREV-0001"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0160",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, Content of a review, page states Updated February 2015, https://mathscinet.ams.org/mresubs/guide-reviewers.html, accessed 2026-09-13",
+      "old_rule_text": "Material supplied by Mathematical Reviews may not be uploaded to LLM or AI tools; grammar checking the review itself is permitted.",
+      "normalized_rule_text": "Block AI processing of MR-supplied material and narrow the permitted lane to surface checking of isolated reviewer-authored prose.",
+      "classification_tags": ["math-review", "mr", "ai", "confidentiality", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0002"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0161",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01, Legal Matters and use restrictions, https://zbmath.org/static/guide-for-reviewers-letter.pdf; relevant text inspected through indexed extraction and official Prague guidance",
+      "old_rule_text": "Service-provided electronic items are for reviewing only, may not be circulated, and may carry deletion conditions.",
+      "normalized_rule_text": "Keep zbMATH-supplied material within its authorized review use without attributing an unverified AI-specific ban.",
+      "classification_tags": ["math-review", "zbmath", "confidentiality", "institutional-current", "partial-direct-access"],
+      "normative_requirement_ids": ["WS-MREV-0003"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0162",
+      "source_location": "local safeguard reviewed 2026-09-13; source-grounded authorization boundary",
+      "old_rule_text": "A separately obtained public copy is a distinct artifact and does not reclassify a restricted supplied copy.",
+      "normalized_rule_text": "Require artifact-specific processing permission and separate reading authority from execution authority.",
+      "classification_tags": ["math-review", "authorization", "untrusted-content", "local-safeguard"],
+      "normative_requirement_ids": ["WS-MREV-0004"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0163",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, accessed 2026-09-13; zbMATH Guide for Reviewers, updated 2024-11-01; Edward Dunne, MathOverflow answer 2021-01-28",
+      "old_rule_text": "A bibliographic review helps a reader decide whether to read the item by explaining context, main result, and method or proof idea.",
+      "normalized_rule_text": "Organize a concise decision-to-read review around context, result, and method at the appropriate technical level.",
+      "classification_tags": ["math-review", "purpose", "content", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0005"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0164",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01, Contents of Reviews",
+      "old_rule_text": "A zbMATH review must add information rather than copy or minimally vary the abstract; extensive direct quotes must be identified.",
+      "normalized_rule_text": "Require independent added value beyond the abstract and transparent quotation treatment.",
+      "classification_tags": ["math-review", "zbmath", "abstract", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0006"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0165",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, accessed 2026-09-13, fallback treatments",
+      "old_rule_text": "An insightful independent review is preferred to using the author summary or publishing without a review.",
+      "normalized_rule_text": "Treat MR fallback treatments as service-specific exceptions rather than drafting shortcuts.",
+      "classification_tags": ["math-review", "mr", "independence", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0007"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0166",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, Evaluative reviews; MathOverflow discussions on useful MathSciNet and zbMATH reviews, accessed 2026-09-13",
+      "old_rule_text": "The factual account is primary; evaluation is optional and should not turn the review into promotion.",
+      "normalized_rule_text": "Separate evidence-bound evaluation from the mathematical and bibliographic record.",
+      "classification_tags": ["math-review", "evaluation", "neutrality", "institutional-and-community"],
+      "normative_requirement_ids": ["WS-MREV-0008"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0167",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, Evaluative reviews; zbMATH Guide for Reviewers, Contents of Reviews",
+      "old_rule_text": "Criticism, error, and overlap claims must be precise, documented, and supported by locations, counterexamples, or exact references.",
+      "normalized_rule_text": "Require auditable evidence for negative mathematical assessments.",
+      "classification_tags": ["math-review", "criticism", "errors", "evidence", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0009"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0168",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01, Contents of Reviews",
+      "old_rule_text": "A zbMATH review is not a referee report and should not recommend prepublication changes to an already published item.",
+      "normalized_rule_text": "Keep public bibliographic review separate from prepublication refereeing.",
+      "classification_tags": ["math-review", "zbmath", "routing", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0010"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0169",
+      "source_location": "AMS and zbMATH reviewer guides; MathOverflow How to write a good MathSciNet review, accessed 2026-09-13",
+      "old_rule_text": "Related work, later developments, alternative terms, search terms, and prerequisites add value only when useful and verified.",
+      "normalized_rule_text": "Use a few verified connections to improve context and discoverability without reproducing a bibliography.",
+      "classification_tags": ["math-review", "citations", "discoverability", "institutional-and-community"],
+      "normative_requirement_ids": ["WS-MREV-0011"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0170",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, live page accessed 2026-09-13",
+      "old_rule_text": "MR reviews follow current English, length, reference, MR-number, MSC, and proof-preview requirements.",
+      "normalized_rule_text": "Resolve current MR delivery constraints from the official guide before finalizing a review.",
+      "classification_tags": ["math-review", "mr", "delivery", "version-sensitive", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0012"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0171",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01; zbMATH review template v2.1, 2021-06-24",
+      "old_rule_text": "zbMATH reviews follow current language, MSC, keyword, standard-LaTeX, package, and proofreading requirements.",
+      "normalized_rule_text": "Resolve current zbMATH delivery constraints from the official guide and template instead of hard-coding a package list.",
+      "classification_tags": ["math-review", "zbmath", "delivery", "version-sensitive", "institutional-current"],
+      "normative_requirement_ids": ["WS-MREV-0013"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0172",
+      "source_location": "AMS Beyond Reviews exceptional-review collection; MathOverflow example discussions; Krantz, A Primer of Mathematical Writing (2nd ed., 2017), sections 4.2-4.3",
+      "old_rule_text": "Examples can guide selection of context, definitions, prerequisites, results, methods, and book-review features without imposing a voice or rigid outline.",
+      "normalized_rule_text": "Treat exceptional reviews and book-review advice as heuristics rather than venue rules.",
+      "classification_tags": ["math-review", "examples", "books", "heuristic"],
+      "normative_requirement_ids": ["WS-MREV-0014"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0173",
+      "source_location": "Holst, Scientific Paper Writing (2015), source audit 2026-09-13",
+      "old_rule_text": "Optimize authorship, citations, result selection, or reviewer response to influence prestige, metrics, or editorial psychology.",
+      "normalized_rule_text": "Reject strategic publication tactics that weaken truth, relevance, attribution, or affirmative author approval.",
+      "classification_tags": ["rejected", "ethics", "craft-reference"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "rejected"
+    },
+    {
+      "edge_id": "ML-0174",
+      "source_location": "Strunk and White, The Elements of Style, machine-readable 4th-edition text; source audit 2026-09-13; exact Penguin 2007 attachment unverified",
+      "old_rule_text": "Apply dated or disputed word bans, pronoun rules, data agreement, which/that rules, or other usage prescriptions as universal policy.",
+      "normalized_rule_text": "Keep dated usage prescriptions reference-only and use current grammar evidence for promoted rules.",
+      "classification_tags": ["rejected", "dated", "general-style", "edition-unverified"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "rejected"
+    },
+    {
+      "edge_id": "ML-0175",
+      "source_location": "Knuth, Larrabee and Roberts, Mathematical Writing (1989), source audit 2026-09-13",
+      "old_rule_text": "Import literate-programming, user-manual, program-presentation, code-naming, or obsolete TeX mechanics into scientific prose policy.",
+      "normalized_rule_text": "Keep code-writing and obsolete tooling guidance outside the prose policy.",
+      "classification_tags": ["rejected", "code-separation", "dated-tooling"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "rejected"
+    },
+    {
+      "edge_id": "ML-0176",
+      "source_location": "Krantz, A Primer of Mathematical Writing (2nd ed., 2017), source audit 2026-09-13",
+      "old_rule_text": "Promote fixed theorem-length limits, personal bibliography preferences, software brands, file-transfer mechanics, or dated MathSciNet/zbMATH facts.",
+      "normalized_rule_text": "Keep numerical, personal, tool-specific, and stale publishing advice non-normative.",
+      "classification_tags": ["rejected", "dated", "personal-preference", "tooling"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "rejected"
+    },
+    {
+      "edge_id": "ML-0177",
+      "source_location": "Trzeciak, Writing Mathematical Papers in English (rev. ed., 2005), conflict audit 2026-09-13",
+      "old_rule_text": "Prefer blanket imperative openings, omit hypotheses needed for self-containment, or make introductory commas optional.",
+      "normalized_rule_text": "Preserve the user-approved sentence-opening, self-contained-statement, and introductory-comma rules.",
+      "classification_tags": ["rejected", "conflict", "user-rule-precedence"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "supersede",
+      "reviewer_status": "superseded"
     }
   ]
 }

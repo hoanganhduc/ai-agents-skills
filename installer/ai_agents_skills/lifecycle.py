@@ -11,6 +11,7 @@ from .capabilities import normalized_path_within, resolved_path_within
 from .json_merge import extract_hook_entry, load_json_object, remove_hook_entry
 from .managed_permissions import restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
+from .render import replace_or_append_block
 from .state import (
     artifact_signature,
     load_state,
@@ -23,6 +24,17 @@ from .state import (
     write_text_atomic,
 )
 from .windows_security import require_handle_bound_mutation
+
+
+WRITING_DOC_IDS = frozenset(
+    {
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style",
+        "instruction-doc:mathscinet-zbmath-review-style",
+    }
+)
+WRITING_ROUTER_ID = "instruction-block:writing-instructions"
 
 
 def uninstall(
@@ -85,10 +97,12 @@ def rollback(
         actions = load_run_actions(root, state, run_id)
     else:
         actions = lifecycle_scope
+    filter_scope = actions if run_id else lifecycle_scope
     targets = [
-        item for item in filter_artifacts(actions, skills, agents, artifacts, lifecycle_scope=lifecycle_scope)
+        item for item in filter_artifacts(actions, skills, agents, artifacts, lifecycle_scope=filter_scope)
         if rollback_target_item(item)
     ]
+    targets = reverse_writing_router_pairs_for_rollback(targets)
     mark_created_instruction_file_groups(targets)
     if dry_run:
         return {"dry_run": True, "actions": [{"operation": "rollback", **item} for item in targets]}
@@ -135,6 +149,26 @@ def rollback(
     return {"dry_run": False, "restored": restored}
 
 
+def reverse_writing_router_pairs_for_rollback(
+    targets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    result = list(targets)
+    positions_by_key: dict[str, list[int]] = {}
+    for index, item in enumerate(result):
+        if (
+            item.get("artifact_id") == WRITING_ROUTER_ID
+            and item.get("router_phase") in {"pre", "post"}
+        ):
+            positions_by_key.setdefault(str(item.get("key")), []).append(index)
+    for positions in positions_by_key.values():
+        if len(positions) < 2:
+            continue
+        values = [result[index] for index in positions]
+        for index, value in zip(positions, reversed(values)):
+            result[index] = value
+    return result
+
+
 def filter_artifacts(
     artifacts: list[Any],
     skills: set[str] | None,
@@ -156,8 +190,55 @@ def filter_artifacts(
             continue
         selected.append(item)
     if artifact_ids:
-        return selected
+        return expand_writing_router_scope(
+            lifecycle_scope or artifacts,
+            selected,
+        )
     return expand_runtime_lifecycle_scope(lifecycle_scope or artifacts, selected)
+
+
+def expand_writing_router_scope(
+    artifacts: list[Any],
+    selected: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    affected_agents = {
+        str(item.get("agent"))
+        for item in selected
+        if item.get("artifact_id") in WRITING_DOC_IDS and item.get("agent")
+    }
+    if not affected_agents:
+        return selected
+    selected_keys = {item.get("key") for item in selected}
+    selected_doc_ids = {
+        agent: {
+            str(item.get("artifact_id"))
+            for item in selected
+            if item.get("agent") == agent and item.get("artifact_id") in WRITING_DOC_IDS
+        }
+        for agent in affected_agents
+    }
+    for agent in affected_agents:
+        candidates = [
+            item
+            for item in artifacts
+            if isinstance(item, dict)
+            and item.get("agent") == agent
+            and item.get("artifact_id") == WRITING_ROUTER_ID
+        ]
+        paired = any(item.get("router_phase") in {"pre", "post"} for item in candidates)
+        if paired and selected_doc_ids[agent] != WRITING_DOC_IDS:
+            candidates = [item for item in candidates if item.get("router_phase") == "post"]
+        for item in candidates:
+            identity = (item.get("key"), item.get("router_phase"))
+            existing = {
+                (current.get("key"), current.get("router_phase"))
+                for current in selected
+            }
+            if identity in existing:
+                continue
+            selected.append(item)
+            selected_keys.add(item.get("key"))
+    return selected
 
 
 def rollback_target_item(item: dict[str, Any]) -> bool:
@@ -616,6 +697,21 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     path = Path(item["artifact"])
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         previous = item.get("previous_state_artifact")
+        if (
+            item.get("artifact_id") == WRITING_ROUTER_ID
+            and item.get("router_phase") == "pre"
+            and previous
+            and isinstance(previous.get("managed_block"), str)
+        ):
+            before = path.read_text(encoding="utf-8") if path.exists() else ""
+            restored = replace_or_append_block(
+                before,
+                "writing-instructions",
+                previous["managed_block"],
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(path, restored)
+            return
         if previous and item.get("backup"):
             if not backup_integrity_ok(item, Path(item["backup"])):
                 raise ValueError(f"refusing rollback because backup changed since it was recorded: {item['backup']}")
@@ -853,7 +949,17 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
             if item.get("artifact") == path_text
             and item.get("artifact_type") in {"instruction-block", "management-notice"}
         ]
-        if any(item.get("created_file") for item in group) and strip_managed_blocks(text, known_skills).strip():
+        writing_router_pair = sum(
+            1
+            for item in group
+            if item.get("artifact_id") == WRITING_ROUTER_ID
+            and item.get("router_phase") in {"pre", "post"}
+        ) >= 2
+        if (
+            any(item.get("created_file") for item in group)
+            and not writing_router_pair
+            and strip_managed_blocks(text, known_skills).strip()
+        ):
             raise ValueError(f"refusing rollback because instruction file changed since install: {path}")
 
 

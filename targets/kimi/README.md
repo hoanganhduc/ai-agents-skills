@@ -31,6 +31,11 @@ Auto mode copies the full canonical `SKILL.md` body (directory layout) into
 Symlink loading is unverified for Kimi and is privilege-gated on Windows, so it
 is not used by default.
 
+The four writing documents remain inert support files and are activated by one
+managed router in `~/.kimi-code/AGENTS.md` plus Kimi's normal on-demand skill
+loading. Missing or locally modified document sets do not retain an active
+managed router.
+
 ## KIMI_CODE_HOME is unsupported for install
 
 `KIMI_CODE_HOME` relocates the data root Kimi reads at runtime. Relocated

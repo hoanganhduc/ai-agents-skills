@@ -1,8 +1,8 @@
 {
   "schema_version": "writing-style.policy-index.v1",
-  "policy_version": "2026-06-20",
+  "policy_version": "2026-09-13",
   "policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "pending-computed-by-gate",
+  "content_hash": "sha256:5d9e50e44114261d9bd62470bf6c501cf1f41aca6fe3dfe9174be6c8f5bb4b61",
   "requirements": [
     {
       "id": "WS-GEN-0001",
@@ -23,7 +23,7 @@
       "severity": "hard",
       "tags": ["claims", "evidence", "gaps"],
       "markdown_anchor": "claim-and-evidence-discipline",
-      "source_ledger_ids": ["ML-0002"],
+      "source_ledger_ids": ["ML-0002", "ML-0152", "ML-0153", "ML-0158"],
       "test_ids": ["WS-T-0002"],
       "overlays": [],
       "target_adapters": []
@@ -97,6 +97,42 @@
       "markdown_anchor": "research-paper-sentence-openings",
       "source_ledger_ids": ["ML-0016"],
       "test_ids": ["WS-T-0008"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0009",
+      "title": "Attach a participial phrase to its grammatical subject",
+      "scope": "all writing-producing workflows",
+      "severity": "hard",
+      "tags": ["grammar", "modifiers", "ambiguity"],
+      "markdown_anchor": "grammar-and-scope",
+      "source_ledger_ids": ["ML-0144"],
+      "test_ids": ["WS-T-0009"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0010",
+      "title": "Punctuate restrictive and nonrestrictive clauses by meaning",
+      "scope": "all writing-producing workflows",
+      "severity": "hard",
+      "tags": ["grammar", "commas", "scope", "ambiguity"],
+      "markdown_anchor": "grammar-and-scope",
+      "source_ledger_ids": ["ML-0145"],
+      "test_ids": ["WS-T-0010"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0011",
+      "title": "Choose a or an by pronunciation",
+      "scope": "all writing-producing workflows",
+      "severity": "soft",
+      "tags": ["grammar", "articles", "pronunciation"],
+      "markdown_anchor": "grammar-and-scope",
+      "source_ledger_ids": ["ML-0146"],
+      "test_ids": ["WS-T-0011"],
       "overlays": ["math-manuscript-style"],
       "target_adapters": []
     }

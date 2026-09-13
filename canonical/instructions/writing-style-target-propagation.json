@@ -1,41 +1,62 @@
 {
   "schema_version": "writing-style.target-propagation.v1",
-  "generated_for_release": "2026-06-20",
+  "generated_for_release": "2026-09-13",
   "policy_ref": "canonical/instructions/writing-style-settings.md",
-  "overlay_refs": ["canonical/instructions/math-manuscript-style.md"],
+  "overlay_refs": ["canonical/instructions/math-manuscript-style.md", "canonical/instructions/graph-combinatorics-style.md", "canonical/instructions/mathscinet-zbmath-review-style.md"],
   "rows": [
     {
       "target": "codex",
       "target_status": "installed",
-      "destination": ".codex/instructions/",
+      "destination": ".codex/instructions/ with a managed AGENTS.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "claude",
       "target_status": "installed",
-      "destination": ".claude/instructions/",
+      "destination": ".claude/instructions/ with a managed CLAUDE.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "deepseek",
       "target_status": "installed",
-      "destination": ".deepseek/instructions/",
+      "destination": ".deepseek/instructions/ with a managed AGENTS.md routing block; native loading remains unverified without a compatible CLI",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "opencode",
       "target_status": "installed",
-      "destination": "opencode instruction-doc surface",
+      "destination": "opencode instruction-doc surface with a managed global AGENTS.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "antigravity",
       "target_status": "installed",
-      "destination": "antigravity plugin rules surface",
+      "destination": "antigravity plugin rules surface with a managed global GEMINI.md routing block",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "grok",
+      "target_status": "installed",
+      "destination": ".grok/rules/ (native global-rule discovery verified with Grok 1.0.5)",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "kimi",
+      "target_status": "installed",
+      "destination": ".kimi-code/instructions/ (inert managed storage activated by a managed AGENTS.md router and native skills)",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "chatgpt-local-coder",
+      "target_status": "installed",
+      "destination": ".chatgpt-local-coder/instructions/ with an auto-loaded AGENTS.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },

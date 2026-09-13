@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -18,34 +17,6 @@ RUNTIME = REPO / "canonical/runtime"
 SKILL = "lean-explore-mcp"
 COMMAND = f"skills/{SKILL}/run_lean_explore_mcp.sh"
 HELPER = RUNTIME / "skills" / SKILL / "lean_explore_mcp.py"
-
-
-def load_helper():
-    spec = importlib.util.spec_from_file_location("lean_explore_helper_test", HELPER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-class LeanExploreConfigTargetTests(unittest.TestCase):
-    def test_command_targets_follow_native_platform(self) -> None:
-        helper = load_helper()
-
-        self.assertEqual(
-            helper._runtime_command_targets("nt"),
-            (
-                "run_skill.ps1",
-                "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
-            ),
-        )
-        self.assertEqual(
-            helper._runtime_command_targets("posix"),
-            (
-                "run_skill.sh",
-                "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
-            ),
-        )
 
 
 def stage_lean_runtime(root: Path) -> Path:

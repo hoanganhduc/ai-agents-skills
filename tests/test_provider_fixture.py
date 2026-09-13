@@ -47,8 +47,8 @@ class SweepStaleFixturesTests(unittest.TestCase):
         target.mkdir()
         link = self.parent / f"{FIXTURE_PREFIX}link"
         link.symlink_to(target)
-        os.utime(link, (0, 0), follow_symlinks=False)
-        self.assertEqual(sweep_stale_fixtures(self.parent), [])
+        stale_now = link.lstat().st_mtime + STALE_AFTER_SECONDS + 60
+        self.assertEqual(sweep_stale_fixtures(self.parent, now=stale_now), [])
         self.assertTrue(target.exists())
         self.assertTrue(link.is_symlink())
 

@@ -84,9 +84,12 @@ resolved to Grok tool ids and is not enforced on Grok.
 
 ## Instruction docs and support storage
 
-Instruction docs copy to `~/.grok/rules/`. Home-scope `rules/` loading is
-unverified; the managed instruction blocks in `~/.grok/AGENTS.md` are the
-verified instruction surface. `~/.grok/templates/` and `~/.grok/tools/` are
+Instruction docs copy to `~/.grok/rules/`. Grok 1.0.5 `inspect --json` confirms
+that these files are loaded as global rules, so the writing bundle does not add
+a duplicate router in `AGENTS.md`. Native smoke checks the four current writing
+rules and rejects a still-loaded retired compatibility rule. This proves
+version-scoped discovery, not model obedience. `~/.grok/templates/` and
+`~/.grok/tools/` are
 inert support storage referenced by skill relative paths; Grok does not load
 them as surfaces.
 

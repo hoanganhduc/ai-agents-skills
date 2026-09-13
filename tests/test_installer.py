@@ -952,6 +952,44 @@ class ManifestTests(unittest.TestCase):
         selected = resolve_skills(args, manifests)
         self.assertEqual(selected, ["draft-writing"])
 
+    def test_review_skills_fail_closed_when_optional_review_overlay_is_not_installed(self) -> None:
+        manifests = load_manifests()
+        review_skills = (
+            "draft-writing",
+            "paper-review",
+            "annotated-review",
+            "agent-group-discuss",
+            "prose",
+            "research-report-reviewer",
+        )
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            args = Args()
+            args.skills = ",".join(review_skills)
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex"]))
+
+        skill_actions = {
+            action["skill"]: action
+            for action in plan["actions"]
+            if action.get("artifact_type") == "skill-file"
+        }
+        self.assertEqual(set(skill_actions), set(review_skills))
+        for skill in review_skills:
+            with self.subTest(skill=skill):
+                self.assertIn(
+                    "If `mathscinet-zbmath-review-style.md` is unavailable",
+                    skill_actions[skill]["content"],
+                )
+        self.assertFalse(
+            any(
+                action.get("artifact_id")
+                == "instruction-doc:mathscinet-zbmath-review-style"
+                for action in plan["actions"]
+            )
+        )
+
     def test_writing_workflow_artifacts_resolve_with_backing_dependency(self) -> None:
         manifests = load_manifests()
         args = Args()
@@ -962,15 +1000,19 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             artifacts,
             [
-                ("instruction-doc", "claim-preserving-writing"),
                 ("instruction-doc", "graph-combinatorics-style"),
                 ("instruction-doc", "math-manuscript-style"),
+                ("instruction-doc", "mathscinet-zbmath-review-style"),
                 ("instruction-doc", "writing-style-settings"),
                 ("template", "draft-claim-ledger"),
                 ("template", "draft-revision-map"),
+                ("template", "writing-review"),
             ],
         )
-        self.assertEqual(artifact_dependency_skills(artifacts, manifests), {"draft-writing"})
+        self.assertEqual(
+            artifact_dependency_skills(artifacts, manifests),
+            {"cross-agent-delegation", "draft-writing"},
+        )
 
     def test_draft_writing_artifact_sources_render_from_expected_directories(self) -> None:
         manifests = load_manifests()
@@ -982,10 +1024,10 @@ class ManifestTests(unittest.TestCase):
             artifact_specs["template"]["draft-claim-ledger"],
             "codex",
         )
-        instruction = render_artifact_content(
-            "instruction-doc",
-            "claim-preserving-writing",
-            artifact_specs["instruction-doc"]["claim-preserving-writing"],
+        review_template = render_artifact_content(
+            "template",
+            "writing-review",
+            artifact_specs["template"]["writing-review"],
             "codex",
         )
         style_instruction = render_artifact_content(
@@ -1000,15 +1042,23 @@ class ManifestTests(unittest.TestCase):
             artifact_specs["instruction-doc"]["math-manuscript-style"],
             "codex",
         )
+        database_review_instruction = render_artifact_content(
+            "instruction-doc",
+            "mathscinet-zbmath-review-style",
+            artifact_specs["instruction-doc"]["mathscinet-zbmath-review-style"],
+            "codex",
+        )
 
         self.assertIn("# Draft Claim Ledger", ledger)
-        self.assertIn("# Claim-Preserving Writing", instruction)
+        self.assertIn("# Writing Review", review_template)
         self.assertIn("# Writing Style Settings", style_instruction)
         self.assertIn("# Math Manuscript Style", math_style_instruction)
+        self.assertIn("# MathSciNet And zbMATH Review Style", database_review_instruction)
         self.assertIn("Managed by ai-agents-skills", ledger)
-        self.assertIn("Managed by ai-agents-skills", instruction)
+        self.assertIn("Managed by ai-agents-skills", review_template)
         self.assertIn("Managed by ai-agents-skills", style_instruction)
         self.assertIn("Managed by ai-agents-skills", math_style_instruction)
+        self.assertIn("Managed by ai-agents-skills", database_review_instruction)
         self.assertIn("Generated target: codex", ledger)
 
     def test_risk_gated_confirmation_artifact_renders_for_workflow_profiles(self) -> None:
@@ -1094,19 +1144,20 @@ class ManifestTests(unittest.TestCase):
                 "before drafting",
                 "writing-style-settings.md",
             ],
-            "canonical/instructions/claim-preserving-writing.md": [
-                "prior posts, templates, house style",
-                "before generating the first draft",
-            ],
             "canonical/instructions/writing-style-settings.md": [
                 "canonical, general writing-style policy",
                 "style_profile_ref",
                 "Session Updates",
             ],
             "canonical/instructions/math-manuscript-style.md": [
-                "Define every concept and notation before first use",
+                "Define every nonstandard concept and every piece of notation before first use",
                 "Do not define notation inside a theorem",
                 "short outline paragraph",
+            ],
+            "canonical/instructions/mathscinet-zbmath-review-style.md": [
+                "Before opening",
+                "provided by Mathematical Reviews",
+                "not a referee report",
             ],
         }
 
@@ -1132,7 +1183,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("antigravity", "hook-config").mechanism, "hook-config")
         self.assertEqual(target_surface_for("grok", "skill-file").mechanism, "copy")
         self.assertEqual(target_surface_for("grok", "entrypoint-alias").mechanism, "native-command")
-        self.assertEqual(target_surface_for("grok", "instruction-doc").claim_basis, "installer-convention")
+        self.assertEqual(target_surface_for("grok", "instruction-doc").claim_basis, "official-docs")
         self.assertEqual(target_surface_for("grok", "native-hook-file").support, "supported")
         self.assertEqual(target_surface_for("grok", "config-compat").mechanism, "toml-merge")
         self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "manual")
@@ -1161,6 +1212,1426 @@ class ManifestTests(unittest.TestCase):
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
+    def test_writing_router_uses_all_global_context_targets_except_native_grok_rules(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        router_targets = {
+            "codex",
+            "claude",
+            "deepseek",
+            "opencode",
+            "antigravity",
+            "kimi",
+            "chatgpt-local-coder",
+        }
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *sorted(router_targets | {"grok"}))
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, sorted(router_targets | {"grok"})),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            routers = {
+                action["agent"]: action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            }
+            self.assertEqual(set(routers), router_targets)
+            for target, action in routers.items():
+                with self.subTest(target=target):
+                    self.assertEqual(action["operation"], "upsert")
+                    self.assertIn("writing-style-settings.md", action["content"])
+                    self.assertIn("math-manuscript-style.md", action["content"])
+                    self.assertIn("graph-combinatorics-style.md", action["content"])
+                    self.assertIn("mathscinet-zbmath-review-style.md", action["content"])
+                    self.assertIn("do not apply them as code-writing rules", action["content"])
+
+    def test_writing_router_projects_unselected_existing_canonical_documents(self) -> None:
+        manifests = load_manifests()
+        names = (
+            "writing-style-settings",
+            "math-manuscript-style",
+            "graph-combinatorics-style",
+            "mathscinet-zbmath-review-style",
+        )
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            for name in names:
+                spec = manifests["artifacts"]["artifacts"]["instruction-doc"][name]
+                path = target.target_dir_for("instruction-doc") / spec["source"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    render_artifact_content("instruction-doc", name, spec, "codex"),
+                    encoding="utf-8",
+                )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=[("instruction-doc", "writing-style-settings")],
+                runtime_profile="none",
+            )
+            router = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            )
+            self.assertEqual(router["operation"], "upsert")
+
+    def test_incomplete_projected_writing_set_removes_only_the_managed_router(self) -> None:
+        from installer.ai_agents_skills.planner import writing_router_block
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            base_name = "writing-style-settings"
+            base_spec = manifests["artifacts"]["artifacts"]["instruction-doc"][base_name]
+            base_path = target.target_dir_for("instruction-doc") / base_spec["source"]
+            base_path.parent.mkdir(parents=True, exist_ok=True)
+            base_path.write_text(
+                render_artifact_content("instruction-doc", base_name, base_spec, "codex"),
+                encoding="utf-8",
+            )
+            router = writing_router_block(root, manifests, target)
+            target.instructions_file.write_text(
+                "user text before\n\n" + router + "\n\nuser text after\n",
+                encoding="utf-8",
+            )
+            router_action = {
+                "kind": "managed-block",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "path": str(target.instructions_file),
+                "block_id": "ai-agents-skills:writing-instructions",
+                "artifact_type": "instruction-block",
+                "artifact_id": "instruction-block:writing-instructions",
+            }
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": artifact_key(router_action),
+                            "agent": "codex",
+                            "skill": "writing-instructions",
+                            "artifact": str(target.instructions_file),
+                            "artifact_type": "instruction-block",
+                            "artifact_id": "instruction-block:writing-instructions",
+                            "managed": True,
+                            "managed_block": router,
+                            "installed_signature": artifact_signature(target.instructions_file),
+                            "uninstall": {"action": "unmanage-only"},
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=[("instruction-doc", base_name)],
+                runtime_profile="none",
+            )
+            removal = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            )
+            self.assertEqual(removal["operation"], "remove-managed-block")
+            apply_action(root, "router-remove-test", removal)
+            remaining = target.instructions_file.read_text(encoding="utf-8")
+            self.assertNotIn("ai-agents-skills:writing-instructions", remaining)
+            self.assertIn("user text before", remaining)
+            self.assertIn("user text after", remaining)
+
+    def test_writing_router_is_removed_before_document_updates_and_readded_after(self) -> None:
+        from installer.ai_agents_skills.planner import writing_router_block
+
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            records = []
+            for _, name in writing_docs:
+                spec = manifests["artifacts"]["artifacts"]["instruction-doc"][name]
+                path = target.target_dir_for("instruction-doc") / spec["source"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("stale managed document\n", encoding="utf-8")
+                records.append(
+                    {
+                        "key": f"codex:instruction-doc:{name}:{path}",
+                        "agent": "codex",
+                        "skill": name,
+                        "artifact": str(path),
+                        "artifact_type": "instruction-doc",
+                        "artifact_id": f"instruction-doc:{name}",
+                        "artifact_name": name,
+                        "managed": True,
+                        "installed_signature": artifact_signature(path),
+                        "uninstall": {"action": "delete-created"},
+                    }
+                )
+            router = writing_router_block(root, manifests, target)
+            target.instructions_file.write_text(router + "\n", encoding="utf-8")
+            router_record = {
+                "key": f"codex:writing-instructions:ai-agents-skills:writing-instructions:{target.instructions_file}",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "artifact": str(target.instructions_file),
+                "artifact_type": "instruction-block",
+                "artifact_id": "instruction-block:writing-instructions",
+                "managed": True,
+                "managed_block": router,
+                "created_file": True,
+                "installed_signature": artifact_signature(target.instructions_file),
+                "uninstall": {"action": "delete-created"},
+            }
+            records.append(router_record)
+            save_state(
+                root,
+                {"schema_version": 2, "artifacts": records, "runs": [], "uninstall_records": []},
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            router_indexes = [
+                index
+                for index, action in enumerate(plan["actions"])
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            ]
+            doc_indexes = [
+                index
+                for index, action in enumerate(plan["actions"])
+                if action.get("artifact_type") == "instruction-doc"
+                and action.get("artifact_name") in {name for _, name in writing_docs}
+            ]
+            self.assertEqual(len(router_indexes), 2)
+            self.assertEqual(plan["actions"][router_indexes[0]]["operation"], "remove-managed-block")
+            self.assertEqual(plan["actions"][router_indexes[1]]["operation"], "upsert")
+            self.assertLess(router_indexes[0], min(doc_indexes))
+            self.assertGreater(router_indexes[1], max(doc_indexes))
+            with patch(
+                "installer.ai_agents_skills.windows_security.host_is_native_windows",
+                return_value=False,
+            ):
+                applied = apply_plan(root, plan, dry_run=False)
+                with target.instructions_file.open("a", encoding="utf-8") as handle:
+                    handle.write("user edit after writing upgrade\n")
+                rollback(root, run_id=applied["run_id"], dry_run=False)
+            self.assertIn(
+                "ai-agents-skills:writing-instructions:start",
+                target.instructions_file.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "user edit after writing upgrade",
+                target.instructions_file.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                len(
+                    [
+                        item
+                        for item in load_state(root)["artifacts"]
+                        if item.get("artifact_id") == "instruction-block:writing-instructions"
+                    ]
+                ),
+                1,
+            )
+            second_plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            with patch(
+                "installer.ai_agents_skills.windows_security.host_is_native_windows",
+                return_value=False,
+            ):
+                second_apply = apply_plan(root, second_plan, dry_run=False)
+                rollback(
+                    root,
+                    run_id=second_apply["run_id"],
+                    artifacts={"instruction-doc:writing-style-settings"},
+                    dry_run=False,
+                )
+            self.assertNotIn(
+                "ai-agents-skills:writing-instructions:start",
+                target.instructions_file.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "user edit after writing upgrade",
+                target.instructions_file.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any(
+                    item.get("artifact_id") == "instruction-block:writing-instructions"
+                    for item in load_state(root)["artifacts"]
+                )
+            )
+
+    def test_selective_writing_doc_uninstall_includes_same_target_router(self) -> None:
+        from installer.ai_agents_skills.lifecycle import filter_artifacts
+
+        records = []
+        for agent in ("codex", "kimi"):
+            records.extend(
+                [
+                    {
+                        "key": f"{agent}-doc",
+                        "agent": agent,
+                        "artifact_id": "instruction-doc:writing-style-settings",
+                    },
+                    {
+                        "key": f"{agent}-router",
+                        "agent": agent,
+                        "artifact_id": "instruction-block:writing-instructions",
+                    },
+                ]
+            )
+        selected = filter_artifacts(
+            records,
+            None,
+            {"codex"},
+            {"instruction-doc:writing-style-settings"},
+            lifecycle_scope=records,
+        )
+        self.assertEqual(
+            {(item["agent"], item["artifact_id"]) for item in selected},
+            {
+                ("codex", "instruction-doc:writing-style-settings"),
+                ("codex", "instruction-block:writing-instructions"),
+            },
+        )
+
+    def test_full_writing_bundle_refreshes_only_existing_managed_consumers(self) -> None:
+        from installer.ai_agents_skills.planner import WRITING_CONSUMER_SKILLS
+
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            records = []
+            for skill in (*WRITING_CONSUMER_SKILLS, "zotero"):
+                path = target.skill_file_for(skill)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "<!-- Managed by ai-agents-skills. Generated target: codex. -->\n"
+                    "Use claim-preserving-writing.md.\n",
+                    encoding="utf-8",
+                )
+                records.append(
+                    {
+                        "key": f"codex:{skill}:{path}",
+                        "agent": "codex",
+                        "skill": skill,
+                        "artifact": str(path),
+                        "artifact_type": "skill-file",
+                        "managed": True,
+                        "installed_signature": artifact_signature(path),
+                        "uninstall": {"action": "delete-created"},
+                    }
+                )
+            save_state(
+                root,
+                {"schema_version": 2, "artifacts": records, "runs": [], "uninstall_records": []},
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            consumer_actions = [
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "skill-file"
+            ]
+            self.assertEqual(
+                {action["skill"] for action in consumer_actions},
+                set(WRITING_CONSUMER_SKILLS),
+            )
+            self.assertTrue(all(action["operation"] == "update" for action in consumer_actions))
+            self.assertFalse(any(action["skill"] == "zotero" for action in consumer_actions))
+
+    def test_auto_refreshed_drifted_consumer_ignores_global_backup_replace_and_blocks_retirement(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            consumer = target.skill_file_for("draft-writing")
+            consumer.parent.mkdir(parents=True, exist_ok=True)
+            consumer.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\nold\n",
+                encoding="utf-8",
+            )
+            recorded_consumer_signature = artifact_signature(consumer)
+            consumer.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\n"
+                "user edit requiring claim-preserving-writing.md\n",
+                encoding="utf-8",
+            )
+            retired = target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            retired.write_text("retired\n", encoding="utf-8")
+            records = [
+                {
+                    "key": f"codex:draft-writing:{consumer}",
+                    "agent": "codex",
+                    "skill": "draft-writing",
+                    "artifact": str(consumer),
+                    "artifact_type": "skill-file",
+                    "managed": True,
+                    "installed_signature": recorded_consumer_signature,
+                    "uninstall": {"action": "delete-created"},
+                },
+                {
+                    "key": f"codex:instruction-doc:claim-preserving-writing:{retired}",
+                    "agent": "codex",
+                    "skill": "draft-writing",
+                    "artifact": str(retired),
+                    "artifact_type": "instruction-doc",
+                    "artifact_id": "instruction-doc:claim-preserving-writing",
+                    "artifact_name": "claim-preserving-writing",
+                    "managed": True,
+                    "installed_signature": artifact_signature(retired),
+                    "uninstall": {"action": "delete-created"},
+                },
+            ]
+            save_state(
+                root,
+                {"schema_version": 2, "artifacts": records, "runs": [], "uninstall_records": []},
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                backup_replace=True,
+                runtime_profile="none",
+            )
+            consumer_action = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "skill-file"
+            )
+            retired_action = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            )
+            self.assertEqual(consumer_action["operation"], "skip")
+            self.assertEqual(retired_action["operation"], "skip")
+            self.assertIn(str(consumer), retired_action["blocked_consumers"])
+
+    def test_auto_refresh_preserves_drifted_consumer_support_and_instruction_block(self) -> None:
+        from installer.ai_agents_skills.render import render_instruction_block
+
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            skill = "agent-group-discuss"
+            skill_path = target.skill_file_for(skill)
+            skill_path.parent.mkdir(parents=True, exist_ok=True)
+            skill_path.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\nstale\n",
+                encoding="utf-8",
+            )
+            support_path = target.support_dir_for(skill) / "TEMPLATES.md"
+            support_path.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\nold support\n",
+                encoding="utf-8",
+            )
+            recorded_support = artifact_signature(support_path)
+            support_path.write_text("user-edited support\n", encoding="utf-8")
+            old_block = render_instruction_block(skill, manifests["skills"]["skills"][skill])
+            target.instructions_file.write_text(old_block + "\n", encoding="utf-8")
+            recorded_instruction_signature = artifact_signature(target.instructions_file)
+            changed_block = old_block.replace("Multi-agent discussion", "User-edited discussion")
+            target.instructions_file.write_text(changed_block + "\n", encoding="utf-8")
+            records = [
+                {
+                    "key": f"codex:{skill}:{skill_path}",
+                    "agent": "codex",
+                    "skill": skill,
+                    "artifact": str(skill_path),
+                    "artifact_type": "skill-file",
+                    "managed": True,
+                    "installed_signature": artifact_signature(skill_path),
+                    "uninstall": {"action": "delete-created"},
+                },
+                {
+                    "key": f"codex:{skill}:{support_path}",
+                    "agent": "codex",
+                    "skill": skill,
+                    "artifact": str(support_path),
+                    "artifact_type": "skill-support-file",
+                    "managed": True,
+                    "installed_signature": recorded_support,
+                    "uninstall": {"action": "delete-created"},
+                },
+                {
+                    "key": f"codex:{skill}:ai-agents-skills:{skill}:{target.instructions_file}",
+                    "agent": "codex",
+                    "skill": skill,
+                    "artifact": str(target.instructions_file),
+                    "artifact_type": "instruction-block",
+                    "managed": True,
+                    "managed_block": old_block,
+                    "installed_signature": recorded_instruction_signature,
+                    "uninstall": {"action": "delete-created"},
+                },
+            ]
+            save_state(
+                root,
+                {"schema_version": 2, "artifacts": records, "runs": [], "uninstall_records": []},
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            support_action = next(
+                action for action in plan["actions"]
+                if action.get("artifact_type") == "skill-support-file"
+                and Path(action["path"]) == support_path
+            )
+            block_action = next(
+                action for action in plan["actions"]
+                if action.get("artifact_type") == "instruction-block"
+                and action.get("skill") == skill
+            )
+            self.assertEqual(support_action["operation"], "skip")
+            self.assertEqual(block_action["operation"], "skip")
+            self.assertEqual(support_path.read_text(encoding="utf-8"), "user-edited support\n")
+            self.assertIn("User-edited discussion", target.instructions_file.read_text(encoding="utf-8"))
+
+    def test_adopted_consumer_is_read_from_disk_and_blocks_retirement(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            consumer = target.skill_file_for("draft-writing")
+            consumer.parent.mkdir(parents=True, exist_ok=True)
+            consumer.write_text("Use claim-preserving-writing.md.\n", encoding="utf-8")
+            retired = target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            retired.write_text("retired\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": f"codex:instruction-doc:claim-preserving-writing:{retired}",
+                            "agent": "codex",
+                            "skill": "draft-writing",
+                            "artifact": str(retired),
+                            "artifact_type": "instruction-doc",
+                            "artifact_id": "instruction-doc:claim-preserving-writing",
+                            "artifact_name": "claim-preserving-writing",
+                            "managed": True,
+                            "installed_signature": artifact_signature(retired),
+                            "uninstall": {"action": "delete-created"},
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                ["draft-writing"],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                adopt=True,
+                runtime_profile="none",
+            )
+            consumer_action = next(
+                action for action in plan["actions"]
+                if action.get("artifact_type") == "skill-file"
+            )
+            retired_action = next(
+                action for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            )
+            self.assertEqual(consumer_action["operation"], "adopt")
+            self.assertEqual(retired_action["operation"], "skip")
+            self.assertIn(str(consumer), retired_action["blocked_consumers"])
+
+    def test_writing_only_grok_plan_has_no_config_mutation(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["grok"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            self.assertFalse(
+                any(action.get("artifact_type") == "settings-compat-merge" for action in plan["actions"])
+            )
+
+    def test_fresh_writing_only_plans_have_an_exact_target_action_whitelist(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        router_targets = {
+            "codex",
+            "claude",
+            "deepseek",
+            "opencode",
+            "antigravity",
+            "kimi",
+            "chatgpt-local-coder",
+        }
+        for agent in sorted(router_targets | {"grok"}):
+            with self.subTest(agent=agent), fake_root() as tmp:
+                root = Path(tmp)
+                create_agent_homes(root, agent)
+                plan = build_plan(
+                    root,
+                    manifests,
+                    [],
+                    detect_agents(root, [agent]),
+                    artifacts=writing_docs,
+                    runtime_profile="none",
+                )
+                mutations = [
+                    action for action in plan["actions"]
+                    if action.get("operation") != "noop"
+                ]
+                target = target_for(root, agent)
+                expected = {
+                    (
+                        f"instruction-doc:{name}",
+                        str(
+                            target.target_dir_for("instruction-doc")
+                            / manifests["artifacts"]["artifacts"]["instruction-doc"][name]["source"]
+                        ),
+                        "create",
+                    )
+                    for _, name in writing_docs
+                }
+                if agent in router_targets:
+                    expected.add(
+                        (
+                            "instruction-block:writing-instructions",
+                            str(target.instructions_file),
+                            "upsert",
+                        )
+                    )
+                actual = {
+                    (action.get("artifact_id"), action.get("path"), action.get("operation"))
+                    for action in mutations
+                }
+                self.assertEqual(actual, expected)
+                self.assertEqual(len(mutations), len(expected))
+
+    def test_managed_skill_drift_is_preserved_without_backup_replace(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            path = target_for(root, "codex").skill_file_for("draft-writing")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\nold\n",
+                encoding="utf-8",
+            )
+            recorded = artifact_signature(path)
+            path.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: codex. -->\nuser edit\n",
+                encoding="utf-8",
+            )
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": f"codex:draft-writing:{path}",
+                            "agent": "codex",
+                            "skill": "draft-writing",
+                            "artifact": str(path),
+                            "artifact_type": "skill-file",
+                            "managed": True,
+                            "installed_signature": recorded,
+                            "uninstall": {"action": "delete-created"},
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            skill_action = next(
+                action for action in plan["actions"]
+                if action.get("artifact_type") == "skill-file"
+            )
+            self.assertEqual(skill_action["operation"], "skip")
+            self.assertEqual(skill_action["classification"], "conflict")
+            self.assertIn("changed since install", skill_action["reason"])
+
+    def test_retired_writing_document_is_removed_last_only_from_exact_managed_state(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            retired = target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            retired.write_text("retired managed writing policy\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": f"codex:instruction-doc:claim-preserving-writing:{retired}",
+                            "agent": "codex",
+                            "skill": "draft-writing",
+                            "artifact": str(retired),
+                            "artifact_type": "instruction-doc",
+                            "artifact_id": "instruction-doc:claim-preserving-writing",
+                            "artifact_name": "claim-preserving-writing",
+                            "managed": True,
+                            "installed_signature": artifact_signature(retired),
+                            "uninstall": {"action": "delete-created"},
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            removal = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+                and action.get("operation") == "remove-obsolete"
+            )
+            self.assertEqual(removal["path"], str(retired))
+            self.assertEqual(plan["actions"][-1], removal)
+            result = apply_action(root, "retired-writing-test", removal)
+            self.assertFalse(retired.exists())
+            self.assertTrue(result["backup_verified"])
+            backup = Path(result["backup"])
+            self.assertTrue(backup.is_file())
+            self.assertEqual(backup.read_text(encoding="utf-8"), "retired managed writing policy\n")
+
+    def test_retired_writing_document_preserves_changed_disallowed_and_nonregular_paths(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        for case in ("changed", "disallowed", "directory"):
+            with self.subTest(case=case), fake_root() as tmp:
+                root = Path(tmp)
+                create_agent_homes(root, "codex")
+                target = target_for(root, "codex")
+                expected = target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+                path = root / "elsewhere" / expected.name if case == "disallowed" else expected
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if case == "directory":
+                    path.mkdir()
+                else:
+                    path.write_text("recorded\n", encoding="utf-8")
+                recorded = artifact_signature(path)
+                if case == "changed":
+                    path.write_text("user change\n", encoding="utf-8")
+                record = {
+                    "key": f"codex:instruction-doc:claim-preserving-writing:{path}",
+                    "agent": "codex",
+                    "skill": "draft-writing",
+                    "artifact": str(path),
+                    "artifact_type": "instruction-doc",
+                    "artifact_id": "instruction-doc:claim-preserving-writing",
+                    "artifact_name": "claim-preserving-writing",
+                    "managed": True,
+                    "installed_signature": recorded,
+                    "uninstall": {"action": "delete-created"},
+                }
+                save_state(
+                    root,
+                    {
+                        "schema_version": 2,
+                        "artifacts": [record],
+                        "runs": [],
+                        "uninstall_records": [],
+                    },
+                )
+                plan = build_plan(
+                    root,
+                    manifests,
+                    [],
+                    detect_agents(root, ["codex"]),
+                    artifacts=writing_docs,
+                    runtime_profile="none",
+                )
+                action = next(
+                    action for action in plan["actions"]
+                    if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+                )
+                self.assertEqual(action["operation"], "skip")
+                self.assertEqual(action["classification"], "conflict")
+                self.assertTrue(path.exists())
+
+    def test_pending_retired_writing_removal_recovers_an_uncommitted_delete(self) -> None:
+        from installer.ai_agents_skills.apply import (
+            prepare_pending_retired_removal,
+            recover_pending_retired_removals,
+        )
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            path = root / ".codex" / "instructions" / "claim-preserving-writing.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("retired\n", encoding="utf-8")
+            action = {
+                "kind": "managed-file-remove",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "path": str(path),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "installed_signature": artifact_signature(path),
+                "operation": "remove-obsolete",
+                "retired_artifact": True,
+            }
+            record = {
+                "key": artifact_key(action),
+                "artifact": str(path),
+                "artifact_type": "instruction-doc",
+                "managed": True,
+                "agent": "codex",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+            }
+            _, marker = prepare_pending_retired_removal(
+                root,
+                "pending-recovery-test",
+                action,
+                {"artifacts": [record]},
+                record,
+            )
+            path.unlink()
+            recover_pending_retired_removals(root, {"artifacts": [record], "uninstall_records": []})
+            self.assertEqual(path.read_text(encoding="utf-8"), "retired\n")
+            self.assertFalse(marker.exists())
+
+    def test_pending_retired_writing_removal_does_not_restore_a_committed_delete(self) -> None:
+        from installer.ai_agents_skills.apply import (
+            prepare_pending_retired_removal,
+            recover_pending_retired_removals,
+        )
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            path = root / ".codex" / "instructions" / "claim-preserving-writing.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("retired\n", encoding="utf-8")
+            action = {
+                "kind": "managed-file-remove",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "path": str(path),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "installed_signature": artifact_signature(path),
+                "operation": "remove-obsolete",
+                "retired_artifact": True,
+            }
+            _, marker = prepare_pending_retired_removal(
+                root,
+                "pending-commit-test",
+                action,
+                {
+                    "artifacts": [
+                        {
+                            "key": artifact_key(action),
+                            "agent": "codex",
+                            "artifact_id": "instruction-doc:claim-preserving-writing",
+                        }
+                    ]
+                },
+                {
+                    "key": artifact_key(action),
+                    "agent": "codex",
+                    "artifact_id": "instruction-doc:claim-preserving-writing",
+                },
+            )
+            path.unlink()
+            write_run_record(
+                root,
+                "pending-commit-test",
+                [
+                    {
+                        "key": artifact_key(action),
+                        "artifact_id": "instruction-doc:claim-preserving-writing",
+                        "state_operation": "remove",
+                    }
+                ],
+            )
+            recover_pending_retired_removals(
+                root,
+                {
+                    "artifacts": [],
+                    "uninstall_records": [],
+                    "runs": [{"run_id": "pending-commit-test"}],
+                },
+            )
+            self.assertFalse(path.exists())
+            self.assertFalse(marker.exists())
+
+    def test_pending_retired_removal_restores_when_state_saved_but_run_record_missing(self) -> None:
+        from installer.ai_agents_skills.apply import (
+            prepare_pending_retired_removal,
+            recover_pending_retired_removals,
+        )
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            path = root / ".codex" / "instructions" / "claim-preserving-writing.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("retired\n", encoding="utf-8")
+            action = {
+                "kind": "managed-file-remove",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "path": str(path),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "artifact_name": "claim-preserving-writing",
+                "installed_signature": artifact_signature(path),
+                "operation": "remove-obsolete",
+                "retired_artifact": True,
+            }
+            record = {
+                "key": artifact_key(action),
+                "agent": "codex",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+            }
+            _, marker = prepare_pending_retired_removal(
+                root,
+                "missing-run-record-test",
+                action,
+                {"artifacts": [record]},
+                record,
+            )
+            path.unlink()
+            recover_pending_retired_removals(
+                root,
+                {
+                    "artifacts": [],
+                    "uninstall_records": [],
+                    "runs": [{"run_id": "missing-run-record-test"}],
+                },
+            )
+            self.assertEqual(path.read_text(encoding="utf-8"), "retired\n")
+            self.assertFalse(marker.exists())
+
+    def test_empty_apply_recovers_pending_retired_writing_removal(self) -> None:
+        from installer.ai_agents_skills.apply import prepare_pending_retired_removal
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            path = root / ".codex" / "instructions" / "claim-preserving-writing.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("retired\n", encoding="utf-8")
+            action = {
+                "kind": "managed-file-remove",
+                "agent": "codex",
+                "skill": "writing-instructions",
+                "path": str(path),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "artifact_name": "claim-preserving-writing",
+                "installed_signature": artifact_signature(path),
+                "operation": "remove-obsolete",
+                "retired_artifact": True,
+            }
+            record = {
+                "key": artifact_key(action),
+                "agent": "codex",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+            }
+            state = {
+                "schema_version": 2,
+                "artifacts": [record],
+                "runs": [],
+                "uninstall_records": [],
+            }
+            save_state(root, state)
+            _, marker = prepare_pending_retired_removal(
+                root,
+                "empty-apply-recovery-test",
+                action,
+                state,
+                record,
+            )
+            path.unlink()
+            with patch(
+                "installer.ai_agents_skills.windows_security.host_is_native_windows",
+                return_value=False,
+            ):
+                apply_plan(root, {"actions": []}, dry_run=False)
+            self.assertEqual(path.read_text(encoding="utf-8"), "retired\n")
+            self.assertFalse(marker.exists())
+
+    def test_writing_upgrade_apply_and_exact_run_rollback_restore_retired_state(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            retired = target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            retired.write_text("retired before upgrade\n", encoding="utf-8")
+            old_record = {
+                "key": f"codex:instruction-doc:claim-preserving-writing:{retired}",
+                "agent": "codex",
+                "skill": "draft-writing",
+                "artifact": str(retired),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "artifact_name": "claim-preserving-writing",
+                "managed": True,
+                "installed_signature": artifact_signature(retired),
+                "uninstall": {"action": "delete-created"},
+            }
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [old_record],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            with patch(
+                "installer.ai_agents_skills.windows_security.host_is_native_windows",
+                return_value=False,
+            ):
+                applied = apply_plan(root, plan, dry_run=False)
+                self.assertFalse(retired.exists())
+                self.assertIn(
+                    "instruction-block:writing-instructions",
+                    {item.get("artifact_id") for item in load_state(root)["artifacts"]},
+                )
+                rollback(root, run_id=applied["run_id"], dry_run=False)
+            self.assertEqual(retired.read_text(encoding="utf-8"), "retired before upgrade\n")
+            state = load_state(root)
+            self.assertEqual(
+                [item for item in state["artifacts"] if item.get("artifact_id") == "instruction-doc:claim-preserving-writing"],
+                [old_record],
+            )
+
+    def test_antigravity_retired_migration_admits_only_historical_managed_duplicate(self) -> None:
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            (root / ".gemini" / "config").mkdir(parents=True, exist_ok=True)
+            (root / ".gemini" / "config" / ".migrated").write_text("migrated\n", encoding="utf-8")
+            legacy = (
+                root
+                / ".gemini"
+                / "antigravity-cli"
+                / "plugins"
+                / "ai-agents-skills"
+                / "rules"
+                / "claim-preserving-writing.md"
+            )
+            current = (
+                root
+                / ".gemini"
+                / "config"
+                / "plugins"
+                / "ai-agents-skills"
+                / "rules"
+                / "claim-preserving-writing.md"
+            )
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            current.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: antigravity. -->\nlegacy-v2\n",
+                encoding="utf-8",
+            )
+            current.write_text(
+                "<!-- Managed by ai-agents-skills. Generated target: antigravity. -->\nlegacy-v1\n",
+                encoding="utf-8",
+            )
+            old_record = {
+                "key": f"antigravity:instruction-doc:claim-preserving-writing:{legacy}",
+                "agent": "antigravity",
+                "skill": "draft-writing",
+                "artifact": str(legacy),
+                "artifact_type": "instruction-doc",
+                "artifact_id": "instruction-doc:claim-preserving-writing",
+                "artifact_name": "claim-preserving-writing",
+                "managed": True,
+                "installed_signature": artifact_signature(legacy),
+                "previous_state_artifact": {"installed_signature": artifact_signature(current)},
+                "uninstall": {"action": "delete-created"},
+            }
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [old_record],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["antigravity"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            removals = {
+                Path(action["path"]): action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            }
+            self.assertEqual(set(removals), {legacy, current})
+            self.assertTrue(all(action["operation"] == "remove-obsolete" for action in removals.values()))
+
+            current.write_text("user-modified copy\n", encoding="utf-8")
+            changed_plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["antigravity"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            changed_removals = {
+                Path(action["path"])
+                for action in changed_plan["actions"]
+                if action.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            }
+            self.assertEqual(changed_removals, {legacy})
+            self.assertEqual(current.read_text(encoding="utf-8"), "user-modified copy\n")
+
+    def test_codex_native_writing_smoke_checks_prompt_transport_without_exposing_prompt(self) -> None:
+        from installer.ai_agents_skills.codex import run_codex_native_smoke
+
+        manifests = load_manifests()
+        writing_docs = [
+            ("instruction-doc", name)
+            for name in (
+                "writing-style-settings",
+                "math-manuscript-style",
+                "graph-combinatorics-style",
+                "mathscinet-zbmath-review-style",
+            )
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["codex"]),
+                artifacts=writing_docs,
+                runtime_profile="none",
+            )
+            router_action = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            )
+            router_path = Path(router_action["path"])
+            router_path.parent.mkdir(parents=True, exist_ok=True)
+            router_path.write_text(router_action["content"] + "\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": artifact_key(router_action),
+                            "agent": "codex",
+                            "skill": "writing-instructions",
+                            "artifact": str(router_path),
+                            "artifact_type": "instruction-block",
+                            "artifact_id": "instruction-block:writing-instructions",
+                            "managed": True,
+                            "installed_signature": artifact_signature(router_path),
+                            "managed_block": router_action["content"],
+                            "uninstall": {"action": "delete-created"},
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+
+            fake_impl = root / "codex_fake.py"
+            fake_impl.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import json, os, sys",
+                        "from pathlib import Path",
+                        "args = sys.argv[1:]",
+                        "if '--version' in args or '-V' in args:",
+                        "    print('codex-cli 0.154.0')",
+                        "elif args[:2] == ['debug', 'prompt-input']:",
+                        "    home = Path(os.environ['CODEX_HOME'])",
+                        "    text = (home / 'AGENTS.md').read_text(encoding='utf-8')",
+                        "    print(json.dumps([{'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': text}]}]))",
+                        "else:",
+                        "    sys.exit(2)",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            if sys.platform.startswith("win"):
+                fake_cli = root / "codex.cmd"
+                fake_cli.write_text(
+                    f'@echo off\r\n"{sys.executable}" "%~dp0codex_fake.py" %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                fake_cli = root / "codex"
+                fake_cli.write_text(
+                    f"#!/bin/sh\nexec {sys.executable!r} {str(fake_impl)!r} \"$@\"\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+            with patch.dict(
+                os.environ,
+                {
+                    "AAS_CODEX": str(fake_cli),
+                    "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+            ):
+                result = run_codex_native_smoke(
+                    root,
+                    agents={"codex"},
+                    platform=current_platform(),
+                )
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["cli_version"], "0.154.0")
+            self.assertNotIn("stdout", json.dumps(result))
+            self.assertTrue(all(check["ok"] for check in result["checks"]))
+            with patch("installer.ai_agents_skills.codex.MAX_PROMPT_INPUT_BYTES", 1):
+                oversized = run_codex_native_smoke(
+                    root,
+                    agents={"codex"},
+                    platform=current_platform(),
+                )
+            self.assertEqual(oversized["status"], "degraded")
+            self.assertIn("exceeded", oversized["reason"])
+
+    def test_codex_native_writing_smoke_reports_agents_override_shadowing(self) -> None:
+        from installer.ai_agents_skills.codex import run_codex_native_smoke
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = target_for(root, "codex")
+            target.instructions_file.write_text("managed router\n", encoding="utf-8")
+            (target.home / "AGENTS.override.md").write_text("override\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 2,
+                    "artifacts": [
+                        {
+                            "key": "codex-router",
+                            "agent": "codex",
+                            "artifact": str(target.instructions_file),
+                            "artifact_type": "instruction-block",
+                            "artifact_id": "instruction-block:writing-instructions",
+                            "managed": True,
+                            "managed_block": "managed router",
+                        }
+                    ],
+                    "runs": [],
+                    "uninstall_records": [],
+                },
+            )
+            result = run_codex_native_smoke(root, agents={"codex"})
+            self.assertEqual(result["status"], "degraded")
+            self.assertIn("shadows", result["reason"])
+            checks = {check["name"]: check for check in result["checks"]}
+            self.assertFalse(checks["codex-agents-override-absent"]["ok"])
+
     def test_state_and_run_records_use_valid_compact_json(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -2091,6 +3562,181 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "real-system OpenClaw"):
                     apply_plan(root, {"actions": [action], "skipped_agents": [], "root": str(root)}, dry_run=True)
             self.assertFalse((root / ".openclaw" / "skills" / "source-research" / "SKILL.md").exists())
+
+    def test_chatgpt_local_coder_detects_runtime_config_before_installer_home(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            if os.name == "nt":
+                config = root / "AppData" / "Roaming" / "chatgpt-local-coder"
+            elif sys.platform == "darwin":
+                config = root / "Library" / "Application Support" / "chatgpt-local-coder"
+            else:
+                config = root / ".config" / "chatgpt-local-coder"
+            config.mkdir(parents=True)
+
+            from installer.ai_agents_skills.agents import (
+                agent_home_status,
+                detect_agents,
+                target_for,
+            )
+
+            target = target_for(root, "chatgpt-local-coder")
+            self.assertFalse(target.home.exists())
+            status = agent_home_status(root, target)
+            self.assertTrue(status["eligible"])
+            self.assertEqual(status["detection_evidence"]["kind"], "config-directory")
+            self.assertEqual(Path(status["detection_evidence"]["path"]), config)
+
+            artifacts = [
+                ("instruction-doc", slug)
+                for slug in (
+                    "writing-style-settings",
+                    "math-manuscript-style",
+                    "graph-combinatorics-style",
+                    "mathscinet-zbmath-review-style",
+                )
+            ]
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["chatgpt-local-coder"]),
+                artifacts=artifacts,
+                runtime_profile="none",
+            )
+            actions = [
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "instruction-doc"
+            ]
+            self.assertEqual(len(actions), 4)
+            self.assertTrue(all(action["operation"] == "create" for action in actions))
+            self.assertTrue(
+                all(
+                    Path(action["path"]).parent
+                    == root / ".chatgpt-local-coder" / "instructions"
+                    for action in actions
+                )
+            )
+            router = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            )
+            self.assertEqual(router["path"], str(root / ".chatgpt-local-coder" / "AGENTS.md"))
+            self.assertEqual(router["operation"], "upsert")
+            self.assertIn("mathscinet-zbmath-review-style.md", router["content"])
+            self.assertIn("do not apply them as code-writing rules", router["content"])
+
+            from installer.ai_agents_skills.planner import (
+                writing_router_actions,
+            )
+
+            for conflict_kind in ("file", "symlink", "other"):
+                with self.subTest(conflict_kind=conflict_kind):
+                    synthetic = [
+                        {
+                            "agent": "chatgpt-local-coder",
+                            "artifact_type": "instruction-doc",
+                            "artifact_name": slug,
+                            "operation": "skip" if index == 0 else "create",
+                            "current_signature": {"exists": True, "kind": conflict_kind},
+                        }
+                        for index, slug in enumerate(
+                            (
+                                "writing-style-settings",
+                                "math-manuscript-style",
+                                "graph-combinatorics-style",
+                                "mathscinet-zbmath-review-style",
+                            )
+                        )
+                    ]
+                    disabled = writing_router_actions(
+                        root,
+                        manifests,
+                        [target],
+                        synthetic,
+                        {"artifacts": []},
+                    )
+                    self.assertEqual(disabled, [])
+
+            from installer.ai_agents_skills.lifecycle import filter_artifacts
+
+            records = [
+                {
+                    "key": "doc-key",
+                    "agent": "chatgpt-local-coder",
+                    "artifact_id": "instruction-doc:writing-style-settings",
+                },
+                {
+                    "key": "router-key",
+                    "agent": "chatgpt-local-coder",
+                    "artifact_id": "instruction-block:writing-instructions",
+                },
+            ]
+            selected_for_uninstall = filter_artifacts(
+                records,
+                None,
+                None,
+                {"instruction-doc:writing-style-settings"},
+                lifecycle_scope=records,
+            )
+            self.assertEqual(
+                {item["artifact_id"] for item in selected_for_uninstall},
+                {
+                    "instruction-doc:writing-style-settings",
+                    "instruction-block:writing-instructions",
+                },
+            )
+
+    def test_chatgpt_local_coder_cli_detection_is_real_root_only(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            from installer.ai_agents_skills.agents import agent_home_status, target_for
+
+            target = target_for(root, "chatgpt-local-coder")
+            with patch("installer.ai_agents_skills.agents.shutil.which", return_value="clc") as which:
+                self.assertFalse(agent_home_status(root, target)["eligible"])
+                which.assert_not_called()
+                with patch(
+                    "installer.ai_agents_skills.agents.looks_like_real_system_root",
+                    return_value=True,
+                ):
+                    status = agent_home_status(root, target)
+            self.assertTrue(status["eligible"])
+            self.assertEqual(status["detection_evidence"], {"kind": "cli", "path": "clc"})
+
+            target.home.mkdir()
+            with (
+                patch(
+                    "installer.ai_agents_skills.agents.looks_like_real_system_root",
+                    return_value=True,
+                ),
+                patch("installer.ai_agents_skills.agents.shutil.which", return_value=None),
+            ):
+                self.assertFalse(agent_home_status(root, target)["eligible"])
+
+    def test_chatgpt_local_coder_rejects_external_config_before_probing_it(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            from installer.ai_agents_skills.agents import agent_home_status, target_for
+
+            probed: list[Path] = []
+            original_is_dir = Path.is_dir
+
+            def track_is_dir(path: Path) -> bool:
+                probed.append(path)
+                return original_is_dir(path)
+
+            with (
+                patch.dict(os.environ, {"CLC_CONFIG_DIR": str(outside)}),
+                patch.object(Path, "is_dir", track_is_dir),
+            ):
+                status = agent_home_status(root, target_for(root, "chatgpt-local-coder"))
+            self.assertFalse(status["eligible"])
+            self.assertNotIn(outside, probed)
 
     def test_all_default_agent_fake_root_detects_available_homes(self) -> None:
         manifests = load_manifests()
@@ -3504,17 +5150,27 @@ class PlanInstallVerifyTests(unittest.TestCase):
             args.artifact_profile = "writing-workflow"
             selected = resolve_skills(args, manifests)
             artifacts = resolve_artifacts(args, manifests)
+            selected = sorted(
+                set(selected) | artifact_dependency_skills(artifacts, manifests)
+            )
             plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=artifacts)
             apply_plan(root, plan, dry_run=False)
 
             self.assertTrue((root / ".codex" / "skills" / "draft-writing" / "SKILL.md").exists())
             self.assertTrue((root / ".codex" / "templates" / "draft-claim-ledger.md").exists())
+            self.assertTrue((root / ".codex" / "templates" / "writing-review.md").exists())
             self.assertTrue((root / ".claude" / "templates" / "draft-revision-map.md").exists())
             self.assertTrue((root / ".codex" / "instructions" / "writing-style-settings.md").exists())
             self.assertTrue((root / ".claude" / "instructions" / "math-manuscript-style.md").exists())
+            self.assertTrue((root / ".claude" / "instructions" / "mathscinet-zbmath-review-style.md").exists())
             self.assertTrue((root / ".deepseek" / "instructions" / "writing-style-settings.md").exists())
-            self.assertTrue((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
-            self.assertEqual(verify(root)["status"], "ok")
+            self.assertTrue((root / ".deepseek" / "instructions" / "graph-combinatorics-style.md").exists())
+            self.assertFalse((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
+            self.assertFalse((root / ".deepseek" / "instructions" / "language-style-rules.md").exists())
+            self.assertEqual(
+                verify(root, agent_filter={"codex", "claude"})["status"],
+                "ok",
+            )
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_entrypoint_alias_requires_backing_skill(self) -> None:
@@ -3857,6 +5513,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("release-check: docs-check static-check sanitize-check test runtime-smoke", text)
         self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
 
+    @unittest.skipIf(os.name == "nt", "bootstrap.sh execution is covered on POSIX hosts")
     def test_bootstrap_run_python_does_not_leave_bytecode_beside_sources(self) -> None:
         """``--run-python`` executes canonical scripts in-process during tests.
 
@@ -3910,6 +5567,48 @@ class DocsAndLauncherTests(unittest.TestCase):
         text = (REPO_ROOT / "installer" / "bootstrap_windows.ps1").read_text(encoding="utf-8")
         branch = text.split('$args[0] -eq "--run-python"', 1)[1]
         self.assertIn('$env:PYTHONDONTWRITEBYTECODE = "1"', branch)
+
+    @unittest.skipUnless(os.name == "nt", "native PowerShell bootstrap execution")
+    def test_windows_bootstrap_run_python_does_not_leave_bytecode_beside_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            module = work / "leaky_probe.py"
+            module.write_text("VALUE = 1\n", encoding="utf-8")
+            driver = work / "driver.py"
+            driver.write_text(
+                "import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('leaky_probe', sys.argv[1])\n"
+                "module = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(module)\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ)
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
+            completed = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(REPO_ROOT / "installer" / "bootstrap_windows.ps1"),
+                    "--run-python",
+                    str(driver),
+                    str(module),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+                timeout=120,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual([str(path.relative_to(work)) for path in work.rglob("__pycache__")], [])
 
     def test_python_compat_workflow_installs_tomli_before_tests(self) -> None:
         text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
@@ -6193,6 +7892,72 @@ class AntigravityTargetTests(unittest.TestCase):
 
 
 class GrokTargetTests(unittest.TestCase):
+    def test_grok_writing_rule_listing_requires_current_set_and_retired_absence(self) -> None:
+        from installer.ai_agents_skills.grok import (
+            GROK_WRITING_RULES,
+            validate_grok_writing_rule_listing,
+        )
+
+        payload = {
+            "projectInstructions": [
+                {"path": f"/home/user/.grok/rules/{name}", "fileType": "rules"}
+                for name in sorted(GROK_WRITING_RULES | {"claim-preserving-writing.md"})
+            ]
+        }
+        expected = {
+            os.path.normcase(os.path.abspath(f"/home/user/.grok/rules/{name}"))
+            for name in GROK_WRITING_RULES
+        }
+        checks = validate_grok_writing_rule_listing(
+            {"ok": True, "stdout": json.dumps(payload)},
+            expected,
+        )
+        by_name = {check["name"]: check for check in checks}
+        self.assertTrue(by_name["grok-writing-rules-visible"]["ok"])
+        self.assertFalse(by_name["grok-retired-writing-rule-absent"]["ok"])
+
+        clean_payload = {
+            "projectInstructions": [
+                {"path": f"/home/user/.grok/rules/{name}", "fileType": "rules"}
+                for name in sorted(GROK_WRITING_RULES)
+            ]
+        }
+        clean = validate_grok_writing_rule_listing(
+            {"ok": True, "stdout": json.dumps(clean_payload)},
+            expected,
+        )
+        self.assertTrue(all(check["ok"] for check in clean))
+
+        missing_payload = dict(clean_payload)
+        missing_payload["projectInstructions"] = missing_payload["projectInstructions"][:-1]
+        missing = validate_grok_writing_rule_listing(
+            {"ok": True, "stdout": json.dumps(missing_payload)},
+            expected,
+        )
+        self.assertFalse({check["name"]: check for check in missing}["grok-writing-rules-visible"]["ok"])
+        malformed = validate_grok_writing_rule_listing(
+            {"ok": True, "stdout": "not-json"},
+            expected,
+        )
+        self.assertFalse(malformed[0]["ok"])
+        for structurally_invalid in ("null", "[]", '{"projectInstructions": null}'):
+            invalid = validate_grok_writing_rule_listing(
+                {"ok": True, "stdout": structurally_invalid},
+                expected,
+            )
+            self.assertFalse(invalid[0]["ok"])
+        wrong_root_payload = {
+            "projectInstructions": [
+                {"path": f"/project/.grok/rules/{name}", "fileType": "rules"}
+                for name in sorted(GROK_WRITING_RULES)
+            ]
+        }
+        wrong_root = validate_grok_writing_rule_listing(
+            {"ok": True, "stdout": json.dumps(wrong_root_payload)},
+            expected,
+        )
+        self.assertFalse(wrong_root[0]["ok"])
+
     def test_grok_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
 

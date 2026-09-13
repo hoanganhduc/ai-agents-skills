@@ -21,6 +21,14 @@ uses graph-theoretic vocabulary. Record it in `active_overlays` as
 `graph-combinatorics-style`. Do not apply it to analysis, algebra, or geometry
 prose that merely happens to mention a graph.
 
+Before omitting a basic definition on the ground that it is standard, check a
+verified standard source for the field and confirm that the intended meaning and
+notation match. Diestel and West are useful candidate sources for graph theory,
+but no author, edition, concept, or locator is canonical until it has been
+checked for the current use. This is the only exception supplied here to the
+math overlay's define-before-use rule; when conventions vary or the manuscript
+uses a narrower meaning, give the definition explicitly.
+
 ## Extremal Words
 
 Use `maximal` and `minimal` for comparisons under containment, and `maximum`

@@ -2948,13 +2948,14 @@ class HetznerDriverTests(unittest.TestCase):
         real_root.mkdir(parents=True)
         linked_root = self.tmp / "denied"
         linked_root.symlink_to(real_root, target_is_directory=True)
+        lease_path = linked_root / "reaper-lease.json"
         with mock.patch.object(rc_config, "LEASE_DENIED_ROOTS", (str(linked_root),)):
             with self.assertRaises(ValueError) as raised:
                 _config_text(
                     self.tmp / "refused-symlinked-root",
                     CONFIG_TOML.replace(
                         "[hetzner]",
-                        f'[hetzner]\nreaper_lease_file = "{linked_root}/reaper-lease.json"',
+                        f"[hetzner]\nreaper_lease_file = {json.dumps(str(lease_path))}",
                     ),
                 )
         self.assertIn("owner-controlled", str(raised.exception))

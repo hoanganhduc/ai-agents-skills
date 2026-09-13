@@ -26,6 +26,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills import manifest as runtime_manifest
 from installer.ai_agents_skills.manifest import (
@@ -167,6 +168,23 @@ class RuntimePythonBlockValidationTests(unittest.TestCase):
             "skills/../../outside.txt",
             str(outside),
             "/skills/example/requirements.txt",
+            r"C:\outside.txt",
+            "C:/outside.txt",
+            r"C:outside.txt",
+            r"\outside.txt",
+            r"\\server\share\requirements.txt",
+            r"\\?\C:\outside.txt",
+            r"skills\example/requirements.txt",
+            "skills/example/requirements.txt::$DATA",
+            "skills/example/requirements.txt.",
+            "skills/example/requirements.txt ",
+            "skills/example/CON",
+            "skills/example/CONIN$",
+            "skills/example/CONOUT$",
+            "skills/example/COM¹",
+            "skills/example/LPT²",
+            "skills/example/NUL.txt",
+            "skills/example/REQUIREMENTS.TXT",
             "skills//example/requirements.txt",
             "skills/example/requirements.txt/",
         ):
@@ -185,6 +203,13 @@ class RuntimePythonBlockValidationTests(unittest.TestCase):
             self._block(requirements=["skills/example/linked.txt"]),
             "runtime skill example python requirements must stay under canonical/runtime",
         )
+
+    def test_requirements_path_spelling_check_fails_closed_when_listing_is_denied(self) -> None:
+        with mock.patch.object(Path, "iterdir", side_effect=PermissionError("denied")):
+            self._refuses(
+                self._block(requirements=["skills/example/REQUIREMENTS.TXT"]),
+                "runtime skill example python requirements path spelling could not be verified",
+            )
 
     def test_empty_requirements_are_refused(self) -> None:
         self._refuses(self._block(requirements=[]), "runtime skill example python requirements must be a non-empty list")

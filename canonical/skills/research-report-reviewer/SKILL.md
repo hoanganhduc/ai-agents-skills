@@ -9,6 +9,21 @@ metadata:
 
 Use this after a draft exists and before presenting research as final.
 
+## Restricted Review Provenance Gate
+
+If the draft or requested review names Mathematical Reviews/MathSciNet or
+zbMATH, a bibliographic review assigned by either service, or a copy supplied
+by either service, load
+`mathscinet-zbmath-review-style.md` and complete its provenance gate before
+opening the draft, resolving evidence refs, or handing content to another tool.
+Unknown or mixed provenance stops the workflow before content access. In the
+`mr-grammar-only` state, inspect only the isolated reviewer-authored review body
+and limit recommendations to spelling, grammar, syntax, and surface LaTeX.
+
+If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
+stop before content access, ref resolution, tool invocation, prompt assembly,
+artifact persistence, or delegation. Do not reconstruct its rules from memory.
+
 ## What to inspect
 
 - the stated scope, question, exclusions, and any requested output format
@@ -44,6 +59,11 @@ Then give:
 - `Style` — missing or inconsistent `style_profile_ref`, `policy_hash`,
   `active_overlays`, `active_requirement_ids`, or `style_applied` records when
   relevant
+
+When a repair proposes literal replacement prose, follow the Writing
+Recommendation Contract in `writing-review.md`. Bind the recommendation to the
+affected frozen claim IDs, evidence refs, and active requirement IDs; flag any
+claim, caveat, citation, or support change. Review remains advisory.
 
 If there are no issues, say so explicitly and keep the pass short.
 

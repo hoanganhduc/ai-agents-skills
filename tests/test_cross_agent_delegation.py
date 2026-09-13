@@ -497,6 +497,142 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
         bad_disposition["evidence"][0]["evidence_disposition"] = "parent_accepted"
         self.assertIn("EVIDENCE_DISPOSITION_INVALID", validate_result(bad_disposition))
 
+    def test_writing_review_composes_with_existing_v1_packets(self) -> None:
+        task = deepcopy(
+            next(
+                fixture["packet"]
+                for fixture in parse_fixtures()
+                if fixture["id"] == "valid-inert-task"
+            )
+        )
+        task["intent"] = "Review a draft without applying edits."
+        task["requested_actions"] = ["review"]
+        task["input_refs"] = [
+            {
+                "ref_id": "draft-v1",
+                "kind": "draft",
+                "source": "artifact:draft-v1",
+                "sensitivity": "restricted",
+                "access_note": "Parent resolves the minimized draft out of band.",
+            }
+        ]
+        task["artifact_refs"] = [
+            {
+                "ref_id": "claim-ledger-v1",
+                "kind": "claim_ledger",
+                "source": "artifact:claim-ledger-v1",
+                "sensitivity": "restricted",
+                "access_note": "Frozen claim IDs only.",
+            },
+            {
+                "ref_id": "style-record-v1",
+                "kind": "style_record",
+                "source": "artifact:style-record-v1",
+                "sensitivity": "restricted",
+                "access_note": "Parent-owned style record.",
+            },
+            {
+                "ref_id": "revision-map-v1",
+                "kind": "revision_map",
+                "source": "artifact:revision-map-v1",
+                "sensitivity": "restricted",
+                "access_note": "Parent-owned revision map.",
+            },
+            {
+                "ref_id": "citation-evidence-v1",
+                "kind": "citation_evidence",
+                "source": "artifact:citation-evidence-v1",
+                "sensitivity": "restricted",
+                "access_note": "Verified citation evidence only.",
+            },
+        ]
+        self.assertEqual(validate_task(task), [])
+
+        result = deepcopy(
+            next(
+                fixture["packet"]
+                for fixture in parse_fixtures()
+                if fixture["id"] == "valid-partial-result"
+            )
+        )
+        result["status"] = "completed"
+        result["task_packet_id"] = task["packet_id"]
+        result["intended_recipient"] = task["intended_recipient"]
+        result["adapter_spec_id"] = task["adapter_spec_id"]
+        result["recipient_profile"] = deepcopy(task["recipient_profile"])
+        result["provenance"] = deepcopy(task["artifact_refs"][:2])
+        result["coverage_scope"] = "Only parent-resolved draft and policy refs were inspected."
+        result["findings"] = [
+            {
+                "finding_id": "WR1",
+                "severity": "major",
+                "claim_or_object_ref": "C1",
+                "evidence_refs": ["claim-ledger-v1", "style-record-v1"],
+                "confidence": "high",
+                "validation_status": "checked",
+                "rationale": "The proposed wording strengthens frozen claim C1.",
+                "recommended_parent_action": "rewrite_instruction: retain the original qualifier.",
+            }
+        ]
+        result["evidence"] = [
+            {
+                "evidence_id": "WE1",
+                "ref_id": "claim-ledger-v1",
+                "kind": "claim_ledger_ref",
+                "quote_or_summary": "C1 includes the qualifier under discussion.",
+                "status": "checked",
+                "evidence_disposition": "supports_finding",
+                "disposition_rationale": "The frozen claim controls the recommendation.",
+            },
+            {
+                "evidence_id": "WE2",
+                "ref_id": "style-record-v1",
+                "kind": "style_record_ref",
+                "quote_or_summary": "The parent-owned style record identifies active requirements.",
+                "status": "checked",
+                "evidence_disposition": "context_only",
+                "disposition_rationale": "The parent must independently validate the record.",
+            },
+        ]
+        result["artifacts"] = [
+            {
+                "artifact_id": "WA1",
+                "kind": "writing_recommendation",
+                "ref_id": "artifact:writing-recommendation-1",
+                "description": "Advisory replacement text; parent decides outside the packet.",
+            }
+        ]
+        result["limitations"] = []
+        self.assertEqual(validate_result(result), [])
+
+        authorized_refs = {
+            ref["ref_id"] for ref in task["input_refs"] + task["artifact_refs"]
+        }
+        result_refs = {ref["ref_id"] for ref in result["provenance"]}
+        result_refs.update(evidence["ref_id"] for evidence in result["evidence"])
+        self.assertTrue(result_refs <= authorized_refs)
+        self.assertEqual(result["task_packet_id"], task["packet_id"])
+        self.assertEqual(result["intended_recipient"], task["intended_recipient"])
+        self.assertEqual(result["recipient_profile"], task["recipient_profile"])
+        self.assertTrue(all(value is False for value in task["side_effects"].values()))
+        self.assertIsNone(result["parent_action_request"])
+
+        out_of_scope = deepcopy(result)
+        out_of_scope["evidence"][0]["ref_id"] = "unapproved-draft-ref"
+        out_of_scope_refs = {ref["ref_id"] for ref in out_of_scope["provenance"]}
+        out_of_scope_refs.update(evidence["ref_id"] for evidence in out_of_scope["evidence"])
+        self.assertFalse(out_of_scope_refs <= authorized_refs)
+
+        invalid = deepcopy(result)
+        invalid["findings"][0]["style_profile_ref"] = "untrusted-packet-value"
+        self.assertIn("UNKNOWN_FIELD", validate_result(invalid))
+
+        template = (REPO_ROOT / "canonical" / "templates" / "writing-review.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("does not establish that a `source` value is an inert", template)
+        self.assertIn("The parent must reject a ref", template)
+
     def test_contract_rejects_nested_runtime_authority_fields(self) -> None:
         task_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-inert-task"))
         result_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-partial-result"))
