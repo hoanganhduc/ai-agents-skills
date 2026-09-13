@@ -192,20 +192,33 @@ def local_cache_status() -> dict[str, Any]:
     return status
 
 
+def _runtime_command_targets(platform_name: str | None = None) -> tuple[str, str]:
+    if (platform_name or os.name) == "nt":
+        return (
+            "run_skill.ps1",
+            "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+        )
+    return (
+        "run_skill.sh",
+        "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+    )
+
+
 def local_stdio_command(backend: str) -> dict[str, Any]:
     wrapper = Path(_LEANEXPLORE_WRAPPER_PATH or Path(__file__).with_name("run_lean_explore_mcp.sh"))
     if not wrapper.is_absolute():
         wrapper = wrapper.resolve()
+    launcher_name, script_name = _runtime_command_targets()
     runtime_root = os.environ.get("AAS_RUNTIME_ROOT")
     if runtime_root:
-        launcher = Path(runtime_root) / "run_skill.sh"
+        launcher = Path(runtime_root) / launcher_name
     elif wrapper.parents[2].name == "workspace":
-        launcher = wrapper.parents[3] / "run_skill.sh"
+        launcher = wrapper.parents[3] / launcher_name
     else:
-        launcher = wrapper.parents[2] / "runners" / "run_skill.sh"
+        launcher = wrapper.parents[2] / "runners" / launcher_name
     command: dict[str, Any] = {
         "command": str(launcher),
-        "args": ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", backend],
+        "args": [script_name, "serve", "--backend", backend],
         "env": {},
     }
     if backend == "api":
