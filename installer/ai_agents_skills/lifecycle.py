@@ -97,7 +97,7 @@ def rollback(
         actions = load_run_actions(root, state, run_id)
     else:
         actions = lifecycle_scope
-    filter_scope = actions if run_id else lifecycle_scope
+    filter_scope = lifecycle_scope
     targets = [
         item for item in filter_artifacts(actions, skills, agents, artifacts, lifecycle_scope=filter_scope)
         if rollback_target_item(item)

@@ -151,12 +151,51 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue(graph_runtime.is_file())
             self.assertTrue(formal_runtime.is_file())
 
+            preview = rollback(root, run_id=graph_result["run_id"], dry_run=True)
+            self.assertFalse(
+                any(item.get("skill") == "runtime-runner" for item in preview["actions"])
+            )
+            self.assertTrue(
+                any(item.get("skill") == "graph-verifier" for item in preview["actions"])
+            )
+
             rollback(root, run_id=graph_result["run_id"], dry_run=False)
 
             self.assertTrue(runner.is_file())
             self.assertFalse(graph_runtime.exists())
             self.assertTrue(formal_runtime.is_file())
             self.assertEqual(verify(root)["status"], "ok")
+
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
+    def test_rollback_removes_runtime_runner_with_last_runtime_skill(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            result = apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    agents,
+                    platform="linux",
+                ),
+                dry_run=False,
+            )
+
+            runner = root / ".codex" / "runtime" / "run_skill.sh"
+            self.assertTrue(runner.is_file())
+            preview = rollback(root, run_id=result["run_id"], dry_run=True)
+            self.assertTrue(
+                any(item.get("skill") == "runtime-runner" for item in preview["actions"])
+            )
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+
+            self.assertFalse(runner.exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
     def test_windows_runtime_plan_filters_posix_runtime_files(self) -> None:
         manifests = load_manifests()
