@@ -10,6 +10,7 @@ source of truth for the draft.
 | Draft or section |  |
 | Audience |  |
 | Purpose |  |
+| Primary claim / contribution |  |
 | Source material |  |
 | Date |  |
 
@@ -42,6 +43,15 @@ Support types: `source`, `experiment`, `theorem`, `data`, `author-note`,
 Support status values: `supported`, `partial`, `unsupported`, `contradicted`,
 `unchecked`.
 
+## Draft Component Alignment
+
+| Section / figure / table | Claim IDs supported | Evidence status | Action |
+|---|---|---|---|
+|  |  |  |  |
+
+Every substantive component should support the primary claim or an identified
+secondary claim. Remove, relocate, or justify a component with no declared role.
+
 ## Drafting Instructions
 
 | Instruction ID | Applies to claims | Instruction |
@@ -61,3 +71,7 @@ Claims frozen for rewrite:
 Claims allowed to change:
 
 Claims requiring user confirmation:
+
+For exploratory drafting, list every claim that may evolve under `Claims
+allowed to change`. Unlisted claims remain frozen, and evidence, attribution,
+caveat, and support-status requirements remain active in either mode.

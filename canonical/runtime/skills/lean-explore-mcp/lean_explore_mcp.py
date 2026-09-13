@@ -14,6 +14,7 @@ _LEANEXPLORE_WRAPPER_PATH = os.environ.pop("AAS_LEANEXPLORE_WRAPPER_PATH", "")
 _LEANEXPLORE_CAPTURE_ERROR = ""
 
 import argparse
+import ctypes
 import importlib.metadata
 import importlib.util
 import json
@@ -96,6 +97,15 @@ def doctor_payload() -> dict[str, Any]:
 def config_snippet_payload(backend: str) -> dict[str, Any]:
     payload = base_payload()
     local_command = local_stdio_command(backend)
+    warnings = [
+        "copy snippets manually into an MCP client config only after reviewing the target client",
+        "set AAS_SKILL_SECRETS_FILE only in an operator-owned client config to an absolute, owner-controlled, non-symlink 0600 env file containing LEANEXPLORE_API_KEY; never fill placeholders in this repo or generated artifacts",
+        "local backend requires user-managed LeanExplore data prepared outside this repo",
+    ]
+    if os.name == "nt":
+        warnings.append(
+            "native Windows serve is intentionally unavailable and exits 78 until private credential transport is implemented"
+        )
     payload.update({
         "redaction_status": "placeholder-only",
         "backend": backend,
@@ -105,11 +115,7 @@ def config_snippet_payload(backend: str) -> dict[str, Any]:
             },
         },
         "manual_live_use": manual_live_use(),
-        "warnings": [
-            "copy snippets manually into an MCP client config only after reviewing the target client",
-            "set AAS_SKILL_SECRETS_FILE only in an operator-owned client config to an absolute, owner-controlled, non-symlink 0600 env file containing LEANEXPLORE_API_KEY; never fill placeholders in this repo or generated artifacts",
-            "local backend requires user-managed LeanExplore data prepared outside this repo",
-        ],
+        "warnings": warnings,
     })
     return payload
 
@@ -192,33 +198,53 @@ def local_cache_status() -> dict[str, Any]:
     return status
 
 
-def _runtime_command_targets(platform_name: str | None = None) -> tuple[str, str]:
-    if (platform_name or os.name) == "nt":
-        return (
-            "run_skill.ps1",
-            "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
-        )
-    return (
-        "run_skill.sh",
-        "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
-    )
+def _windows_system_directory() -> Path:
+    buffer = ctypes.create_unicode_buffer(32768)
+    get_directory = ctypes.WinDLL("kernel32", use_last_error=True).GetSystemDirectoryW
+    get_directory.argtypes = [ctypes.c_wchar_p, ctypes.c_uint]
+    get_directory.restype = ctypes.c_uint
+    length = int(get_directory(buffer, len(buffer)))
+    if length == 0:
+        raise OSError(ctypes.get_last_error(), "GetSystemDirectoryW failed")
+    if length >= len(buffer):
+        raise OSError("GetSystemDirectoryW returned an oversized path")
+    directory = Path(buffer.value)
+    if not directory.is_absolute():
+        raise OSError("GetSystemDirectoryW returned an invalid path")
+    return directory
 
 
 def local_stdio_command(backend: str) -> dict[str, Any]:
-    wrapper = Path(_LEANEXPLORE_WRAPPER_PATH or Path(__file__).with_name("run_lean_explore_mcp.sh"))
+    windows = os.name == "nt"
+    target_name = "run_lean_explore_mcp.ps1" if windows else "run_lean_explore_mcp.sh"
+    launcher_name = "run_skill.ps1" if windows else "run_skill.sh"
+    wrapper_hint = "" if windows else _LEANEXPLORE_WRAPPER_PATH
+    wrapper = Path(wrapper_hint or Path(__file__).with_name(target_name))
     if not wrapper.is_absolute():
         wrapper = wrapper.resolve()
-    launcher_name, script_name = _runtime_command_targets()
-    runtime_root = os.environ.get("AAS_RUNTIME_ROOT")
-    if runtime_root:
-        launcher = Path(runtime_root) / launcher_name
-    elif wrapper.parents[2].name == "workspace":
+    installed_layout = wrapper.parents[2].name == "workspace"
+    if installed_layout:
         launcher = wrapper.parents[3] / launcher_name
     else:
         launcher = wrapper.parents[2] / "runners" / launcher_name
+    target = f"skills/lean-explore-mcp/{target_name}"
+    if windows:
+        powershell = _windows_system_directory() / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        command_name = str(powershell)
+        windows_entrypoint = launcher if installed_layout else wrapper
+        args = [
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            "-File", str(windows_entrypoint),
+        ]
+        if installed_layout:
+            args.append(target)
+        args.extend(["serve", "--backend", backend])
+    else:
+        command_name = str(launcher)
+        args = [target, "serve", "--backend", backend]
     command: dict[str, Any] = {
-        "command": str(launcher),
-        "args": [script_name, "serve", "--backend", backend],
+        "command": command_name,
+        "args": args,
         "env": {},
     }
     if backend == "api":

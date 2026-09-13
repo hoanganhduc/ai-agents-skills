@@ -53,6 +53,20 @@ Delta types: `unchanged`, `added`, `removed`, `strengthened`, `weakened`,
 |---|---|---|---|
 | U1 |  |  |  |
 
+## Reviewer Comment Disposition
+
+This table is internal and redacted by default. Use comment IDs and minimized
+paraphrases; do not copy reviewer identities, private correspondence, portal
+metadata, or confidential text into a public artifact.
+
+| Comment ID | Paraphrased request | Decision | Claim IDs | Draft location | Response / evidence / rationale | Status |
+|---|---|---|---|---|---|---|
+| R1 |  | `accept` / `modify` / `decline` |  |  |  | `open` |
+
+Close every comment. Acceptance is not required, but a partial adoption or
+decline must state its reason and any effect on claims, evidence, caveats, or
+support mappings.
+
 ## Decision
 
 Status: `ready` | `ready-with-caveats` | `not-ready`

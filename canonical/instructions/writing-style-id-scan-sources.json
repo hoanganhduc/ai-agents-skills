@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.id-scan-sources.v1",
-  "generated_for_release": "2026-06-20",
+  "generated_for_release": "2026-09-13",
   "sources": [
     {
       "artifact_class": "policy-index",
@@ -10,6 +10,16 @@
     {
       "artifact_class": "overlay-index",
       "path": "canonical/instructions/math-manuscript-style.index.json",
+      "id_fields": ["requirements[].id", "requirements[].source_ledger_ids[]", "requirements[].test_ids[]"]
+    },
+    {
+      "artifact_class": "overlay-index",
+      "path": "canonical/instructions/graph-combinatorics-style.index.json",
+      "id_fields": ["requirements[].id", "requirements[].source_ledger_ids[]", "requirements[].test_ids[]"]
+    },
+    {
+      "artifact_class": "overlay-index",
+      "path": "canonical/instructions/mathscinet-zbmath-review-style.index.json",
       "id_fields": ["requirements[].id", "requirements[].source_ledger_ids[]", "requirements[].test_ids[]"]
     },
     {

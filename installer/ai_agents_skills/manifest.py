@@ -5,7 +5,7 @@ import math
 import os
 import re
 from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .target_surfaces import validate_target_surfaces
@@ -771,7 +771,40 @@ def validate_runtime_python_block(skill: str, block: Any, runtime_source_root: P
         if not isinstance(requirement, str) or not requirement:
             raise ManifestError(f"runtime skill {skill} python requirements entries must be non-empty strings")
         path = PurePosixPath(requirement)
-        if path.is_absolute() or ".." in path.parts or "" in requirement.split("/"):
+        windows_path = PureWindowsPath(requirement)
+        components = requirement.split("/")
+        has_windows_alias = any(
+            ":" in component
+            or component.endswith((".", " "))
+            or PureWindowsPath(component).is_reserved()
+            for component in components
+        )
+        current = root
+        has_case_alias = False
+        for component in path.parts:
+            try:
+                names = [entry.name for entry in current.iterdir()]
+            except OSError as exc:
+                raise ManifestError(
+                    f"runtime skill {skill} python requirements path spelling could not be verified "
+                    f"under canonical/runtime: {requirement}"
+                ) from exc
+            if component in names:
+                current /= component
+                continue
+            if any(name.casefold() == component.casefold() for name in names):
+                has_case_alias = True
+            break
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "" in components
+            or "\\" in requirement
+            or bool(windows_path.drive)
+            or bool(windows_path.root)
+            or has_windows_alias
+            or has_case_alias
+        ):
             raise ManifestError(
                 f"runtime skill {skill} python requirements must be relative paths under canonical/runtime: {requirement}"
             )

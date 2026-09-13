@@ -32,7 +32,50 @@ from .render import (
     render_support_file,
 )
 from .runtime import build_runtime_actions
-from .state import artifact_signature, load_state, sha256_file, sha256_text
+from .state import artifact_signature, load_state, sha256_file, sha256_text, signatures_match
+
+
+WRITING_DOCS = (
+    "writing-style-settings",
+    "math-manuscript-style",
+    "graph-combinatorics-style",
+    "mathscinet-zbmath-review-style",
+)
+
+WRITING_ROUTER_TARGETS = frozenset(
+    {
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity",
+        "kimi",
+        "chatgpt-local-coder",
+    }
+)
+
+# Keep this inventory explicit and test it against canonical consumers.  A
+# writing-document-only upgrade may refresh an already managed consumer, but it
+# must never install a consumer that was not already present.
+WRITING_CONSUMER_SKILLS = (
+    "agent-group-discuss",
+    "annotated-review",
+    "autonomous-research-loop",
+    "deep-research-workflow",
+    "draft-writing",
+    "paper-review",
+    "prose",
+    "research-briefing",
+    "research-digest-wrapper",
+    "research-report-reviewer",
+    "research-verification-gate",
+    "rss-news-digest",
+    "source-grounded-decisions",
+    "source-research",
+    "submission-venue-selector",
+)
+
+RETIRED_WRITING_DOC = "claim-preserving-writing"
 
 
 def build_plan(
@@ -54,6 +97,11 @@ def build_plan(
     skipped_agents = []
     skill_specs = manifests["skills"]["skills"]
     state = load_state(root)
+    requested_skills = list(skills)
+    requested_skill_set = set(requested_skills)
+    writing_bundle_selected = writing_document_ids().issubset(set(artifacts or []))
+    auto_refresh_skills = set(WRITING_CONSUMER_SKILLS) if writing_bundle_selected else set()
+    skills = list(dict.fromkeys([*requested_skills, *sorted(auto_refresh_skills)]))
     agents, blocked_agents = plannable_agents(root, agents)
     skipped_agents.extend(blocked_agents)
     detected_agent_names = {agent.name for agent in agents}
@@ -71,6 +119,18 @@ def build_plan(
             if not skill_supported_by_agent(spec, agent):
                 continue
             skill_file = agent.skill_file_for(skill)
+            previous_skill_state = managed_state_artifact_for(
+                state,
+                agent=agent.name,
+                path=skill_file,
+                artifact_type="skill-file",
+            )
+            if (
+                skill in auto_refresh_skills
+                and skill not in requested_skill_set
+                and previous_skill_state is None
+            ):
+                continue
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
             block_reason = target_skill_block_reason(root, agent, skill, manifests, install_mode)
@@ -102,6 +162,7 @@ def build_plan(
                 if action_install_mode == "symlink" and source_path.exists()
                 else None
             )
+            skill_backup_replace = backup_replace if skill in requested_skill_set else False
             file_action = classify_file_action(
                 agent=agent.name,
                 skill=skill,
@@ -109,7 +170,7 @@ def build_plan(
                 content=content,
                 artifact_type="skill-file",
                 adopt=adopt,
-                backup_replace=backup_replace,
+                backup_replace=skill_backup_replace,
                 legacy_path=find_legacy_skill(
                     agent, skill, manifests, artifact_paths.get(agent.name, frozenset())
                 ),
@@ -119,6 +180,10 @@ def build_plan(
                 capability_evidence=capability_evidence,
                 source_path=source,
                 fallback_content=fallback_content,
+                previous_state_artifact=previous_skill_state,
+                preserve_managed_drift=(
+                    skill in auto_refresh_skills and skill not in requested_skill_set
+                ),
             )
             block_openclaw_conflict_mode(root, agent.name, file_action)
             actions.append(file_action)
@@ -131,15 +196,35 @@ def build_plan(
                         agent=agent,
                         skill=skill,
                         adopt=adopt,
-                        backup_replace=backup_replace,
+                        backup_replace=skill_backup_replace,
                         install_mode=file_action["install_mode"],
                         manifests=manifests,
                         platform=platform,
+                        state=state,
+                        preserve_managed_drift=(
+                            skill in auto_refresh_skills and skill not in requested_skill_set
+                        ),
                     )
                 )
             if agent.instruction_blocks_enabled:
                 block = render_instruction_block(skill, spec)
-                actions.append(classify_instruction_block(agent, skill, block, file_action))
+                actions.append(
+                    classify_instruction_block(
+                        agent,
+                        skill,
+                        block,
+                        file_action,
+                        previous_state_artifact=managed_state_skill_block_for(
+                            state,
+                            agent=agent.name,
+                            path=agent.instructions_file,
+                            skill=skill,
+                        ),
+                        preserve_managed_drift=(
+                            skill in auto_refresh_skills and skill not in requested_skill_set
+                        ),
+                    )
+                )
             if migrate and skill_action_is_active(file_action) and file_action.get("legacy_path"):
                 actions.append(
                     legacy_removal_action(
@@ -168,7 +253,17 @@ def build_plan(
                     state=state,
                 )
             )
-    actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
+    router_actions = writing_router_actions(root, manifests, agents, actions, state)
+    actions = [
+        *[action for action in router_actions if action.get("router_phase") == "pre"],
+        *actions,
+        *[action for action in router_actions if action.get("router_phase") != "pre"],
+    ]
+    writing_only_upgrade = bool(artifacts) and not requested_skills and set(artifacts or []).issubset(
+        writing_document_ids()
+    )
+    if not writing_only_upgrade:
+        actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
     actions.extend(antigravity_legacy_plugin_actions(root, agents, actions, state))
     actions.extend(
         # The same skill list the runtime install is planned from: the hook's only
@@ -178,7 +273,7 @@ def build_plan(
         autoloop_stop_hook_actions(
             root,
             manifests,
-            runtime_enabled_skills(skills, skill_actions),
+            runtime_enabled_skills(requested_skills, skill_actions),
             agents,
             runtime_profile,
             runtime_root,
@@ -187,12 +282,13 @@ def build_plan(
             backup_replace,
         )
     )
-    actions.extend(grok_native_config_actions(agents, actions))
+    if not writing_only_upgrade:
+        actions.extend(grok_native_config_actions(agents, actions))
     actions.extend(
         build_runtime_actions(
             root=root,
             manifests=manifests,
-            selected_skills=runtime_enabled_skills(skills, skill_actions),
+            selected_skills=runtime_enabled_skills(requested_skills, skill_actions),
             agents=agents,
             runtime_profile=runtime_profile,
             runtime_root=runtime_root,
@@ -201,6 +297,7 @@ def build_plan(
             state=state,
         )
     )
+    actions.extend(retired_writing_document_actions(root, manifests, agents, actions, state))
     for action in actions:
         planned_modes = plan_managed_parent_chain(root, action)
         if planned_modes:
@@ -874,6 +971,9 @@ def artifact_action(
             artifact_type=artifact_type,
             artifact_id=artifact_id,
         ),
+        preserve_managed_drift=(
+            artifact_type == "instruction-doc" and name in WRITING_DOCS
+        ),
     )
     action["artifact_id"] = artifact_id
     action["artifact_name"] = name
@@ -883,6 +983,402 @@ def artifact_action(
         action["classification"] = "blocked"
         action["reason"] = "missing managed backing skill: " + ", ".join(missing)
     return action
+
+
+def writing_document_ids() -> set[tuple[str, str]]:
+    return {("instruction-doc", name) for name in WRITING_DOCS}
+
+
+def writing_doc_expected(
+    manifests: dict[str, Any],
+    target: AgentTarget,
+    name: str,
+) -> tuple[Path, str, str]:
+    spec = manifests["artifacts"]["artifacts"]["instruction-doc"][name]
+    path = artifact_target_path(target, "instruction-doc", name, spec)
+    content = render_artifact_content("instruction-doc", name, spec, target.name)
+    return path, content, sha256_text(content)
+
+
+def projected_writing_docs_are_exact(
+    manifests: dict[str, Any],
+    target: AgentTarget,
+    actions: list[dict[str, Any]],
+) -> bool:
+    active_operations = {"create", "update", "noop", "backup-replace", "migrate-install"}
+    for name in WRITING_DOCS:
+        path, _, expected_hash = writing_doc_expected(manifests, target, name)
+        expected_path = os.path.normcase(os.path.abspath(path))
+        action = next(
+            (
+                candidate
+                for candidate in actions
+                if candidate.get("agent") == target.name
+                and candidate.get("artifact_type") == "instruction-doc"
+                and candidate.get("artifact_name") == name
+                and os.path.normcase(os.path.abspath(str(candidate.get("path", ""))))
+                == expected_path
+            ),
+            None,
+        )
+        if action is None:
+            if not path.is_file() or path.is_symlink():
+                return False
+            try:
+                current_hash = sha256_text(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                return False
+            if current_hash != expected_hash:
+                return False
+            continue
+        operation = action.get("operation")
+        if operation == "adopt":
+            if action.get("current_hash") != expected_hash:
+                return False
+            continue
+        if operation not in active_operations or action.get("expected_hash") != expected_hash:
+            return False
+    return True
+
+
+def prompt_path(root: Path, path: Path) -> str:
+    try:
+        return "~/" + path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def writing_router_block(root: Path, manifests: dict[str, Any], target: AgentTarget) -> str:
+    paths = {
+        name: prompt_path(root, writing_doc_expected(manifests, target, name)[0])
+        for name in WRITING_DOCS
+    }
+    bid = block_id("writing-instructions")
+    body = [
+        f"- Before drafting, rewriting, polishing, or reviewing prose, read `{paths['writing-style-settings']}`.",
+        f"- For mathematical manuscripts or LaTeX paper prose, also read `{paths['math-manuscript-style']}`.",
+        f"- For graph theory or combinatorics prose, also read `{paths['graph-combinatorics-style']}`.",
+        f"- For MathSciNet or zbMATH reviews, also read `{paths['mathscinet-zbmath-review-style']}` before accessing the reviewed document.",
+        "- These are scientific-prose rules; do not apply them as code-writing rules.",
+    ]
+    return "\n".join(
+        [f"<!-- {bid}:start -->", "# Writing Instructions", "", *body, f"<!-- {bid}:end -->"]
+    )
+
+
+def writing_router_actions(
+    root: Path,
+    manifests: dict[str, Any],
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    planned: list[dict[str, Any]] = []
+    for target in agents:
+        if target.name not in WRITING_ROUTER_TARGETS:
+            continue
+        touched = any(
+            action.get("agent") == target.name
+            and action.get("artifact_type") == "instruction-doc"
+            and action.get("artifact_name") in WRITING_DOCS
+            for action in actions
+        )
+        if not touched:
+            continue
+        block = writing_router_block(root, manifests, target)
+        classification = classify_block(target.instructions_file, "writing-instructions")
+        current = current_block(target.instructions_file, "writing-instructions")
+        router_state = managed_state_artifact_for(
+            state,
+            agent=target.name,
+            path=target.instructions_file,
+            artifact_type="instruction-block",
+            artifact_id="instruction-block:writing-instructions",
+        )
+        expected_block = router_state.get("managed_block") if router_state else None
+        unchanged_managed_router = (
+            router_state is not None
+            and classification == "managed"
+            and expected_block is not None
+            and current is not None
+            and current.strip() == str(expected_block).strip()
+        )
+        operation = "upsert"
+        reason = None
+        if projected_writing_docs_are_exact(manifests, target, actions):
+            if classification == "conflict":
+                operation = "skip"
+                reason = "managed writing-instructions block is malformed or duplicated"
+            elif unchanged_managed_router and writing_document_mutation_planned(
+                manifests, target, actions
+            ):
+                pre_action = writing_router_action(
+                    target,
+                    str(expected_block),
+                    classification,
+                    "remove-managed-block",
+                    router_state,
+                    phase="pre",
+                )
+                planned.append(pre_action)
+                planned.append(
+                    writing_router_action(
+                        target,
+                        block,
+                        "missing",
+                        "upsert",
+                        None,
+                        phase="post",
+                    )
+                )
+                continue
+            elif classification == "managed" and current == block:
+                operation = "noop"
+        else:
+            if classification == "missing" and router_state is None:
+                continue
+            if not unchanged_managed_router:
+                operation = "skip"
+                reason = "existing writing-instructions block is not an unchanged managed block"
+            else:
+                operation = "remove-managed-block"
+                block = str(expected_block)
+        action = writing_router_action(
+            target,
+            block,
+            classification,
+            operation,
+            router_state,
+            phase="pre" if operation == "remove-managed-block" else "post",
+        )
+        if reason is not None:
+            action["reason"] = reason
+        planned.append(action)
+    return planned
+
+
+def writing_document_mutation_planned(
+    manifests: dict[str, Any],
+    target: AgentTarget,
+    actions: list[dict[str, Any]],
+) -> bool:
+    mutating = {"create", "update", "backup-replace", "migrate-install"}
+    expected_paths = {
+        os.path.normcase(os.path.abspath(writing_doc_expected(manifests, target, name)[0]))
+        for name in WRITING_DOCS
+    }
+    return any(
+        action.get("agent") == target.name
+        and action.get("artifact_type") == "instruction-doc"
+        and os.path.normcase(os.path.abspath(str(action.get("path", "")))) in expected_paths
+        and action.get("operation") in mutating
+        for action in actions
+    )
+
+
+def writing_router_action(
+    target: AgentTarget,
+    content: str,
+    classification: str,
+    operation: str,
+    router_state: dict[str, Any] | None,
+    *,
+    phase: str,
+) -> dict[str, Any]:
+    action = {
+        "kind": "managed-block",
+        "agent": target.name,
+        "skill": "writing-instructions",
+        "path": str(target.instructions_file),
+        "block_id": block_id("writing-instructions"),
+        "content": content,
+        "classification": classification,
+        "operation": operation,
+        "artifact_type": "instruction-block",
+        "artifact_id": "instruction-block:writing-instructions",
+        "artifact_name": "writing-instructions",
+        "current_signature": artifact_signature(target.instructions_file),
+        "router_phase": phase,
+    }
+    if operation == "remove-managed-block" and router_state is not None:
+        action["delete_instruction_file_if_empty"] = bool(router_state.get("created_file"))
+    return action
+
+
+def visible_skill_paths(target: AgentTarget) -> set[Path]:
+    paths: set[Path] = set()
+    for directory in (target.skills_dir, *target.legacy_skills_dirs, *target.optional_skills_dirs):
+        if not directory.exists() or not directory.is_dir():
+            continue
+        paths.update(path for path in directory.rglob("SKILL.md") if path.is_file())
+        paths.update(path for path in directory.glob("*.md") if path.is_file())
+    return paths
+
+
+def projected_retired_writing_consumers(
+    target: AgentTarget,
+    actions: list[dict[str, Any]],
+) -> list[str]:
+    projected = {
+        os.path.normcase(os.path.abspath(action["path"])): str(action.get("content", ""))
+        for action in actions
+        if action.get("agent") == target.name
+        and action.get("artifact_type") == "skill-file"
+        and action.get("operation") in {"create", "update", "backup-replace", "migrate-install"}
+    }
+    consumers: list[str] = []
+    for path in visible_skill_paths(target):
+        key = os.path.normcase(os.path.abspath(path))
+        try:
+            text = projected[key] if key in projected else path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            consumers.append(str(path))
+            continue
+        if f"{RETIRED_WRITING_DOC}.md" in text:
+            consumers.append(str(path))
+    return sorted(set(consumers))
+
+
+def retired_writing_document_actions(
+    root: Path,
+    manifests: dict[str, Any],
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    planned: list[dict[str, Any]] = []
+    for target in agents:
+        touched = any(
+            action.get("agent") == target.name
+            and action.get("artifact_type") == "instruction-doc"
+            and action.get("artifact_name") in WRITING_DOCS
+            for action in actions
+        )
+        if not touched or not projected_writing_docs_are_exact(manifests, target, actions):
+            continue
+        consumers = projected_retired_writing_consumers(target, actions)
+        records = [
+            item
+            for item in state.get("artifacts", [])
+            if isinstance(item, dict)
+            and item.get("agent") == target.name
+            and item.get("artifact_type") == "instruction-doc"
+            and item.get("artifact_id") == f"instruction-doc:{RETIRED_WRITING_DOC}"
+            and item.get("artifact_name") == RETIRED_WRITING_DOC
+            and item.get("managed") is True
+        ]
+        allowed_paths = retired_writing_allowed_paths(root, target)
+        recorded_paths: set[Path] = set()
+        historical_signatures: list[dict[str, Any]] = []
+        for record in records:
+            path = Path(str(record.get("artifact", "")))
+            recorded_paths.add(path)
+            historical_signatures.extend(recorded_file_signatures(record))
+            planned.append(
+                retired_writing_removal_action(
+                    target,
+                    path,
+                    record.get("installed_signature"),
+                    consumers,
+                    path in allowed_paths,
+                    "managed",
+                )
+            )
+
+        # Antigravity's vendor migration copied the old plugin tree before the
+        # retired artifact disappeared from the manifest.  The copied file has
+        # no current-path state record, so admit it only when its fixed target
+        # path and bytes match a historical signature recorded for this exact
+        # retired artifact.
+        for path in sorted(allowed_paths - recorded_paths):
+            current = artifact_signature(path)
+            if current.get("kind") != "file":
+                continue
+            if not any(signatures_match(current, signature) for signature in historical_signatures):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if MANAGED_MARKER not in text:
+                continue
+            planned.append(
+                retired_writing_removal_action(
+                    target,
+                    path,
+                    current,
+                    consumers,
+                    True,
+                    "managed-migration",
+                )
+            )
+    return planned
+
+
+def retired_writing_allowed_paths(root: Path, target: AgentTarget) -> set[Path]:
+    paths = {target.target_dir_for("instruction-doc") / f"{RETIRED_WRITING_DOC}.md"}
+    if target.name == "antigravity":
+        legacy_plugin = antigravity_legacy_plugin_dir(root)
+        if legacy_plugin is not None:
+            paths.add(legacy_plugin / "rules" / f"{RETIRED_WRITING_DOC}.md")
+    return paths
+
+
+def recorded_file_signatures(record: dict[str, Any]) -> list[dict[str, Any]]:
+    signatures: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = record
+    while isinstance(current, dict):
+        signature = current.get("installed_signature")
+        if isinstance(signature, dict) and signature.get("kind") == "file":
+            signatures.append(signature)
+        previous = current.get("previous_state_artifact")
+        current = previous if isinstance(previous, dict) else None
+    return signatures
+
+
+def retired_writing_removal_action(
+    target: AgentTarget,
+    path: Path,
+    installed_signature: dict[str, Any] | None,
+    consumers: list[str],
+    allowed_path: bool,
+    classification: str,
+) -> dict[str, Any]:
+    current_signature = artifact_signature(path)
+    operation = "remove-obsolete"
+    reason = "retired writing document superseded by the canonical four-document set"
+    if not allowed_path:
+        operation = "skip"
+        classification = "conflict"
+        reason = "retired writing document path is outside the target's fixed writing directories"
+    elif current_signature.get("kind") != "file":
+        operation = "skip"
+        classification = "conflict"
+        reason = "retired writing document is not a regular file"
+    elif not signatures_match(current_signature, installed_signature):
+        operation = "skip"
+        classification = "conflict"
+        reason = "retired writing document changed since install"
+    elif consumers:
+        operation = "skip"
+        classification = "conflict"
+        reason = "retired writing document still has live skill consumers"
+    return {
+        "kind": "managed-file-remove",
+        "agent": target.name,
+        "skill": "writing-instructions",
+        "path": str(path),
+        "classification": classification,
+        "operation": operation,
+        "artifact_type": "instruction-doc",
+        "artifact_id": f"instruction-doc:{RETIRED_WRITING_DOC}",
+        "artifact_name": RETIRED_WRITING_DOC,
+        "installed_signature": installed_signature,
+        "current_signature": current_signature,
+        "retired_artifact": True,
+        "reason": reason,
+        "blocked_consumers": consumers,
+    }
 
 
 def artifact_target_path(
@@ -933,6 +1429,8 @@ def support_file_actions(
     install_mode: str,
     manifests: dict[str, Any],
     platform: str | None = None,
+    state: dict[str, Any] | None = None,
+    preserve_managed_drift: bool = False,
 ) -> list[dict[str, Any]]:
     if install_mode == "reference":
         return []
@@ -989,6 +1487,13 @@ def support_file_actions(
                 backup_replace=backup_replace,
                 install_mode=install_mode,
                 source_path=source,
+                previous_state_artifact=managed_state_artifact_for(
+                    state or {},
+                    agent=agent.name,
+                    path=path,
+                    artifact_type="skill-support-file",
+                ),
+                preserve_managed_drift=preserve_managed_drift,
             )
         )
     return actions
@@ -1129,6 +1634,7 @@ def classify_file_action(
     mode_reason: str | None = None,
     capability_evidence: dict[str, Any] | None = None,
     previous_state_artifact: dict[str, Any] | None = None,
+    preserve_managed_drift: bool = False,
 ) -> dict[str, Any]:
     can_symlink = install_mode == "symlink" and source_path is not None
     expected_hash = sha256_file(source_path) if can_symlink else sha256_text(content)
@@ -1169,9 +1675,25 @@ def classify_file_action(
             current_hash = sha256_file(path)
             current = path.read_text(encoding="utf-8", errors="replace")
             current_hash = sha256_text(current)
+            current_signature = artifact_signature(path)
             if install_mode != "symlink" and current_hash == expected_hash:
                 classification = "managed"
                 operation = "noop"
+            elif previous_state_artifact is not None and preserve_managed_drift:
+                if signatures_match(
+                    current_signature,
+                    previous_state_artifact.get("installed_signature"),
+                ):
+                    classification = "managed"
+                    operation = "update"
+                elif backup_replace:
+                    classification = "conflict"
+                    operation = "backup-replace"
+                    reason = "managed target changed since install"
+                else:
+                    classification = "conflict"
+                    operation = "skip"
+                    reason = "managed target changed since install"
             elif MANAGED_MARKER in current:
                 classification = "managed"
                 operation = "update"
@@ -1241,6 +1763,27 @@ def managed_state_artifact_for(
         if artifact_id is not None and item.get("artifact_id") != artifact_id:
             continue
         return item
+    return None
+
+
+def managed_state_skill_block_for(
+    state: dict[str, Any],
+    *,
+    agent: str,
+    path: Path,
+    skill: str,
+) -> dict[str, Any] | None:
+    target_key = os.path.normcase(os.path.abspath(path))
+    for item in state.get("artifacts", []):
+        if not isinstance(item, dict) or item.get("managed") is not True:
+            continue
+        if item.get("agent") != agent or item.get("skill") != skill:
+            continue
+        if item.get("artifact_type") != "instruction-block":
+            continue
+        artifact = item.get("artifact")
+        if isinstance(artifact, str) and os.path.normcase(os.path.abspath(artifact)) == target_key:
+            return item
     return None
 
 
@@ -1367,6 +1910,8 @@ def classify_instruction_block(
     skill: str,
     block: str,
     file_action: dict[str, Any],
+    previous_state_artifact: dict[str, Any] | None = None,
+    preserve_managed_drift: bool = False,
 ) -> dict[str, Any]:
     operation = "upsert" if skill_action_is_active(file_action) else "skip"
     reason = None if operation == "upsert" else "skill artifact is not installed or adopted"
@@ -1392,6 +1937,16 @@ def classify_instruction_block(
         and existing_block.strip() == block.strip()
     ):
         operation = "noop"
+    elif operation == "upsert" and classification == "managed" and preserve_managed_drift:
+        previous_block = (
+            previous_state_artifact.get("managed_block")
+            if previous_state_artifact is not None
+            else None
+        )
+        if previous_block is None or existing_block is None or existing_block.strip() != str(previous_block).strip():
+            operation = "skip"
+            classification = "conflict"
+            reason = "managed instruction block changed since install"
 
     action = {
         "kind": "managed-block",

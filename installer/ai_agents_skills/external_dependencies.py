@@ -13,6 +13,7 @@ import base64
 import binascii
 import copy
 from contextlib import contextmanager
+import ctypes
 import csv
 import hashlib
 import io
@@ -816,6 +817,26 @@ def _recover_external_transaction(root: Path, platform: str, manifests: dict[str
     return True
 
 
+def _trusted_system_windows_directory() -> str:
+    """Return the shared Windows directory without trusting ambient variables."""
+
+    if os.name != "nt":
+        raise OSError("the system Windows directory is only available on Windows")
+    buffer = ctypes.create_unicode_buffer(32768)
+    get_directory = ctypes.WinDLL("kernel32", use_last_error=True).GetSystemWindowsDirectoryW
+    get_directory.argtypes = [ctypes.c_wchar_p, ctypes.c_uint]
+    get_directory.restype = ctypes.c_uint
+    length = int(get_directory(buffer, len(buffer)))
+    if length == 0:
+        raise OSError(ctypes.get_last_error(), "GetSystemWindowsDirectoryW failed")
+    if length >= len(buffer):
+        raise OSError("GetSystemWindowsDirectoryW returned an oversized path")
+    directory = buffer.value
+    if not directory or not Path(directory).is_absolute():
+        raise OSError("GetSystemWindowsDirectoryW returned an invalid path")
+    return directory
+
+
 def _child_environment(home: Path) -> dict[str, str]:
     home.mkdir(mode=0o700, parents=True, exist_ok=False)
     empty_hooks = home / "git-hooks"
@@ -850,6 +871,11 @@ def _child_environment(home: Path) -> dict[str, str]:
         "GIT_ALLOW_PROTOCOL": "https",
         "GIT_LFS_SKIP_SMUDGE": "1",
     }
+    if os.name == "nt":
+        # Python requires a valid SystemRoot when a complete replacement
+        # environment is supplied to a Windows child process.  Resolve it from
+        # the OS rather than forwarding a caller-controlled environment value.
+        env["SYSTEMROOT"] = _trusted_system_windows_directory()
     env["AAS_EXTERNAL_EMPTY_GIT_HOOKS"] = str(empty_hooks)
     env["AAS_EXTERNAL_CHILD_CWD"] = str(cwd)
     return env

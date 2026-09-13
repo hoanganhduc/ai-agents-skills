@@ -54,7 +54,7 @@ skill's own guidance refines them but does not override them.
 | About to let a non-trivial decision stand (branching, a boundary, an unprovable assertion, high stakes, irreversible, or a research conclusion's load-bearing step) | `decision-doubt-loop` |
 | Before claiming a research deliverable done | `research-verification-gate` |
 | Review a draft for unsupported claims | `research-report-reviewer` |
-| Revise prose without changing its claims | `draft-writing` with `claim-preserving-writing` |
+| Revise prose without changing its claims | `draft-writing` with the claim discipline in `writing-style-settings.md` |
 | Adversarial multi-party verification | `agent-group-discuss` (Builder / Breaker / Referee) |
 | Nontrivial engineering work | `engineering-lifecycle` (Spec → Plan → Tasks → Implement → Verify) |
 | A check or claim just failed | recover deliberately: isolate, hypothesize, apply the minimal fix, re-verify — do not paper over it |

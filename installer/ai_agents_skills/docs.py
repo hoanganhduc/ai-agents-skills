@@ -1059,6 +1059,10 @@ Post-install smoke:
 - `--post-install-smoke verify` runs only installer integrity verification.
 - `--post-install-smoke strict` returns nonzero if any post-install check
   fails, degrades, or is unsupported; the install is still recorded as applied.
+- Strict mode runs a sanitized Codex `debug prompt-input` check when a managed
+  writing router is present. It records only allowlisted booleans, never the
+  model-visible prompt text. Grok native smoke verifies discovery of the four
+  current writing rules and absence of the retired compatibility rule.
 - `--post-install-smoke off` skips these checks.
 
 The post-install runtime layer is offline-only. It uses the installed runtime
@@ -3783,6 +3787,14 @@ Rendered artifact behavior differs by agent:
 | Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Managed block in `~/.kimi-code/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. | Managed block in `~/.chatgpt-local-coder/AGENTS.md`. |
 
 Instruction docs target each agent's `instructions` or rules directory.
+When any member of the four-document writing set is planned, the installer
+evaluates the projected hashes of the complete set. Codex, Claude, DeepSeek,
+OpenCode, Antigravity, Kimi, and chatgpt-local-coder receive one short managed
+router in their global context only while all four target documents are exact.
+Grok uses its native global `rules/` discovery instead of a duplicate router.
+Selecting the complete set also refreshes only already-managed writing-policy
+consumer skills and safely retires an unchanged installer-managed
+`claim-preserving-writing.md`; absent or user-modified consumers are preserved.
 Entrypoint aliases target Claude and OpenCode commands and Antigravity global
 Markdown skill aliases, but Codex and DeepSeek receive reference docs under
 `instructions/entrypoints` because equivalent slash-command loading is not
@@ -3837,9 +3849,15 @@ the drive primary does not nest those panel calls). See
 unsupported; unset that variable before real-system install. See
 `targets/kimi/README.md`.
 
-chatgpt-local-coder is included in default target detection when
-`~/.chatgpt-local-coder` exists. It is the local MCP coding host published as
-the `chatgpt-local-coder` npm package (`clc` for short), and it runs natively on
+chatgpt-local-coder is included in default target detection when its dedicated
+installer home exists in a fake-root fixture, or, on a real-system root, when
+the config directory for the current platform exists (`%APPDATA%` on Windows,
+Application Support on macOS, or XDG config on Linux) or its CLI is available
+on PATH. A real-system artifact home alone is not runtime evidence. Runtime detection is intentionally
+separate from `~/.chatgpt-local-coder`: that directory is the host's declared
+`agentHomeDir` for ai-agents-skills artifacts and may be created by the first
+managed install. It is the local MCP coding host published as the
+`chatgpt-local-coder` npm package (`clc` for short), and it runs natively on
 Windows, Linux, and macOS. The installer copies directory-layout skills under
 `~/.chatgpt-local-coder/skills/`, writes managed instruction blocks into
 `~/.chatgpt-local-coder/AGENTS.md`, and copies personas, templates, instruction
@@ -3851,6 +3869,10 @@ loads `~/.chatgpt-local-coder/AGENTS.md` as its user-level memory file. Its
 credentials live in the host config directory (`~/.config/chatgpt-local-coder`
 by XDG default; `%APPDATA%` on Windows and `Library/Application Support` on
 macOS), not in the agent home, so the installer never touches them.
+The shared writing router includes chatgpt-local-coder's auto-loaded `AGENTS.md`.
+It routes prose tasks to the full documents on demand instead of importing them
+inline, which would exceed the host's default project-memory line limit and
+truncate later overlays.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

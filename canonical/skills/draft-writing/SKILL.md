@@ -26,6 +26,16 @@ claims through drafting and revision.
 For paper/book review requests, use the relevant review workflow unless the
 user is asking to rewrite or prepare draft text.
 
+For a request to write a Mathematical Reviews/MathSciNet or zbMATH
+bibliographic review, load `mathscinet-zbmath-review-style.md` and complete its
+provenance gate before opening, retrieving, parsing, or delegating the assigned
+item from either service. This is a writing route, not the ordinary
+referee-style `paper-review` route.
+
+If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
+stop before content access, ref resolution, tool invocation, prompt assembly,
+artifact persistence, or delegation. Do not reconstruct its rules from memory.
+
 ## Core Workflow
 
 1. Define the writing scope and audience.
@@ -40,6 +50,10 @@ user is asking to rewrite or prepare draft text.
 5. Map each substantive claim to support: source, experiment, theorem, data,
    author note, prior section, or `missing`.
 6. Freeze the intended claim ledger before substantial rewriting.
+   - identify the primary claim or contribution
+   - list any claim IDs explicitly allowed to evolve during exploratory drafting
+   - keep unlisted claims, evidence, attribution, caveats, and support status
+     fixed
 7. Identify the active writing-style settings before rewriting:
    - always load `writing-style-settings.md`
    - load `math-manuscript-style.md` for mathematical, TCS, graph-theoretic,
@@ -61,15 +75,11 @@ Use the installed templates when available:
 
 - `draft-claim-ledger.md` for claim extraction and support mapping
 - `draft-revision-map.md` for before/after revision audits
-
-Use the instruction doc `claim-preserving-writing.md` for detailed guidance
-when the task involves multiple sections, citation-sensitive prose, or repeated
-revision rounds.
+- `writing-review.md` when a separate review phase will recommend revisions
 
 Always apply the installed instruction doc `writing-style-settings.md`. For
-mathematical or LaTeX manuscripts, also apply `math-manuscript-style.md` through
-the compatibility router `language-style-rules.md` if older installed targets
-still refer to it. In particular, check that concepts are defined before use,
+mathematical or LaTeX manuscripts, also apply `math-manuscript-style.md`. In
+particular, check that concepts are defined before use,
 notation is not defined inside statements, unnecessary local terminology is
 removed, result introductions explain each statement's role, and long proofs
 begin with a clear proof idea.
@@ -85,6 +95,12 @@ begin with a clear proof idea.
   repository or workspace has no such artifacts, say that explicitly.
 - When making a rewrite, include a short claim-change note if the change is
   substantive.
+- For review-driven revisions, close every reviewer comment in the disposition
+  table. Acceptance is not required, but every decline or partial adoption needs
+  a reason.
+- Apply only recommendations accepted by the parent or user. Reviewer output is
+  advisory and never edits the draft by itself; use `writing-review.md` for the
+  shared recommendation contract.
 - For finalizable draft work, record a style block or style record with
   `style_profile_ref`, `policy_hash`, `active_overlays`,
   `active_requirement_ids`, and `style_applied: true`. A bare assertion of

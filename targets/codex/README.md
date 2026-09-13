@@ -13,6 +13,11 @@ available. Codex personas are TOML custom-agent files, and entrypoint aliases
 are installed as reference documents under `instructions/entrypoints` rather
 than native slash commands.
 
+When the writing instruction set is selected, the installer keeps one short
+`writing-instructions` block in `~/.codex/AGENTS.md`. The block is active only
+while all four target documents match their canonical hashes. Strict native
+smoke uses `codex debug prompt-input` and never records the prompt text.
+
 Zotero and Calibre integrations must call the shared profile-aware runtime
 commands. Codex target files should not hardcode Zotero or Calibre library
 paths; they should rely on the selected local-library profile manifest and the
