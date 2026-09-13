@@ -1,9 +1,9 @@
 {
   "schema_version": "writing-style.overlay-index.v1",
-  "overlay_version": "2026-09-12",
+  "overlay_version": "2026-09-13",
   "overlay_ref": "canonical/instructions/graph-combinatorics-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "sha256:4c6d8993f0962a2e50006f9ecf8f81f947901c1f533bc820167cda87ad324d44",
+  "content_hash": "sha256:8cb6ce10d625e2c64004b9f736e47e259542d615e90a10b01986f1a1991d2ff8",
   "requirements": [
     {
       "id": "WS-GRAPH-0001",
@@ -444,6 +444,16 @@
       "markdown_anchor": "attribution",
       "source_ledger_ids": ["ML-0087"],
       "test_ids": ["WS-T-0244"]
+    },
+    {
+      "id": "WS-GRAPH-0045",
+      "title": "Verify a standard source before omitting a basic definition",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "activation",
+      "source_ledger_ids": ["ML-0151"],
+      "test_ids": ["WS-T-0245"]
     }
   ]
 }

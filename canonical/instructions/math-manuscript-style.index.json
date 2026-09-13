@@ -1,9 +1,9 @@
 {
   "schema_version": "writing-style.overlay-index.v1",
-  "overlay_version": "2026-09-12",
+  "overlay_version": "2026-09-13",
   "overlay_ref": "canonical/instructions/math-manuscript-style.md",
   "base_policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "sha256:5ac81cb2843c9bc2942404aa6962ddd3beacf109aa650bdfba76564896cf9ab1",
+  "content_hash": "sha256:3eac2f361f9b8ebc38556e228fefcf0b28320d681eace7444026120c348e1578",
   "requirements": [
     {
       "id": "WS-MATH-0001",
@@ -12,7 +12,7 @@
       "severity": "hard",
       "relationship_to_general": "specializes",
       "markdown_anchor": "definitions-and-notation",
-      "source_ledger_ids": ["ML-0008"],
+      "source_ledger_ids": ["ML-0004", "ML-0008", "ML-0151"],
       "test_ids": ["WS-T-0101"]
     },
     {
@@ -82,7 +82,7 @@
       "severity": "soft",
       "relationship_to_general": "specializes",
       "markdown_anchor": "equations-and-numbers",
-      "source_ledger_ids": ["ML-0015"],
+      "source_ledger_ids": ["ML-0005", "ML-0015"],
       "test_ids": ["WS-T-0108"]
     },
     {
@@ -322,7 +322,7 @@
       "severity": "hard",
       "relationship_to_general": "additive",
       "markdown_anchor": "quantifiers",
-      "source_ledger_ids": ["ML-0040"],
+      "source_ledger_ids": ["ML-0040", "ML-0157"],
       "test_ids": ["WS-T-0132"]
     },
     {
@@ -512,7 +512,7 @@
       "severity": "soft",
       "relationship_to_general": "additive",
       "markdown_anchor": "sections-and-preliminaries",
-      "source_ledger_ids": ["ML-0103"],
+      "source_ledger_ids": ["ML-0103", "ML-0150"],
       "test_ids": ["WS-T-0151"]
     },
     {
@@ -772,7 +772,7 @@
       "severity": "hard",
       "relationship_to_general": "additive",
       "markdown_anchor": "voice-and-attribution",
-      "source_ledger_ids": ["ML-0129"],
+      "source_ledger_ids": ["ML-0129", "ML-0154"],
       "test_ids": ["WS-T-0177"]
     },
     {
@@ -802,7 +802,7 @@
       "severity": "hard",
       "relationship_to_general": "additive",
       "markdown_anchor": "voice-and-attribution",
-      "source_ledger_ids": ["ML-0132"],
+      "source_ledger_ids": ["ML-0132", "ML-0155"],
       "test_ids": ["WS-T-0180"]
     },
     {
@@ -822,7 +822,7 @@
       "severity": "hard",
       "relationship_to_general": "additive",
       "markdown_anchor": "before-submitting",
-      "source_ledger_ids": ["ML-0134"],
+      "source_ledger_ids": ["ML-0134", "ML-0156"],
       "test_ids": ["WS-T-0182"]
     },
     {
@@ -842,7 +842,7 @@
       "severity": "soft",
       "relationship_to_general": "additive",
       "markdown_anchor": "before-submitting",
-      "source_ledger_ids": ["ML-0136"],
+      "source_ledger_ids": ["ML-0136", "ML-0156"],
       "test_ids": ["WS-T-0184"]
     },
     {
@@ -914,6 +914,46 @@
       "markdown_anchor": "definitions-and-notation",
       "source_ledger_ids": ["ML-0143"],
       "test_ids": ["WS-T-0191"]
+    },
+    {
+      "id": "WS-MATH-0092",
+      "title": "Use a mathematical statement environment that names its role",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "statements",
+      "source_ledger_ids": ["ML-0147"],
+      "test_ids": ["WS-T-0192"]
+    },
+    {
+      "id": "WS-MATH-0093",
+      "title": "Give a mathematical abstract its essential content",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "abstracts",
+      "source_ledger_ids": ["ML-0148"],
+      "test_ids": ["WS-T-0193"]
+    },
+    {
+      "id": "WS-MATH-0094",
+      "title": "Keep running prose intelligible without headings or citation markers",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "voice-and-sentences",
+      "source_ledger_ids": ["ML-0149"],
+      "test_ids": ["WS-T-0194"]
+    },
+    {
+      "id": "WS-MATH-0095",
+      "title": "Use and place figures when prose leaves structure opaque",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "figures-and-examples",
+      "source_ledger_ids": ["ML-0150"],
+      "test_ids": ["WS-T-0195"]
     }
   ]
 }

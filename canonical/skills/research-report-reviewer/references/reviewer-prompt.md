@@ -10,6 +10,9 @@ Review the draft against this list:
 - Does the draft answer the stated question without wandering?
 - Are key uncertainties or exclusions named?
 - Is any recommendation stronger than the cited evidence allows?
+- If replacement prose is proposed, does it satisfy the Writing Recommendation
+  Contract in `writing-review.md`, identify affected claim/evidence/style refs,
+  and remain advisory?
 - **Undisclosed truncation (BLOCK if load-bearing):** does a claim rest on a
   source that was read only in part — a payload reporting `complete: false`,
   capped tool or subprocess output, a partial retrieval — without the draft

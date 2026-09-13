@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.source-universe.v1",
-  "generated_for_release": "2026-06-20",
+  "generated_for_release": "2026-09-13",
   "roots": [
     "canonical/instructions/",
     "canonical/skills/",
@@ -34,6 +34,11 @@
     "proof",
     "notation",
     "review",
+    "mathscinet",
+    "zbmath",
+    "bibliographic review",
+    "review recommendation",
+    "restrictive clause",
     "report",
     "summary",
     "final"

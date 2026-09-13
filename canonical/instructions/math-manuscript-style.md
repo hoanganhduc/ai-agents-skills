@@ -39,16 +39,23 @@ LaTeX manuscript source. Record it in `active_overlays` as
 When the subject is graphs, digraphs, hypergraphs, designs, posets, matroids or
 other finite combinatorial structures, load `graph-combinatorics-style.md` as
 well and record `graph-combinatorics-style` in `active_overlays` alongside this
-one. A workflow that names this overlay is naming that one too; consumers do not
-list the domain overlays individually, so a new domain overlay is added here and
-nowhere else.
+one. Route conditional overlays here so consumers do not have to list each
+domain overlay individually.
+
+When the requested output is a Mathematical Reviews/MathSciNet or zbMATH
+bibliographic review, load `mathscinet-zbmath-review-style.md` and record
+`mathscinet-zbmath-review-style` in `active_overlays`. Its provenance gate runs
+before any assigned item is opened, retrieved, parsed, quoted, or delegated.
 
 ## Definitions And Notation
 
-Define every concept and notation before first use. Put concepts or notation
-used many times in preliminaries. Define one-use concepts locally just before
-they are needed. Do not define notation inside a theorem, lemma, proposition,
-or corollary statement.
+Define every nonstandard concept and every piece of notation before first use.
+A domain overlay may admit a basic field-standard term without an explicit
+definition only after its standard meaning and notation have been checked; if
+conventions vary or the intended meaning is narrower, define it locally. Put
+concepts or notation used many times in preliminaries. Define one-use concepts
+locally just before they are needed. Do not define notation inside a theorem,
+lemma, proposition, or corollary statement.
 
 Define each variable, at least informally, where it first appears. A reader who
 meets an undefined symbol stops reading and starts searching.
@@ -223,6 +230,10 @@ Keep statements short. Do not define terms, add discussion, or motivate inside
 a theorem or lemma; introduce what is needed before the statement so the
 statement itself can be read as one claim.
 
+Use the environment that names the statement's role: theorem, proposition,
+lemma, or corollary. Do not hide these distinctions behind a generic statement
+environment.
+
 Do not put the role of a result only in a parenthetical theorem title. Add one
 to three short sentences before important statements explaining what the result
 says and why it is needed.
@@ -343,6 +354,10 @@ word "any" reads as "some" in some contexts and "all" in others.
 When an asymptotic bound hides quantifiers, state them. $T = O(n^d)$ means
 there is a constant, and the reader needs to know what it may depend on.
 
+Place `only` and every other scope-bearing modifier immediately next to the
+expression it modifies. A displaced modifier changes which variable, case, or
+claim is being restricted.
+
 ## Equations And Numbers
 
 Prefer inline equations for routine notation. Use display equations only when
@@ -364,6 +379,18 @@ discussed as numbers.
 - Wrong: `The method requires 2 passes.`
 - Right: `The method requires two passes.` / `Method 2 requires 17 passes.`
 
+## Figures And Examples
+
+Use a figure when prose leaves a structure, process, or proof idea opaque. Put
+the figure near the passage that interprets it, define its nonstandard symbols,
+and keep its caption aligned with the claim made in the surrounding prose.
+Related examples should build on one another when a cumulative sequence makes
+the general idea easier to recover.
+
+This semantic decision does not itself trigger figure generation. When a figure
+is requested and can be expressed as TikZ, route its production and verification
+through `tikz-draw` as specified below.
+
 ## Abstracts
 
 Write the abstract so that it survives being separated from the paper. It is
@@ -372,6 +399,11 @@ zbMATH publish authors' abstracts in place of reviews, and arXiv distributes it
 as a standalone plain-text field — so anything in it that points back into the
 article is lost in transit. That rules out references to numbered sections,
 numbered equations, and the bibliography.
+
+State the problem or context, the principal result, what is new, and any
+limitation needed to interpret the claim. Mention the method only when it is
+part of the contribution. This is a content checklist rather than a required
+sentence or paragraph order.
 
 Never cite in an abstract by number or by author-year. If a work must be cited
 there, supply the whole reference. Under `biblatex` this is `\fullcite`, which
@@ -503,6 +535,11 @@ Paraphrase and interpret earlier work; do not copy its text. Copying a
 paragraph from a prior paper is a plagiarism risk even when the source is
 cited, and rewriting text one does not fully understand propagates its errors.
 
+Apply the same transparency to the author's own previously published text and
+figures. Cosmetic edits do not make reused material original. Disclose and cite
+reuse, and obtain permission when copyright, license, or venue policy requires
+it.
+
 Cite the source when paraphrasing an argument: "The proof here is loosely based
 on that in [5]."
 
@@ -515,6 +552,10 @@ mimicry is often unwelcome to the person imitated.
 
 Assign credit, provenance and precedence accurately, and keep references
 current. Separate your opinion from the record: mark a judgement as a judgement.
+
+Choose references for relevance, support, provenance, and credit. Do not add a
+reference to influence an editor or referee, inflate a metric, or manufacture
+the appearance that a topic is current.
 
 Avoid witty, philosophical or knowingly obscure asides. They date badly, they
 distract, and on a second reading they are what the reader remembers instead of
@@ -535,6 +576,12 @@ that impression reads the mathematics differently.
 
 Send colleagues a proofread draft, not an early one. Their time is the scarce
 resource.
+
+Run separate passes for mathematical correctness; organization and logic;
+prose and notation; and surface copyediting. After editorial, copyediting, or
+production changes, recheck equations, citations, cross-references, and the
+claim ledger. Polished prose is not evidence that the mathematics survived the
+edit.
 
 ## LaTeX Manuscripts
 
@@ -638,6 +685,11 @@ two objects in the previous clause, name the object.
 
 Use parallel wording for parallel content, and vary wording that is not
 parallel.
+
+Write running prose so that it remains grammatical and intelligible when
+subsection headings and parenthetical citation markers are temporarily omitted.
+This is a readability test only: it does not authorize removing required
+citations or attribution from the delivered text.
 
 - Weaker: (a) For all even integers $n$, property $P_n$ holds.
   (b) However, property $Q_n$ holds if $n$ is odd.

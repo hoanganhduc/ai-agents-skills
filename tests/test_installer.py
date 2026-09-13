@@ -952,6 +952,44 @@ class ManifestTests(unittest.TestCase):
         selected = resolve_skills(args, manifests)
         self.assertEqual(selected, ["draft-writing"])
 
+    def test_review_skills_fail_closed_when_optional_review_overlay_is_not_installed(self) -> None:
+        manifests = load_manifests()
+        review_skills = (
+            "draft-writing",
+            "paper-review",
+            "annotated-review",
+            "agent-group-discuss",
+            "prose",
+            "research-report-reviewer",
+        )
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            args = Args()
+            args.skills = ",".join(review_skills)
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex"]))
+
+        skill_actions = {
+            action["skill"]: action
+            for action in plan["actions"]
+            if action.get("artifact_type") == "skill-file"
+        }
+        self.assertEqual(set(skill_actions), set(review_skills))
+        for skill in review_skills:
+            with self.subTest(skill=skill):
+                self.assertIn(
+                    "If `mathscinet-zbmath-review-style.md` is unavailable",
+                    skill_actions[skill]["content"],
+                )
+        self.assertFalse(
+            any(
+                action.get("artifact_id")
+                == "instruction-doc:mathscinet-zbmath-review-style"
+                for action in plan["actions"]
+            )
+        )
+
     def test_writing_workflow_artifacts_resolve_with_backing_dependency(self) -> None:
         manifests = load_manifests()
         args = Args()
@@ -962,15 +1000,19 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             artifacts,
             [
-                ("instruction-doc", "claim-preserving-writing"),
                 ("instruction-doc", "graph-combinatorics-style"),
                 ("instruction-doc", "math-manuscript-style"),
+                ("instruction-doc", "mathscinet-zbmath-review-style"),
                 ("instruction-doc", "writing-style-settings"),
                 ("template", "draft-claim-ledger"),
                 ("template", "draft-revision-map"),
+                ("template", "writing-review"),
             ],
         )
-        self.assertEqual(artifact_dependency_skills(artifacts, manifests), {"draft-writing"})
+        self.assertEqual(
+            artifact_dependency_skills(artifacts, manifests),
+            {"cross-agent-delegation", "draft-writing"},
+        )
 
     def test_draft_writing_artifact_sources_render_from_expected_directories(self) -> None:
         manifests = load_manifests()
@@ -982,10 +1024,10 @@ class ManifestTests(unittest.TestCase):
             artifact_specs["template"]["draft-claim-ledger"],
             "codex",
         )
-        instruction = render_artifact_content(
-            "instruction-doc",
-            "claim-preserving-writing",
-            artifact_specs["instruction-doc"]["claim-preserving-writing"],
+        review_template = render_artifact_content(
+            "template",
+            "writing-review",
+            artifact_specs["template"]["writing-review"],
             "codex",
         )
         style_instruction = render_artifact_content(
@@ -1000,15 +1042,23 @@ class ManifestTests(unittest.TestCase):
             artifact_specs["instruction-doc"]["math-manuscript-style"],
             "codex",
         )
+        database_review_instruction = render_artifact_content(
+            "instruction-doc",
+            "mathscinet-zbmath-review-style",
+            artifact_specs["instruction-doc"]["mathscinet-zbmath-review-style"],
+            "codex",
+        )
 
         self.assertIn("# Draft Claim Ledger", ledger)
-        self.assertIn("# Claim-Preserving Writing", instruction)
+        self.assertIn("# Writing Review", review_template)
         self.assertIn("# Writing Style Settings", style_instruction)
         self.assertIn("# Math Manuscript Style", math_style_instruction)
+        self.assertIn("# MathSciNet And zbMATH Review Style", database_review_instruction)
         self.assertIn("Managed by ai-agents-skills", ledger)
-        self.assertIn("Managed by ai-agents-skills", instruction)
+        self.assertIn("Managed by ai-agents-skills", review_template)
         self.assertIn("Managed by ai-agents-skills", style_instruction)
         self.assertIn("Managed by ai-agents-skills", math_style_instruction)
+        self.assertIn("Managed by ai-agents-skills", database_review_instruction)
         self.assertIn("Generated target: codex", ledger)
 
     def test_risk_gated_confirmation_artifact_renders_for_workflow_profiles(self) -> None:
@@ -1094,19 +1144,20 @@ class ManifestTests(unittest.TestCase):
                 "before drafting",
                 "writing-style-settings.md",
             ],
-            "canonical/instructions/claim-preserving-writing.md": [
-                "prior posts, templates, house style",
-                "before generating the first draft",
-            ],
             "canonical/instructions/writing-style-settings.md": [
                 "canonical, general writing-style policy",
                 "style_profile_ref",
                 "Session Updates",
             ],
             "canonical/instructions/math-manuscript-style.md": [
-                "Define every concept and notation before first use",
+                "Define every nonstandard concept and every piece of notation before first use",
                 "Do not define notation inside a theorem",
                 "short outline paragraph",
+            ],
+            "canonical/instructions/mathscinet-zbmath-review-style.md": [
+                "Before opening",
+                "provided by Mathematical Reviews",
+                "not a referee report",
             ],
         }
 
@@ -3504,17 +3555,27 @@ class PlanInstallVerifyTests(unittest.TestCase):
             args.artifact_profile = "writing-workflow"
             selected = resolve_skills(args, manifests)
             artifacts = resolve_artifacts(args, manifests)
+            selected = sorted(
+                set(selected) | artifact_dependency_skills(artifacts, manifests)
+            )
             plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=artifacts)
             apply_plan(root, plan, dry_run=False)
 
             self.assertTrue((root / ".codex" / "skills" / "draft-writing" / "SKILL.md").exists())
             self.assertTrue((root / ".codex" / "templates" / "draft-claim-ledger.md").exists())
+            self.assertTrue((root / ".codex" / "templates" / "writing-review.md").exists())
             self.assertTrue((root / ".claude" / "templates" / "draft-revision-map.md").exists())
             self.assertTrue((root / ".codex" / "instructions" / "writing-style-settings.md").exists())
             self.assertTrue((root / ".claude" / "instructions" / "math-manuscript-style.md").exists())
+            self.assertTrue((root / ".claude" / "instructions" / "mathscinet-zbmath-review-style.md").exists())
             self.assertTrue((root / ".deepseek" / "instructions" / "writing-style-settings.md").exists())
-            self.assertTrue((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
-            self.assertEqual(verify(root)["status"], "ok")
+            self.assertTrue((root / ".deepseek" / "instructions" / "graph-combinatorics-style.md").exists())
+            self.assertFalse((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
+            self.assertFalse((root / ".deepseek" / "instructions" / "language-style-rules.md").exists())
+            self.assertEqual(
+                verify(root, agent_filter={"codex", "claude"})["status"],
+                "ok",
+            )
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_entrypoint_alias_requires_backing_skill(self) -> None:
