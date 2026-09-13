@@ -7898,14 +7898,15 @@ class GrokTargetTests(unittest.TestCase):
             validate_grok_writing_rule_listing,
         )
 
+        rules_root = Path(tempfile.gettempdir()) / "aas-grok-rules-fixture"
         payload = {
             "projectInstructions": [
-                {"path": f"/home/user/.grok/rules/{name}", "fileType": "rules"}
+                {"path": str(rules_root / name), "fileType": "rules"}
                 for name in sorted(GROK_WRITING_RULES | {"claim-preserving-writing.md"})
             ]
         }
         expected = {
-            os.path.normcase(os.path.abspath(f"/home/user/.grok/rules/{name}"))
+            os.path.normcase(os.path.abspath(rules_root / name))
             for name in GROK_WRITING_RULES
         }
         checks = validate_grok_writing_rule_listing(
@@ -7918,7 +7919,7 @@ class GrokTargetTests(unittest.TestCase):
 
         clean_payload = {
             "projectInstructions": [
-                {"path": f"/home/user/.grok/rules/{name}", "fileType": "rules"}
+                {"path": str(rules_root / name), "fileType": "rules"}
                 for name in sorted(GROK_WRITING_RULES)
             ]
         }
