@@ -14,3 +14,10 @@
   Windows/baseline failures from the full suite.
 - [x] Complete fresh-context code, test, and boundary reviews.
 - [x] Record residual gaps without installing, committing, or pushing.
+- [x] Add failing target-router, managed-consumer, retirement, and native-smoke regressions.
+- [x] Implement projected-hash writing routers without negative fallback policy.
+- [x] Protect managed consumer updates from local drift and refresh the complete consumer set.
+- [x] Implement state/signature-gated retired writing-document removal and rollback coverage.
+- [x] Add sanitized Codex and Grok loader checks.
+- [x] Regenerate docs and run focused/full verification.
+- [x] Apply only the approved writing scope to current targets and verify clean load state.

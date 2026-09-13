@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from . import skill_python
@@ -1117,6 +1117,14 @@ def credential_launch_canary(
     return _case_section([positive, negative])
 
 
+def _skill_venv_python(prefix: str, platform: str) -> str:
+    if platform == "windows":
+        return str(PureWindowsPath(prefix) / "Scripts" / "python.exe")
+    if platform in {"linux", "macos", "wsl"}:
+        return str(PurePosixPath(prefix) / "bin" / "python")
+    raise ValueError(f"unsupported runtime platform: {platform}")
+
+
 def run_functional_smoke_cases(
     manifests: dict[str, Any], *, skills: list[str], runtime_root: Path, workspace: Path,
     platform: str, venv: dict[str, Any], timeout: int | None = None,
@@ -1140,7 +1148,7 @@ def run_functional_smoke_cases(
                 for module in modules:
                     try:
                         probe = run_smoke_process(
-                            [str(Path(prefix) / "bin" / "python"), "-I", "-c", "import importlib,sys; importlib.import_module(sys.argv[1])", module],
+                            [_skill_venv_python(prefix, platform), "-I", "-c", "import importlib,sys; importlib.import_module(sys.argv[1])", module],
                             args=[], env=env,
                             timeout=smoke_timeout(manifests, skill, timeout, contract=contract),
                         )

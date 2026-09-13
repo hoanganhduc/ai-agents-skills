@@ -16,6 +16,10 @@ are self-contained across Linux, macOS, WSL, and Windows-shaped roots. Explicit
 `reference` and `symlink` modes remain available, but native loader smoke must
 confirm those modes before they are treated as fully verified.
 
+The writing-document bundle is activated by a managed block in the existing
+global `AGENTS.md`. The installer does not modify `opencode.json`; canonical
+writing consumers load the full documents on demand.
+
 Managed OpenCode artifacts do not configure providers, models, API keys, MCP
 credentials, or other auth-bearing settings. Existing `opencode.json` and
 `opencode.jsonc` files are user-owned unless a future manifest declares a

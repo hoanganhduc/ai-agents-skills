@@ -2197,6 +2197,13 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "LEANEXPLORE_API_KEY": "LEANEXPLORE-SMOKE-CANARY",
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
+            if os.name == "nt":
+                env["AAS_RUNTIME_ROOT"] = str(Path(tmp) / "hostile-runtime")
+                env["AAS_LEANEXPLORE_WRAPPER_PATH"] = str(
+                    Path(tmp) / "hostile" / "workspace" / "skills" / "lean-explore-mcp" / "run_lean_explore_mcp.ps1"
+                )
+            else:
+                env.pop("AAS_RUNTIME_ROOT", None)
 
             commands = (
                 ("doctor",),
@@ -2228,18 +2235,107 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     self.assertEqual(payload["auth_status"], "present")
                 if command == ("config-snippet", "--backend", "api"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertTrue(command_payload["command"].endswith("/run_skill.sh"))
-                    self.assertEqual(command_payload["args"][:2], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve"])
+                    if os.name == "nt":
+                        self.assertTrue(Path(command_payload["command"]).is_absolute())
+                        self.assertTrue(command_payload["command"].lower().endswith("\\windowspowershell\\v1.0\\powershell.exe"))
+                        self.assertEqual(command_payload["args"][:6], [
+                            "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                        ])
+                        self.assertTrue(Path(command_payload["args"][6]).is_absolute())
+                        self.assertTrue(command_payload["args"][6].endswith("run_lean_explore_mcp.ps1"))
+                        self.assertEqual(command_payload["args"][7:9], ["serve", "--backend"])
+                        self.assertNotIn(str(Path(tmp) / "hostile"), json.dumps(command_payload))
+                        self.assertTrue(any("exits 78" in warning for warning in payload["warnings"]))
+                    else:
+                        self.assertTrue(command_payload["command"].endswith("/run_skill.sh"))
+                        self.assertEqual(command_payload["args"][:2], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve"])
                     self.assertEqual(command_payload["env"], {
                         "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
                     })
                     self.assertNotIn("AAS_LEANEXPLORE_SITE_PACKAGES", command_payload["env"])
                 if command == ("config-snippet", "--backend", "local"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertEqual(command_payload["args"], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "local"])
+                    if os.name == "nt":
+                        self.assertEqual(command_payload["args"][-3:], ["serve", "--backend", "local"])
+                    else:
+                        self.assertEqual(command_payload["args"], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "local"])
                     self.assertEqual(command_payload["env"], {})
 
             self.assertFalse(marker.exists())
+            if os.name == "nt":
+                refused = subprocess.run(
+                    [command_payload["command"], *command_payload["args"]],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(refused.returncode, 78)
+                self.assertIn("disabled on native Windows", refused.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "native Windows PowerShell config execution")
+    def test_lean_explore_installed_windows_config_command_preserves_serve_refusal(self) -> None:
+        source_root = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp) / "runtime"
+            runtime.mkdir()
+            acl_env = os.environ.copy()
+            acl_env["TEST_AAS_RUNTIME_ROOT"] = str(runtime)
+            protected = subprocess.run(
+                [
+                    "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                    "-Command",
+                    "$identity=[System.Security.Principal.WindowsIdentity]::GetCurrent();"
+                    "$acl=[System.Security.AccessControl.DirectorySecurity]::new();"
+                    "$acl.SetOwner($identity.User);"
+                    "$acl.SetAccessRuleProtection($true,$false);"
+                    "$rule=[System.Security.AccessControl.FileSystemAccessRule]::new("
+                    "$identity.User,[System.Security.AccessControl.FileSystemRights]::FullControl,"
+                    "[System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',"
+                    "[System.Security.AccessControl.PropagationFlags]::None,"
+                    "[System.Security.AccessControl.AccessControlType]::Allow);"
+                    "[void]$acl.AddAccessRule($rule);"
+                    "[System.IO.DirectoryInfo]::new($env:TEST_AAS_RUNTIME_ROOT).SetAccessControl($acl)",
+                ],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=acl_env, check=False,
+            )
+            self.assertEqual(protected.returncode, 0, protected.stderr)
+            skill_dir = runtime / "workspace" / "skills" / "lean-explore-mcp"
+            skill_dir.mkdir(parents=True)
+            shutil.copy2(source_root / "runners" / "run_skill.ps1", runtime / "run_skill.ps1")
+            shutil.copy2(source_root / "runners" / "load_secret_env.ps1", runtime / "load_secret_env.ps1")
+            shutil.copy2(
+                source_root / "skills" / "lean-explore-mcp" / "run_lean_explore_mcp.ps1",
+                skill_dir / "run_lean_explore_mcp.ps1",
+            )
+            helper = skill_dir / "lean_explore_mcp.py"
+            shutil.copy2(
+                source_root / "skills" / "lean-explore-mcp" / "lean_explore_mcp.py",
+                helper,
+            )
+            env = os.environ.copy()
+            env["AAS_RUNTIME_ROOT"] = str(runtime / "hostile-runtime")
+            env["AAS_LEANEXPLORE_WRAPPER_PATH"] = str(runtime / "hostile-wrapper.ps1")
+            env.pop("AAS_SKILL_SECRETS_FILE", None)
+            snippet = subprocess.run(
+                [sys.executable, str(helper), "config-snippet", "--backend", "local"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=env, check=False,
+            )
+            self.assertEqual(snippet.returncode, 0, snippet.stderr)
+            command = json.loads(snippet.stdout)["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
+            self.assertEqual(Path(command["args"][6]), runtime / "run_skill.ps1")
+            self.assertEqual(command["args"][7], "skills/lean-explore-mcp/run_lean_explore_mcp.ps1")
+            refused = subprocess.run(
+                [command["command"], *command["args"]],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=env, check=False,
+            )
+            self.assertEqual(refused.returncode, 78, refused.stderr)
+            self.assertIn("disabled on native Windows", refused.stderr)
 
     @unittest.skipUnless(
         os.name == "posix" and Path("/proc/self/cmdline").is_file(),

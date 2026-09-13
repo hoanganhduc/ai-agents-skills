@@ -146,7 +146,8 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
             env = smoke.smoke_env(manifests_for(offline=contract()), "example", self.workspace)
         self.assertTrue(all(name not in env for name in names + xdg))
         self.assertEqual(env["HOME"], str(self.smoke_dir / "home"))
-        self.assertEqual(stat.S_IMODE(Path(env["HOME"]).stat().st_mode), 0o700)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(Path(env["HOME"]).stat().st_mode), 0o700)
         self.assertFalse((Path(env["HOME"]) / ".agents_skills_venv").exists())
 
     def test_smoke_path_entries_lead_with_the_running_interpreter(self):
@@ -178,7 +179,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         ).stdout.strip()
         self.assertGreaterEqual(tuple(int(part) for part in reported.split(".")), (3, 10), reported)
 
-    def test_fixtures_expand_content_copy_sources_and_refuse_symlink_escape(self):
+    def test_fixtures_expand_content_and_copy_sources(self):
         source = self.root / "source"
         source.mkdir()
         (source / "input").write_text("copied", encoding="utf-8")
@@ -188,10 +189,18 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
             smoke.materialize_smoke_fixtures(case, self.workspace, skill_venv="/private/venv")
         destination = self.smoke_dir / "nested" / "content"
         self.assertEqual(destination.read_text(encoding="utf-8"), f"{self.workspace}|{self.smoke_dir}|/private/venv")
-        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(destination.parent.stat().st_mode), 0o700)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(destination.parent.stat().st_mode), 0o700)
         self.assertEqual((self.smoke_dir / "copy").read_text(encoding="utf-8"), "copied")
-        (self.smoke_dir / "escape").symlink_to(self.root, target_is_directory=True)
+
+    def test_fixtures_refuse_symlink_escape(self):
+        try:
+            (self.smoke_dir / "escape").symlink_to(self.root, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("native Windows symlink creation requires Developer Mode or elevation")
+            raise
         with self.assertRaises(ValueError):
             smoke.materialize_smoke_fixtures(contract(fixtures=[{"to": "escape/leak", "content": "no"}]), self.workspace)
         self.assertFalse((self.root / "leak").exists())
@@ -229,6 +238,34 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(run.call_args.kwargs["skill_venv"], "/private/venv")
         self.assertFalse(run.call_args.kwargs["inject_canaries"])
+
+        with patch.object(
+            smoke,
+            "run_smoke_process",
+            autospec=True,
+            return_value=subprocess.CompletedProcess([], 1, "", ""),
+        ) as windows_probe, patch.object(smoke, "run_smoke_case"):
+            smoke.run_functional_smoke_cases(
+                manifest,
+                skills=["example"],
+                runtime_root=self.root,
+                workspace=self.workspace,
+                platform="windows",
+                venv={"status": "admitted", "path": r"C:\private\venv"},
+            )
+        self.assertEqual(
+            windows_probe.call_args.args[0][0],
+            r"C:\private\venv\Scripts\python.exe",
+        )
+
+    def test_functional_venv_python_path_uses_the_declared_platform(self):
+        self.assertEqual(smoke._skill_venv_python("/private/venv", "linux"), "/private/venv/bin/python")
+        self.assertEqual(
+            smoke._skill_venv_python(r"C:\private\venv", "windows"),
+            r"C:\private\venv\Scripts\python.exe",
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported runtime platform"):
+            smoke._skill_venv_python("/private/venv", "unknown")
 
     def test_functional_no_key_case_never_inherits_t2_canaries(self):
         t2 = contract(env_canaries={"EXAMPLE_API_KEY": "ambient-canary"}, secret_file_canaries={
@@ -308,6 +345,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(result["skill_venv"]["status"], "refused")
         self.assertNotIn("live", result)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX launcher mode mutation")
     def test_credential_canary_requires_127_and_restores_mode_on_timeout(self):
         launcher = self.root / "run_skill.sh"
         launcher.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -328,8 +366,13 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
             result = smoke.credential_launch_canary(self.root, "linux", [candidate], manifests=manifest)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(stat.S_IMODE(launcher.stat().st_mode), 0o700)
-        self.assertEqual(smoke.credential_launch_canary(self.root, "windows", [], manifests=manifest)["status"], "not-applicable")
         self.assertEqual(smoke.credential_launch_canary(self.root, "linux", [], manifests=manifest)["status"], "skipped")
+
+    def test_credential_canary_is_not_applicable_to_windows_launchers(self):
+        manifest = manifests_for(offline=contract())
+        result = smoke.credential_launch_canary(self.root, "windows", [], manifests=manifest)
+        self.assertEqual(result["status"], "not-applicable")
+        self.assertEqual(result["reason"], "POSIX launcher mode check")
 
     @unittest.skipUnless(os.name == "posix", "POSIX runtime fixture")
     def test_installed_functional_verdict_and_complete_credential_coverage(self):

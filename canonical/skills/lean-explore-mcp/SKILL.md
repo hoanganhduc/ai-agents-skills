@@ -77,8 +77,13 @@ Start the adapter through the launcher, which admits the venv before serving:
 ```
 
 The emitted local stdio snippet uses the absolute managed `run_skill.sh` launcher
-with args `["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "api"]`
-or the corresponding local backend. For API mode, replace the
+and `.sh` target on POSIX. On native Windows it emits an absolute system
+PowerShell command with fixed arguments for `run_skill.ps1` and the `.ps1`
+target in an installed layout; source-checkout output invokes the canonical
+`.ps1` wrapper directly. Windows config generation remains available for
+inspection, but either generated command intentionally exits `78` because
+native Windows `serve` is not supported until private credential transport is
+implemented. For API mode, replace the
 `AAS_SKILL_SECRETS_FILE` placeholder only in your operator-owned client config
 with an absolute path to an owner-controlled file containing
 `LEANEXPLORE_API_KEY=<key>`. Use mode `0600`, no symlinks, and keep the file

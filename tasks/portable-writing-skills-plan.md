@@ -19,6 +19,12 @@ fills the remaining prose-policy gaps while reusing those mechanisms.
 5. Update manifests and all existing writing-policy bookkeeping artifacts.
 6. Regenerate hashes and documentation; run focused and full verification.
 7. Run fresh-context reviews and correct material findings.
+8. Generalize the existing writing router using projected canonical hashes and
+   target-native loading contracts.
+9. Refresh the complete installed writing-consumer inventory and retire the old
+   compatibility document through state/signature-gated removal.
+10. Run sanitized Codex/Grok native loader checks, reinstall only the approved
+    writing scope, and verify the resulting plan is clean.
 
 ## Decisions
 
@@ -30,6 +36,10 @@ fills the remaining prose-policy gaps while reusing those mechanisms.
 | Treat current venue rules as authoritative | Historical books and examples may be dated or subjective | accepted |
 | Keep code-writing separate | Scientific prose and source-code style are distinct domains | accepted |
 | Fail closed on restricted review provenance | Disclosure cannot be undone after a tool opens the item | accepted |
+| Route inert instruction-doc storage through global context | Installing files alone does not make them model-visible | accepted |
+| Keep Grok on native rules loading | Its current CLI inspect output proves the four rule files are global inputs | accepted |
+| Refresh managed consumers but do not create absent ones | Upgrade stale copies without broadening the installed capability set | accepted |
+| Retire old copies only from exact state/signature evidence | Preserve user edits and keep removal recoverable | accepted |
 
 ## Verification Plan
 
@@ -41,3 +51,5 @@ fills the remaining prose-policy gaps while reusing those mechanisms.
 | Generated docs | docs generation and docs check | clean generated outputs |
 | Full regression | repository test target | pass |
 | Independent review | fresh code/test/security reviewers | no unresolved material finding |
+| Codex prompt transport | sanitized `codex debug prompt-input` check | router and four routes visible; no retired reference |
+| Grok rule discovery | sanitized `grok inspect --json` check | four current rules visible; retired rule absent |

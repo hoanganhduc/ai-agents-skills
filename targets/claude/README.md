@@ -8,6 +8,11 @@ In auto mode, Claude skill files are symlinked to canonical repo skill files
 when the filesystem supports it. Claude personas are Markdown subagent files,
 and entrypoint aliases are installed as command files.
 
+The four-document writing set is routed through one managed block in
+`~/.claude/CLAUDE.md`; policy text stays in the separate instruction documents.
+An incomplete or modified set removes the managed router instead of installing
+a negative fallback policy.
+
 Zotero and Calibre integrations must not maintain separate path assumptions in
 Claude commands or skills. They should call the shared profile-aware wrappers
 and defer library authority decisions to the generated local-library profile.

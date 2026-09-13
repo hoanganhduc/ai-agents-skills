@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .antigravity import run_antigravity_native_smoke
+from .codex import run_codex_native_smoke
 from .grok import run_grok_native_smoke
 from .kimi import run_kimi_native_smoke
 from .opencode import run_opencode_native_smoke
@@ -86,6 +87,21 @@ def run_post_install_smoke(
                 timeout=timeout,
             ),
         )
+        if mode == "strict":
+            result["codex_smoke"] = guarded_check(
+                "codex-smoke",
+                lambda: run_codex_native_smoke(
+                    root,
+                    agents=agents,
+                    platform=platform,
+                    timeout=timeout,
+                ),
+            )
+        else:
+            result["codex_smoke"] = {
+                "status": "skipped",
+                "reason": "Codex prompt-input smoke is opt-in through strict mode",
+            }
         result["antigravity_smoke"] = guarded_check(
             "antigravity-smoke",
             lambda: run_antigravity_native_smoke(
@@ -117,6 +133,7 @@ def run_post_install_smoke(
         result["skill_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["runtime_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["opencode_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
+        result["codex_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["antigravity_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["grok_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["kimi_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
@@ -126,6 +143,7 @@ def run_post_install_smoke(
         result["skill_smoke"],
         result["runtime_smoke"],
         result["opencode_smoke"],
+        result["codex_smoke"],
         result["antigravity_smoke"],
         result["grok_smoke"],
         result["kimi_smoke"],

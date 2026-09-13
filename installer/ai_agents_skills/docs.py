@@ -1059,6 +1059,10 @@ Post-install smoke:
 - `--post-install-smoke verify` runs only installer integrity verification.
 - `--post-install-smoke strict` returns nonzero if any post-install check
   fails, degrades, or is unsupported; the install is still recorded as applied.
+- Strict mode runs a sanitized Codex `debug prompt-input` check when a managed
+  writing router is present. It records only allowlisted booleans, never the
+  model-visible prompt text. Grok native smoke verifies discovery of the four
+  current writing rules and absence of the retired compatibility rule.
 - `--post-install-smoke off` skips these checks.
 
 The post-install runtime layer is offline-only. It uses the installed runtime
@@ -3783,6 +3787,14 @@ Rendered artifact behavior differs by agent:
 | Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Managed block in `~/.kimi-code/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. | Managed block in `~/.chatgpt-local-coder/AGENTS.md`. |
 
 Instruction docs target each agent's `instructions` or rules directory.
+When any member of the four-document writing set is planned, the installer
+evaluates the projected hashes of the complete set. Codex, Claude, DeepSeek,
+OpenCode, Antigravity, Kimi, and chatgpt-local-coder receive one short managed
+router in their global context only while all four target documents are exact.
+Grok uses its native global `rules/` discovery instead of a duplicate router.
+Selecting the complete set also refreshes only already-managed writing-policy
+consumer skills and safely retires an unchanged installer-managed
+`claim-preserving-writing.md`; absent or user-modified consumers are preserved.
 Entrypoint aliases target Claude and OpenCode commands and Antigravity global
 Markdown skill aliases, but Codex and DeepSeek receive reference docs under
 `instructions/entrypoints` because equivalent slash-command loading is not
@@ -3857,11 +3869,10 @@ loads `~/.chatgpt-local-coder/AGENTS.md` as its user-level memory file. Its
 credentials live in the host config directory (`~/.config/chatgpt-local-coder`
 by XDG default; `%APPDATA%` on Windows and `Library/Application Support` on
 macOS), not in the agent home, so the installer never touches them.
-When all four writing-policy instruction documents are selected together, the
-planner also maintains one short `writing-instructions` block in the host's
-auto-loaded `AGENTS.md`. The block routes prose tasks to the full documents on
-demand instead of importing them inline, which would exceed the host's default
-project-memory line limit and truncate later overlays.
+The shared writing router includes chatgpt-local-coder's auto-loaded `AGENTS.md`.
+It routes prose tasks to the full documents on demand instead of importing them
+inline, which would exceed the host's default project-memory line limit and
+truncate later overlays.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,16 @@ GROK_MODEL_ID_RE = re.compile(rf"^{GROK_MODEL_ID_PATTERN}$")
 GROK_AVAILABLE_MODEL_LINE_RE = re.compile(
     rf"^\s*\*\s+(?P<model>{GROK_MODEL_ID_PATTERN})(?:\s+\(default\))?\s*$"
 )
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+GROK_WRITING_RULES = frozenset(
+    {
+        "writing-style-settings.md",
+        "math-manuscript-style.md",
+        "graph-combinatorics-style.md",
+        "mathscinet-zbmath-review-style.md",
+    }
+)
+MAX_GROK_INSPECT_BYTES = 4 * 1024 * 1024
 
 
 # Bare Grok and the managed region proxy are separate discovery tiers. Generic
@@ -271,7 +283,14 @@ def run_grok_native_smoke(
 
     command = split_command(str(cli["command"]))
     env = isolated_grok_env(root)
-    inspect_check = run_grok_command("inspect", [*command, "inspect", "--json"], env, timeout)
+    with tempfile.TemporaryDirectory(prefix="aas-grok-writing-smoke-") as scratch:
+        inspect_check = run_grok_command(
+            "inspect",
+            [*command, "inspect", "--json"],
+            env,
+            timeout,
+            cwd=scratch,
+        )
     expected_skills = sorted({
         str(item.get("skill"))
         for item in grok_artifacts
@@ -282,10 +301,17 @@ def run_grok_native_smoke(
         for item in grok_artifacts
         if item.get("artifact_type") == "agent-persona"
     })
+    expected_writing_rules = {
+        os.path.normcase(os.path.abspath(str(item.get("artifact", ""))))
+        for item in grok_artifacts
+        if item.get("artifact_type") == "instruction-doc"
+        and Path(str(item.get("artifact", ""))).name in GROK_WRITING_RULES
+    }
     checks = [
         *file_checks,
         inspect_check,
         *validate_grok_inspect_listing(inspect_check, expected_skills, expected_personas),
+        *validate_grok_writing_rule_listing(inspect_check, expected_writing_rules),
     ]
     checks = [public_check(check) for check in checks]
     status = "ok" if all(check["ok"] for check in checks) else "degraded"
@@ -299,7 +325,20 @@ def run_grok_native_smoke(
 
 
 def isolated_grok_env(root: Path) -> dict[str, str]:
-    env = dict(os.environ)
+    allowed = {
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "NO_COLOR",
+    }
+    env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     env.update(
         {
             "HOME": str(root),
@@ -355,22 +394,41 @@ def run_grok_command(
     command: list[str],
     env: dict[str, str],
     timeout: int,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     try:
-        result = subprocess.run(
-            command,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
-            env=env,
-        )
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(
+                command,
+                text=False,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+                env=env,
+                cwd=cwd,
+            )
+            size = output.tell()
+            output.seek(0)
+            raw_stdout = output.read(MAX_GROK_INSPECT_BYTES + 1)
     except Exception as exc:
-        return {"name": name, "ok": False, "status": "error", "error": str(exc)}
-    stdout = result.stdout.strip()
+        return {
+            "name": name,
+            "ok": False,
+            "status": "error",
+            "error_class": type(exc).__name__,
+            "reason": "diagnostic command failed",
+        }
+    if size > MAX_GROK_INSPECT_BYTES:
+        return {
+            "name": name,
+            "ok": False,
+            "status": "failed",
+            "returncode": result.returncode,
+            "stdout_preview": "<output-redacted>",
+            "reason": "diagnostic output exceeded the smoke bound",
+        }
+    stdout = sanitize_diagnostic_text(raw_stdout.decode("utf-8", errors="replace")).strip()
     return {
         "name": name,
         "ok": result.returncode == 0,
@@ -378,8 +436,16 @@ def run_grok_command(
         "returncode": result.returncode,
         "stdout_preview": "<output-redacted>" if stdout else "",
         "stdout": stdout,
-        "stderr_preview": result.stderr.strip()[:500],
     }
+
+
+def sanitize_diagnostic_text(value: str) -> str:
+    without_ansi = ANSI_ESCAPE_RE.sub("", value)
+    return "".join(
+        character
+        for character in without_ansi
+        if character in {"\n", "\r", "\t"} or ord(character) >= 32
+    )
 
 
 def validate_grok_inspect_listing(
@@ -404,3 +470,53 @@ def validate_grok_inspect_listing(
             "status": "ok" if ok else "failed",
         })
     return results
+
+
+def validate_grok_writing_rule_listing(
+    check: dict[str, Any],
+    expected_rules: set[str],
+) -> list[dict[str, Any]]:
+    if not expected_rules:
+        return []
+    try:
+        payload = json.loads(str(check.get("stdout", "")))
+    except (json.JSONDecodeError, TypeError):
+        return [
+            {
+                "name": "grok-writing-rules-visible",
+                "ok": False,
+                "status": "failed",
+            }
+        ]
+    if not isinstance(payload, dict) or not isinstance(payload.get("projectInstructions"), list):
+        return [
+            {
+                "name": "grok-writing-rules-visible",
+                "ok": False,
+                "status": "failed",
+            }
+        ]
+    listed = {
+        os.path.normcase(os.path.abspath(str(item.get("path", ""))))
+        for item in payload["projectInstructions"]
+        if isinstance(item, dict) and item.get("fileType") == "rules"
+    }
+    current_ok = expected_rules.issubset(listed)
+    expected_parents = {Path(path).parent for path in expected_rules}
+    retired_paths = {
+        os.path.normcase(os.path.abspath(parent / "claim-preserving-writing.md"))
+        for parent in expected_parents
+    }
+    retired_absent = retired_paths.isdisjoint(listed)
+    return [
+        {
+            "name": "grok-writing-rules-visible",
+            "ok": current_ok,
+            "status": "ok" if current_ok else "failed",
+        },
+        {
+            "name": "grok-retired-writing-rule-absent",
+            "ok": retired_absent,
+            "status": "ok" if retired_absent else "failed",
+        },
+    ]

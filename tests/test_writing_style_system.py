@@ -302,6 +302,22 @@ class WritingStyleSystemTests(unittest.TestCase):
                 with self.subTest(path=rel_path, needle=needle):
                     self.assertIn(needle, text)
 
+    def test_installer_writing_consumer_inventory_matches_canonical_references(self) -> None:
+        from installer.ai_agents_skills.planner import WRITING_CONSUMER_SKILLS
+
+        needles = (
+            "writing-style-settings.md",
+            "math-manuscript-style.md",
+            "graph-combinatorics-style.md",
+            "mathscinet-zbmath-review-style.md",
+        )
+        consumers = {
+            path.parent.name
+            for path in (REPO_ROOT / "canonical" / "skills").glob("*/SKILL.md")
+            if any(needle in path.read_text(encoding="utf-8") for needle in needles)
+        }
+        self.assertEqual(consumers, set(WRITING_CONSUMER_SKILLS))
+
     def test_templates_preserve_shared_style_record_contract(self) -> None:
         for rel_path in (
             "canonical/templates/draft-claim-ledger.md",
@@ -374,10 +390,10 @@ class WritingStyleSystemTests(unittest.TestCase):
                 self.assertEqual(rows[target]["target_status"], "unsupported")
                 self.assertEqual(rows[target]["release_disposition"], "approved-unsupported")
 
-        self.assertEqual(rows["grok"]["target_status"], "unverified")
-        self.assertEqual(rows["grok"]["release_disposition"], "accepted-follow-up")
-        self.assertEqual(rows["kimi"]["target_status"], "fallback-only")
-        self.assertEqual(rows["kimi"]["release_disposition"], "accepted-follow-up")
+        self.assertEqual(rows["grok"]["target_status"], "installed")
+        self.assertEqual(rows["grok"]["release_disposition"], "satisfied")
+        self.assertEqual(rows["kimi"]["target_status"], "installed")
+        self.assertEqual(rows["kimi"]["release_disposition"], "satisfied")
 
     def test_session_update_rule_requires_pending_record_without_silent_promotion(self) -> None:
         policy = (REPO_ROOT / "canonical/instructions/writing-style-settings.md").read_text(encoding="utf-8")

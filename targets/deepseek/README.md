@@ -38,6 +38,11 @@ loader evidence proves another mode. DeepSeek personas and entrypoint aliases
 are reference prompts/docs, not claims that DeepSeek enforces Codex or Claude
 registration semantics.
 
+The writing-document bundle receives a short managed router in
+`~/.deepseek/AGENTS.md`. This is a static install contract; native loading must
+remain reported as unverified when no compatible DeepSeek/CodeWhale CLI is
+available.
+
 Zotero and Calibre adapters should remain thin. They must not hardcode local
 database or library paths, and they should route through the shared
 profile-aware runtime commands used by the other agents.

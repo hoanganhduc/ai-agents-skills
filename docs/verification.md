@@ -95,6 +95,10 @@ Post-install smoke:
 - `--post-install-smoke verify` runs only installer integrity verification.
 - `--post-install-smoke strict` returns nonzero if any post-install check
   fails, degrades, or is unsupported; the install is still recorded as applied.
+- Strict mode runs a sanitized Codex `debug prompt-input` check when a managed
+  writing router is present. It records only allowlisted booleans, never the
+  model-visible prompt text. Grok native smoke verifies discovery of the four
+  current writing rules and absence of the retired compatibility rule.
 - `--post-install-smoke off` skips these checks.
 
 The post-install runtime layer is offline-only. It uses the installed runtime
