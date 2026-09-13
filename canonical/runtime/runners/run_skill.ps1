@@ -162,7 +162,25 @@ $flatContracts = @{
 $normalizedLower = $normalized.ToLowerInvariant()
 $credentialContract = $false
 $flatProjection = $null
+$usesComputeWorkspace = $false
 $retainedPointers = [System.Collections.Generic.List[string]]::new()
+
+function Set-AasDefaultComputeWorkspace {
+    if (-not [string]::IsNullOrWhiteSpace($env:AAS_AUTOLOOP_COMPUTE_WORKSPACE)) {
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return
+    }
+    $candidate = Join-Path $env:LOCALAPPDATA "ai-agents-skills\research-compute"
+    $config = Join-Path $candidate "config\research-compute.toml"
+    if (Test-Path -LiteralPath $config -PathType Leaf) {
+        $item = Get-Item -LiteralPath $config
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+            $env:AAS_AUTOLOOP_COMPUTE_WORKSPACE = $candidate
+        }
+    }
+}
 if ($flatContracts.ContainsKey($normalizedLower)) {
     $credentialContract = $true
     $flatProjection = $flatContracts[$normalizedLower]
@@ -205,6 +223,7 @@ if ($flatContracts.ContainsKey($normalizedLower)) {
     "skills\hetzner-research-compute\hetzner_reaper.py"
 )) {
     $credentialContract = $true
+    $usesComputeWorkspace = $true
     [void]$retainedPointers.Add("AAS_COMPUTE_SECRETS_FILE")
 } elseif ($normalizedLower -in @(
     "skills\autonomous-research-loop-runtime\run_autonomous_research_loop.ps1",
@@ -213,6 +232,7 @@ if ($flatContracts.ContainsKey($normalizedLower)) {
     "skills\autonomous-research-loop-runtime\force-loop\force_loop_cli.py"
 )) {
     $credentialContract = $true
+    $usesComputeWorkspace = $true
     [void]$retainedPointers.Add("AAS_COMPUTE_SECRETS_FILE")
     [void]$retainedPointers.Add("AAS_PROVIDER_SECRETS_FILE")
 } elseif ($pointerValues["AAS_SKILL_SECRETS_FILE"]) {
@@ -283,6 +303,9 @@ if ($credentialContract) {
     if ($normalizedLower -like "skills\vnthuquan\*") {
         [void]$credentialMetadataNames.Add("VNTHUQUAN_TARGET")
     }
+    if ($usesComputeWorkspace) {
+        [void]$credentialMetadataNames.Add("AAS_AUTOLOOP_COMPUTE_WORKSPACE")
+    }
     if (
         $normalizedLower -like "skills\hetzner-research-compute\*" -or
         $normalizedLower -like "skills\kaggle-research-compute\*" -or
@@ -347,7 +370,35 @@ if ($credentialContract) {
     $env:PATH = [System.Environment]::SystemDirectory
 }
 
-function Test-AasProtectedAclChain([string]$Value) {
+function Test-AasProtectedAclChain(
+    [string]$Value,
+    [string]$StrictBoundary = ""
+) {
+    $boundary = if ([string]::IsNullOrWhiteSpace($StrictBoundary)) {
+        ""
+    } else {
+        [System.IO.Path]::GetFullPath($StrictBoundary).TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        )
+    }
+    $valuePath = [System.IO.Path]::GetFullPath($Value)
+    if (-not [string]::IsNullOrEmpty($boundary)) {
+        $boundaryPrefix = $boundary + [System.IO.Path]::DirectorySeparatorChar
+        if (
+            -not [string]::Equals(
+                $valuePath,
+                $boundary,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -and
+            -not $valuePath.StartsWith(
+                $boundaryPrefix,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            return $false
+        }
+    }
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $trusted = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
@@ -382,7 +433,7 @@ function Test-AasProtectedAclChain([string]$Value) {
             # be satisfied. Nothing is given up: a right on an ancestor confers no
             # access to an existing descendant, and any grant that does reach this
             # file by inheritance is materialised into its own DACL, checked here.
-            if ($depth -le 1) {
+            if ($depth -le 1 -or -not [string]::IsNullOrEmpty($boundary)) {
                 foreach ($rule in $acl.GetAccessRules(
                     $true,
                     $true,
@@ -410,6 +461,19 @@ function Test-AasProtectedAclChain([string]$Value) {
         } catch {
             return $false
         }
+        if (
+            -not [string]::IsNullOrEmpty($boundary) -and
+            [string]::Equals(
+                $cursor.FullName.TrimEnd(
+                    [System.IO.Path]::DirectorySeparatorChar,
+                    [System.IO.Path]::AltDirectorySeparatorChar
+                ),
+                $boundary,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            break
+        }
         $cursor = if ($cursor -is [System.IO.DirectoryInfo]) {
             $cursor.Parent
         } else {
@@ -418,6 +482,42 @@ function Test-AasProtectedAclChain([string]$Value) {
         $depth++
     }
     return $true
+}
+
+if ($usesComputeWorkspace) {
+    Set-AasDefaultComputeWorkspace
+    if (-not [string]::IsNullOrWhiteSpace($env:AAS_AUTOLOOP_COMPUTE_WORKSPACE)) {
+        if (-not [System.IO.Path]::IsPathRooted($env:AAS_AUTOLOOP_COMPUTE_WORKSPACE)) {
+            throw "Compute data workspace must be an absolute path"
+        }
+        $computeWorkspace = [System.IO.Path]::GetFullPath(
+            $env:AAS_AUTOLOOP_COMPUTE_WORKSPACE
+        )
+        $computeConfig = Join-Path $computeWorkspace "config\research-compute.toml"
+        $computeBoundary = if (
+            -not [string]::IsNullOrWhiteSpace($env:USERPROFILE) -and
+            (
+                $computeWorkspace.StartsWith(
+                    [System.IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd(
+                        [System.IO.Path]::DirectorySeparatorChar,
+                        [System.IO.Path]::AltDirectorySeparatorChar
+                    ) + [System.IO.Path]::DirectorySeparatorChar,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            )
+        ) {
+            $env:USERPROFILE
+        } else {
+            [System.IO.Path]::GetPathRoot($computeWorkspace)
+        }
+        if (
+            -not (Test-Path -LiteralPath $computeConfig -PathType Leaf) -or
+            -not (Test-AasProtectedAclChain $computeConfig $computeBoundary)
+        ) {
+            throw "Compute data workspace is not owner-protected"
+        }
+        $env:AAS_AUTOLOOP_COMPUTE_WORKSPACE = $computeWorkspace
+    }
 }
 
 if ($credentialContract -and $null -eq ("AasRunnerGuard.NativeMethods" -as [type])) {

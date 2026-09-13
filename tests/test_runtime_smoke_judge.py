@@ -182,12 +182,15 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         source = self.root / "source"
         source.mkdir()
         (source / "input").write_text("copied", encoding="utf-8")
-        case = contract(fixtures=[{"to": "nested/content", "content": "{workspace}|{smoke_dir}|{skill_venv}"},
+        case = contract(fixtures=[{"to": "nested/content", "content": "{workspace}|{smoke_dir}|{home}|{skill_venv}"},
                                   {"to": "copy", "copy_from": "input"}])
         with patch.object(smoke, "RUNTIME_SOURCE_ROOT", source):
             smoke.materialize_smoke_fixtures(case, self.workspace, skill_venv="/private/venv")
         destination = self.smoke_dir / "nested" / "content"
-        self.assertEqual(destination.read_text(encoding="utf-8"), f"{self.workspace}|{self.smoke_dir}|/private/venv")
+        self.assertEqual(
+            destination.read_text(encoding="utf-8"),
+            f"{self.workspace}|{self.smoke_dir}|{self.smoke_dir / 'home'}|/private/venv",
+        )
         self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(destination.parent.stat().st_mode), 0o700)
         self.assertEqual((self.smoke_dir / "copy").read_text(encoding="utf-8"), "copied")

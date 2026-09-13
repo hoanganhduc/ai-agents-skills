@@ -64,7 +64,7 @@ Replace `<your login>` with the account name returned by `id -un`; it must match
 exactly the scheduler ID passed below. Add this single line to that user's crontab:
 
 ```cron
-*/10 * * * * L="$HOME/.local/share/ai-agents-skills/runtime/run_skill.sh"; W="$HOME/.openclaw/workspace"; S="$HOME/.local/state/ai-agents-skills"; (umask 077; mkdir -p "$S"); AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh reap >>"$S/hetzner-reaper.log" 2>&1 && AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind cron --scheduler-id "cron:user:$(id -un)" >>"$S/hetzner-reaper.log" 2>&1
+*/10 * * * * L="$HOME/.local/share/ai-agents-skills/runtime/run_skill.sh"; W="${XDG_DATA_HOME:-$HOME/.local/share}/ai-agents-skills/research-compute"; S="$HOME/.local/state/ai-agents-skills"; (umask 077; mkdir -p "$S"); AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh reap >>"$S/hetzner-reaper.log" 2>&1 && AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind cron --scheduler-id "cron:user:$(id -un)" >>"$S/hetzner-reaper.log" 2>&1
 ```
 
 `&&` is deliberate: only a successful `reap` may renew the lease. The launcher is
@@ -89,8 +89,8 @@ Description=Hetzner research-compute reaper (user-level)
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/.openclaw/workspace
-Environment=AAS_AUTOLOOP_COMPUTE_WORKSPACE=%h/.openclaw/workspace
+WorkingDirectory=%h/.local/share/ai-agents-skills/research-compute
+Environment=AAS_AUTOLOOP_COMPUTE_WORKSPACE=%h/.local/share/ai-agents-skills/research-compute
 Environment=AAS_COMPUTE_SECRETS_FILE=%h/.config/ai-agents-skills/compute.env
 UMask=0077
 ExecStart=%h/.local/share/ai-agents-skills/runtime/run_skill.sh skills/hetzner-research-compute/run_hetzner_reaper.sh reap
@@ -127,7 +127,7 @@ After installing one of the two schedulers, run the driver doctor and verify tha
 `reaper_lease.present` and `reaper_lease.fresh` are true:
 
 ```bash
-AAS_AUTOLOOP_COMPUTE_WORKSPACE="$HOME/.openclaw/workspace" \
+AAS_AUTOLOOP_COMPUTE_WORKSPACE="${XDG_DATA_HOME:-$HOME/.local/share}/ai-agents-skills/research-compute" \
   "$HOME/.local/share/ai-agents-skills/runtime/run_skill.sh" \
   skills/hetzner-research-compute/run_hetzner_research_compute.sh doctor
 ```

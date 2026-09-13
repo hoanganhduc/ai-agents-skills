@@ -449,7 +449,7 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
             self._refuses(self._contract(writes=writes), message="writes")
 
     def test_env_rejects_reserved_and_secret_shaped_names(self) -> None:
-        self._validate(self._contract(env={"AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{smoke_dir}/compute", "EXAMPLE": "{workspace}/file"}))
+        self._validate(self._contract(env={"AAS_AUTOLOOP_COMPUTE_WORKSPACE": "{home}/compute", "EXAMPLE": "{workspace}/file"}))
         reserved = (
             "HOME", "PATH", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE", "AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE",
             "AAS_SKILL_VENV", "AAS_RUNTIME_PYTHON_PREFIX", "OPENCLAW_WORKSPACE", "AAS_RUNTIME_PYTHON",
@@ -682,6 +682,18 @@ class RuntimeSmokeCoverageValidationTests(unittest.TestCase):
 
 
 class RuntimeSmokeManifestTests(unittest.TestCase):
+    def test_hetzner_live_checks_do_not_bind_to_each_runtime_workspace(self) -> None:
+        manifests = load_manifests()
+        live = manifests["runtime"]["skills"]["hetzner-research-compute"]["live_check"]
+
+        for name, contract in live.items():
+            with self.subTest(case=name):
+                self.assertEqual(contract["requires"].get("config_files", []), [])
+                self.assertIn(
+                    "AAS_COMPUTE_SECRETS_FILE",
+                    contract["requires"]["pointer_env"],
+                )
+
     def test_every_contract_has_expect(self) -> None:
         manifests = load_manifests()
         seen = 0

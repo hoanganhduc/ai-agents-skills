@@ -108,6 +108,7 @@ def reachable_canaries(
         interpreter_bin.mkdir()
         (interpreter_bin / "python3").symlink_to(sys.executable)
 
+        runtime_smoke.materialize_smoke_fixtures(smoke, runtime / "workspace")
         env = runtime_smoke.smoke_env(manifests, skill, runtime / "workspace")
         env["PATH"] = f"{interpreter_bin}:/usr/bin:/bin"
         completed = subprocess.run(

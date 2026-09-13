@@ -1475,8 +1475,13 @@ def normalize_runtime_command_target(target: str) -> str:
 
 
 def _smoke_replacements(workspace: Path, skill_venv: str | None = None) -> dict[str, str]:
-    return {"{workspace}": str(workspace), "{smoke_dir}": str(workspace / "runtime-smoke"),
-            "{skill_venv}": skill_venv or ""}
+    smoke_dir = workspace / "runtime-smoke"
+    return {
+        "{workspace}": str(workspace),
+        "{smoke_dir}": str(smoke_dir),
+        "{home}": str(smoke_dir / "home"),
+        "{skill_venv}": skill_venv or "",
+    }
 
 
 def _expand_smoke_value(value: str, replacements: dict[str, str]) -> str:

@@ -89,7 +89,7 @@ launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_s
 # scheduled reaper attests and every lease-gated verb fails closed. This must
 # name the same workspace as the reaper deployment in
 # references/reaper-deployment.md.
-export AAS_AUTOLOOP_COMPUTE_WORKSPACE="${AAS_AUTOLOOP_COMPUTE_WORKSPACE:-$HOME/.openclaw/workspace}"
+export AAS_AUTOLOOP_COMPUTE_WORKSPACE="${AAS_AUTOLOOP_COMPUTE_WORKSPACE:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-agents-skills/research-compute}"
 run() { "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 ```
 
@@ -123,7 +123,7 @@ On targets that install a local skill wrapper, that wrapper should forward to th
 runtime command target.
 
 ```bash
-AAS_AUTOLOOP_COMPUTE_WORKSPACE="$HOME/.openclaw/workspace" \
+AAS_AUTOLOOP_COMPUTE_WORKSPACE="${XDG_DATA_HOME:-$HOME/.local/share}/ai-agents-skills/research-compute" \
   skills/hetzner-research-compute/run_hetzner_research_compute.sh doctor
 ```
 

@@ -50,7 +50,14 @@ DOC_FILES = ("README.md", "SPEC.md")
 
 # Not code: version control and caches carry no claims, `docs/` is generated
 # Markdown, and `tests/` is checked as documentation-adjacent, never as a reader.
-NON_CODE_TOP_LEVEL = {".git", ".pytest_cache", "__pycache__", "docs", "tests"}
+NON_CODE_TOP_LEVEL = {
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "docs",
+    "research",
+    "tests",
+}
 
 # name pattern -> (file that builds the name, the exact expression that builds it)
 DYNAMIC_FAMILIES: tuple[tuple[str, str, str], ...] = (
