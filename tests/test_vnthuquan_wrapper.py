@@ -413,6 +413,22 @@ class UpstreamDefaultVenvIsFoundTests(unittest.TestCase):
             self.assertEqual(wrapper.host_interpreter(), "/usr/bin/python")
 
 
+class CurrentPackageDefaultsTests(unittest.TestCase):
+    def test_https_default_and_author_key_alias_are_exposed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            wrapper = load_wrapper(Path(raw))
+
+        self.assertEqual(
+            wrapper.default_config()["default_mirror"],
+            "https://vietnamthuquan.eu",
+        )
+        self.assertIn("--author-key", wrapper.QUEUE_SELECTOR_OPTIONS)
+        self.assertEqual(
+            wrapper.display_query(["--author-key", "kim-dung-284", "--limit", "2"]),
+            "",
+        )
+
+
 class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
     """A dead site and a missing install must not answer with the same payload.
 
@@ -424,16 +440,15 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
     to keep them.
     """
 
-    #: Verbatim from `vnthuquan doctor --json` against the live site, which has
-    #: moved off the URL the package probes and answers 404 on both mirrors.
+    #: Synthetic package failure preserving the current JSON contract.
     DOCTOR_DOWN = {
         "ok": False,
-        "version": "0.1.2.dev0",
+        "version": "0.1.2.dev1",
         "config_path": "/home/.../.config/vnthuquan/config.json",
         "download_dir": "/home/.../Downloads/vnthuquan",
         "download_dir_exists": False,
         "mirror": {
-            "url": "http://vietnamthuquan.eu",
+            "url": "https://vietnamthuquan.eu",
             "ok": False,
             "status_code": 404,
             "elapsed_seconds": 0.066,
@@ -441,19 +456,19 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
         },
     }
 
-    #: Verbatim from `vnthuquan mirrors check --json` against the same site.
+    #: Synthetic mirror failure preserving the current JSON contract.
     MIRRORS_DOWN = {
         "ok": False,
         "mirrors": [
             {
-                "url": "http://vietnamthuquan.eu",
+                "url": "https://vietnamthuquan.eu",
                 "ok": False,
                 "status_code": 404,
                 "elapsed_seconds": 0.067,
                 "error": "Not Found",
             },
             {
-                "url": "http://vnthuquan.net",
+                "url": "https://vnthuquan.net",
                 "ok": False,
                 "status_code": 404,
                 "elapsed_seconds": 0.765,
@@ -462,7 +477,7 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
         ],
     }
 
-    CONFIG_SHOW = {"ok": True, "config": {"default_mirror": "http://vietnamthuquan.eu"}}
+    CONFIG_SHOW = {"ok": True, "config": {"default_mirror": "https://vietnamthuquan.eu"}}
 
     def _wrapper(self, responses, *, installed: bool = True):
         """The wrapper talking to a package that answers `responses` and nothing else.
@@ -495,7 +510,7 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
         for name, replacement in (
             ("run_pkg", run_pkg),
             ("resolve_vnthuquan", resolve),
-            ("package_version", lambda: "0.1.2.dev0" if installed else None),
+            ("package_version", lambda: "0.1.2.dev1" if installed else None),
         ):
             patcher = mock.patch.object(wrapper, name, replacement)
             patcher.start()
@@ -524,7 +539,7 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
 
         payload = self._doctor_on_a_dead_site()
         self.assertEqual(payload["package_payload"]["mirror"]["status_code"], 404)
-        self.assertEqual(payload["package_payload"]["mirror"]["url"], "http://vietnamthuquan.eu")
+        self.assertEqual(payload["package_payload"]["mirror"]["url"], "https://vietnamthuquan.eu")
 
     def test_a_dead_site_and_a_missing_install_are_told_apart(self) -> None:
         """The two failures the wrapper used to report identically."""
@@ -548,7 +563,7 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
         payload = wrapper.mirrors(["check"])
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["subcommand"], "check")
-        self.assertEqual(payload["default_mirror"], "http://vietnamthuquan.eu")
+        self.assertEqual(payload["default_mirror"], "https://vietnamthuquan.eu")
         self.assertEqual(payload["count"], 2)
         self.assertEqual([row["status_code"] for row in payload["mirrors"]], [404, 404])
         self.assertEqual([row["latency_ms"] for row in payload["mirrors"]], [67, 765])
@@ -562,7 +577,7 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
         """
 
         payload = self._doctor_on_a_dead_site()
-        self.assertEqual(payload["message"], "mirror unreachable -- http://vietnamthuquan.eu: Not Found")
+        self.assertEqual(payload["message"], "mirror unreachable -- https://vietnamthuquan.eu: Not Found")
 
     def test_mirrors_check_names_every_mirror_that_failed(self) -> None:
         wrapper = self._wrapper(
@@ -572,8 +587,8 @@ class APackageFailureStillReportsWhatTheWrapperKnowsTests(unittest.TestCase):
             ]
         )
         message = wrapper.mirrors(["check"])["message"]
-        self.assertIn("http://vietnamthuquan.eu: Not Found", message)
-        self.assertIn("http://vnthuquan.net: Not Found", message)
+        self.assertIn("https://vietnamthuquan.eu: Not Found", message)
+        self.assertIn("https://vnthuquan.net: Not Found", message)
 
     def test_a_failed_search_reports_the_reason_and_the_query(self) -> None:
         """`search` is the only live check that exercises the surface the skill uses.

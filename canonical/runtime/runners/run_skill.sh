@@ -129,7 +129,25 @@ default_private_projection() {
   fi
 }
 
+select_default_compute_workspace() {
+  local data_home candidate config
+  if [ -n "${AAS_AUTOLOOP_COMPUTE_WORKSPACE:-}" ]; then
+    return
+  fi
+  data_home="${XDG_DATA_HOME:-}"
+  if [ -z "$data_home" ] && [ -n "${HOME:-}" ]; then
+    data_home="$HOME/.local/share"
+  fi
+  [ -n "$data_home" ] || return
+  candidate="$data_home/ai-agents-skills/research-compute"
+  config="$candidate/config/research-compute.toml"
+  if [ -f "$config" ] && [ ! -L "$config" ]; then
+    export AAS_AUTOLOOP_COMPUTE_WORKSPACE="$candidate"
+  fi
+}
+
 credential_contract=0
+uses_compute_workspace=0
 projection_pointer_env=AAS_UNUSED_SECRETS_FILE
 projection_format=env
 projection_no_load=1
@@ -231,6 +249,7 @@ case "$command_rel" in
     ;;
   skills/modal-research-compute/run_modal_research_compute.sh|skills/kaggle-research-compute/run_kaggle_research_compute.sh|skills/hetzner-research-compute/run_hetzner_research_compute.sh|skills/hetzner-research-compute/run_hetzner_reaper.sh)
     credential_contract=1
+    uses_compute_workspace=1
     [ -n "$compute_pointer" ] && export AAS_COMPUTE_SECRETS_FILE="$compute_pointer"
     projection_pointer_env=AAS_COMPUTE_SECRETS_FILE
     projection_retain_pointer=1
@@ -242,6 +261,7 @@ case "$command_rel" in
     ;;
   skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh|skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh)
     credential_contract=1
+    uses_compute_workspace=1
     [ -n "$compute_pointer" ] && export AAS_COMPUTE_SECRETS_FILE="$compute_pointer"
     [ -n "$provider_pointer" ] && export AAS_PROVIDER_SECRETS_FILE="$provider_pointer"
     projection_pointer_env=AAS_PROVIDER_SECRETS_FILE
@@ -305,6 +325,51 @@ trusted_metadata() {
     [ "$actual_type" = directory ] || return 1
   fi
 }
+
+trusted_compute_workspace() {
+  local candidate="$1" config current parent stop=/
+  case "$candidate" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case "/$candidate/" in
+    */../*|*/./*) return 1 ;;
+  esac
+  if [ -n "${HOME:-}" ]; then
+    case "$candidate/" in
+      "$HOME"/|"$HOME"/*) stop="$HOME" ;;
+    esac
+  fi
+  config="$candidate/config/research-compute.toml"
+  current="$config"
+  while :; do
+    [ ! -L "$current" ] || return 1
+    if [ "$current" = "$config" ]; then
+      trusted_metadata "$current" file || return 1
+    else
+      trusted_metadata "$current" directory || return 1
+    fi
+    [ "$current" = "$stop" ] && break
+    parent="${current%/*}"
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$current" ] || return 1
+    current="$parent"
+  done
+}
+
+if [ "$uses_compute_workspace" -eq 1 ]; then
+  select_default_compute_workspace
+  if [ -n "${AAS_AUTOLOOP_COMPUTE_WORKSPACE:-}" ]; then
+    if ! trusted_compute_workspace "$AAS_AUTOLOOP_COMPUTE_WORKSPACE"; then
+      printf 'compute data workspace is not owner-controlled\n' >&2
+      exit 127
+    fi
+    AAS_AUTOLOOP_COMPUTE_WORKSPACE="$(
+      cd -- "$AAS_AUTOLOOP_COMPUTE_WORKSPACE" && builtin pwd -P
+    )"
+    export AAS_AUTOLOOP_COMPUTE_WORKSPACE
+  fi
+fi
 
 trusted_command_chain() {
   local current="$command_path"

@@ -156,7 +156,15 @@ CALIBRE_TIMEOUT_SECONDS = 30
 CALIBRE_WRITE_TIMEOUT_SECONDS = int(os.environ.get("VNTHUQUAN_CALIBRE_WRITE_TIMEOUT_SECONDS", "180"))
 HELP_FLAGS = {"-h", "--help"}
 DOWNLOAD_SELECTOR_OPTIONS = {"--title", "--url", "--id"}
-QUEUE_SELECTOR_OPTIONS = {"--query", "--category", "--author-id", "--title", "--url", "--id"}
+QUEUE_SELECTOR_OPTIONS = {
+    "--query",
+    "--category",
+    "--author-id",
+    "--author-key",
+    "--title",
+    "--url",
+    "--id",
+}
 QUEUE_SCOPE_OPTIONS = {"--limit", "--pages"}
 NATIVE_HELP_COMMANDS = {
     "archive",
@@ -188,7 +196,7 @@ def ensure_dirs() -> None:
 
 def default_config() -> dict[str, Any]:
     return {
-        "default_mirror": "http://vietnamthuquan.eu",
+        "default_mirror": "https://vietnamthuquan.eu",
         "download_dir": str(DEFAULT_DOWNLOAD_DIR),
         "archive_path": str(ARCHIVE_PATH),
         "timeout": 30.0,
@@ -980,6 +988,7 @@ def display_query(args: list[str]) -> str:
         "--title",
         "--author",
         "--author-id",
+        "--author-key",
         "--category",
         "--field",
         "--format",
@@ -1095,8 +1104,16 @@ def queue(args: list[str]) -> dict[str, Any]:
     if has_option(args, "--from-manifest"):
         return normalize_error("queue", "use execute-queue for an existing manifest", "usage", 2)
     if not any(has_option(args, option) for option in QUEUE_SELECTOR_OPTIONS):
-        return normalize_error("queue", "queue requires --query, --category, --author-id, --title, --url, or --id", "usage", 2)
-    listing_queue = any(has_option(args, option) for option in {"--query", "--category", "--author-id"})
+        return normalize_error(
+            "queue",
+            "queue requires --query, --category, --author-key/--author-id, --title, --url, or --id",
+            "usage",
+            2,
+        )
+    listing_queue = any(
+        has_option(args, option)
+        for option in {"--query", "--category", "--author-id", "--author-key"}
+    )
     if listing_queue and not any(has_option(args, option) for option in QUEUE_SCOPE_OPTIONS):
         return normalize_error("queue", "listing queues require --limit or --pages to bound the crawl", "usage", 2)
 
@@ -1565,6 +1582,7 @@ def command_help_text(command: str) -> str | None:
 Usage:
   run_vnthuquan.sh queue --query QUERY --limit N [--format epub|pdf|text|audio] [--json]
   run_vnthuquan.sh queue --category CATEGORY --pages N [--format epub|pdf|text|audio] [--json]
+  run_vnthuquan.sh queue --author-key AUTHOR-KEY --limit N [--format epub|pdf|text|audio] [--json]
 
 Creates a dry-run queue manifest under the shared ai-agents-skills runs
 directory by default.

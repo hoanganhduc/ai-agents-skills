@@ -1687,8 +1687,11 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             data_workspace = root / "data-workspace"
             (data_workspace / "config").mkdir(parents=True)
             (data_workspace / "config" / "research-compute.toml").write_text(
-                "", encoding="utf-8"
+                'install_id = "test"\n', encoding="utf-8"
             )
+            for directory in (data_workspace, data_workspace / "config"):
+                directory.chmod(0o700)
+            (data_workspace / "config" / "research-compute.toml").chmod(0o600)
             env = self._env(root)
             env.update(
                 {
@@ -1720,6 +1723,115 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
             )
 
+    def test_outer_runner_selects_shared_compute_workspace_when_unpinned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._stage_entrypoint(
+                root,
+                skill="kaggle-research-compute",
+                wrapper="run_kaggle_research_compute.sh",
+                python_entrypoint="kaggle_research_compute.py",
+            )
+            runtime = wrapper.parents[3]
+            runner = runtime / "run_skill.sh"
+            self._copy_test_runner(runner)
+            runner.chmod(0o755)
+            compute_secrets = self._private_file(
+                root,
+                "compute.env",
+                "KAGGLE_API_TOKEN=restored-kaggle\n",
+            )
+            data_workspace = (
+                root / ".local" / "share" / "ai-agents-skills" / "research-compute"
+            )
+            (data_workspace / "config").mkdir(parents=True)
+            (data_workspace / "config" / "research-compute.toml").write_text(
+                'install_id = "test"\n', encoding="utf-8"
+            )
+            for directory in (
+                root / ".local",
+                root / ".local" / "share",
+                root / ".local" / "share" / "ai-agents-skills",
+                data_workspace,
+                data_workspace / "config",
+            ):
+                directory.chmod(0o700)
+            (data_workspace / "config" / "research-compute.toml").chmod(0o600)
+            env = self._env(root)
+            env["AAS_COMPUTE_SECRETS_FILE"] = str(compute_secrets)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(runner),
+                    "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+                    "doctor",
+                ],
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            child = json.loads(completed.stdout)
+            self.assertEqual(
+                child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
+            )
+
+    def test_outer_runner_rejects_an_unprotected_shared_compute_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._stage_entrypoint(
+                root,
+                skill="kaggle-research-compute",
+                wrapper="run_kaggle_research_compute.sh",
+                python_entrypoint="kaggle_research_compute.py",
+            )
+            runtime = wrapper.parents[3]
+            runner = runtime / "run_skill.sh"
+            self._copy_test_runner(runner)
+            runner.chmod(0o755)
+            compute_secrets = self._private_file(
+                root,
+                "compute.env",
+                "KAGGLE_API_TOKEN=must-not-run\n",
+            )
+            data_root = root / ".local"
+            data_workspace = (
+                data_root / "share" / "ai-agents-skills" / "research-compute"
+            )
+            (data_workspace / "config").mkdir(parents=True)
+            config = data_workspace / "config" / "research-compute.toml"
+            config.write_text('install_id = "test"\n', encoding="utf-8")
+            config.chmod(0o600)
+            data_root.chmod(0o777)
+            env = self._env(root)
+            env["AAS_COMPUTE_SECRETS_FILE"] = str(compute_secrets)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(runner),
+                    "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+                    "doctor",
+                ],
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 127)
+            self.assertIn("compute data workspace is not owner-controlled", completed.stderr)
+            self.assertEqual(completed.stdout, "")
+
     def test_outer_runner_retains_compute_workspace_pin_for_reaper_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1741,8 +1853,11 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             data_workspace = root / "data-workspace"
             (data_workspace / "config").mkdir(parents=True)
             (data_workspace / "config" / "research-compute.toml").write_text(
-                "", encoding="utf-8"
+                'install_id = "test"\n', encoding="utf-8"
             )
+            for directory in (data_workspace, data_workspace / "config"):
+                directory.chmod(0o700)
+            (data_workspace / "config" / "research-compute.toml").chmod(0o600)
             env = self._env(root)
             env.update(
                 {
@@ -2007,6 +2122,16 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         disposed = runner.index("$commandGuard.Stream.Dispose()")
         self.assertLess(opened, invoked)
         self.assertLess(invoked, disposed)
+
+    def test_windows_runner_preserves_the_shared_compute_workspace(self) -> None:
+        runner = (RUNTIME_SOURCE / "runners" / "run_skill.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Set-AasDefaultComputeWorkspace", runner)
+        self.assertIn('"AAS_AUTOLOOP_COMPUTE_WORKSPACE"', runner)
+        self.assertIn('"ai-agents-skills\\research-compute"', runner)
+        self.assertIn("Test-AasProtectedAclChain $computeConfig $computeBoundary", runner)
 
     @unittest.skipUnless(
         os.name == "posix",
