@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .agents import antigravity_legacy_plugin_dir, target_for
 from .capabilities import (
     existing_parents,
     normalized_path_within,
@@ -23,10 +24,15 @@ from .state import (
     backup_file,
     load_state,
     now_run_id,
+    prepare_state_directory,
+    preflight_state_path,
+    run_record_path,
     save_state,
     sha256_file,
     sha256_text,
     signatures_match,
+    state_dir,
+    state_file,
     symlink_atomic,
     upsert_artifact,
     upsert_run,
@@ -44,6 +50,9 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         preflight_plan(root, plan["actions"])
         return {"run_id": run_id, "dry_run": True, "actions": plan["actions"]}
     require_handle_bound_mutation("install apply")
+    require_private_pending_retirement_journal(root)
+    state = load_state(root)
+    recover_pending_retired_removals(root, state)
     if not plan["actions"]:
         return {"run_id": run_id, "dry_run": False, "actions": []}
 
@@ -57,7 +66,17 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         save_state(root, state)
     for action in plan["actions"]:
         previous_state_artifact = find_state_artifact(state, action)
-        result = apply_action(root, run_id, action)
+        pending_marker: Path | None = None
+        action_to_apply = action
+        if action.get("retired_artifact") and action.get("operation") == "remove-obsolete":
+            action_to_apply, pending_marker = prepare_pending_retired_removal(
+                root,
+                run_id,
+                action,
+                state,
+                previous_state_artifact,
+            )
+        result = apply_action(root, run_id, action_to_apply)
         recorded_result = dict(result)
         if previous_state_artifact is not None:
             recorded_result["previous_state_artifact"] = previous_state_artifact
@@ -81,6 +100,13 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         upsert_run(state, run_id, len(applied))
         save_state(root, state)
         write_run_record(root, run_id, applied)
+        if pending_marker is not None:
+            fsync_path_and_parent(state_file(root))
+            fsync_path_and_parent(run_record_path(root, run_id))
+            quarantine_text = action_to_apply.get("retired_quarantine")
+            if quarantine_text:
+                Path(str(quarantine_text)).unlink(missing_ok=True)
+            pending_marker.unlink(missing_ok=True)
     # An instructions file holds a block per skill, and only the block that
     # created it records having done so.  Uninstall is scoped, so the block
     # removed last is usually not that one, and by then the record holding the
@@ -472,6 +498,29 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     before = path.read_text(encoding="utf-8") if path.exists() else ""
     result["previous_hash"] = sha256_text(before)
     result["previous_signature"] = artifact_signature(path)
+    if action.get("operation") == "remove-managed-block":
+        marker = f"ai-agents-skills:{action['skill']}"
+        start_marker = f"<!-- {marker}:start -->"
+        end_marker = f"<!-- {marker}:end -->"
+        if before.count(start_marker) != 1 or before.count(end_marker) != 1:
+            raise ValueError("managed writing-instructions block is malformed or duplicated")
+        start = before.index(start_marker)
+        end = before.index(end_marker, start) + len(end_marker)
+        if end < len(before) and before[end] == "\n":
+            end += 1
+        after = before[:start] + before[end:]
+        backup = backup_file(root, run_id, path)
+        if action.get("delete_instruction_file_if_empty") and not after.strip():
+            path.unlink()
+        else:
+            write_text_atomic(path, after)
+        result["managed"] = True
+        result["applied"] = True
+        result["backup"] = str(backup) if backup else None
+        result["state_operation"] = "remove"
+        result["new_hash"] = sha256_file(path)
+        result["installed_signature"] = artifact_signature(path)
+        return result
     if action.get("operation") in {"skip", "noop"}:
         result["managed"] = action.get("operation") == "noop"
         result["applied"] = False
@@ -556,10 +605,35 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
         result["reason"] = "managed file changed since install"
         result["installed_signature"] = current_signature
         return result
-    backup = backup_file(root, run_id, path)
+    prepared_backup = action.get("prepared_backup")
+    backup = Path(str(prepared_backup)) if prepared_backup else backup_file(root, run_id, path)
     result["backup"] = str(backup) if backup else None
+    if action.get("retired_artifact"):
+        if not retired_writing_path_authorized(root, action):
+            raise ValueError("retired writing document path is not authorized for this target")
+        if backup is None or not signatures_match(artifact_signature(backup), current_signature):
+            raise ValueError("retired writing document backup verification failed")
+        result["backup_verified"] = True
     if path.exists() or path.is_symlink():
-        path.unlink()
+        if action.get("retired_artifact"):
+            quarantine_text = action.get("retired_quarantine")
+            if quarantine_text:
+                quarantine = Path(str(quarantine_text))
+            else:
+                quarantine_dir = state_dir(root) / "retired-quarantine" / run_id
+                prepare_state_directory(root, quarantine_dir)
+                quarantine = quarantine_dir / (sha256_text(str(path))[7:31] + ".removed")
+            preflight_state_path(root, quarantine)
+            if quarantine.exists() or quarantine.is_symlink():
+                raise ValueError("retired writing document quarantine path already exists")
+            os.replace(path, quarantine)
+            if not signatures_match(artifact_signature(quarantine), current_signature):
+                if not path.exists() and not path.is_symlink():
+                    os.replace(quarantine, path)
+                raise ValueError("retired writing document changed during atomic quarantine")
+            fsync_path_and_parent(quarantine)
+        else:
+            path.unlink()
         if action.get("artifact_type") == "skill-support-file":
             cleanup_created_parent_dirs(root, action.get("created_parent_dirs", []))
         result["applied"] = True
@@ -567,6 +641,238 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
         result["applied"] = False
     result["installed_signature"] = artifact_signature(path)
     return result
+
+
+def pending_retired_removal_dir(root: Path) -> Path:
+    return state_dir(root) / "pending-retired-removals"
+
+
+def prepare_pending_retired_removal(
+    root: Path,
+    run_id: str,
+    action: dict[str, Any],
+    state: dict[str, Any],
+    previous_state_artifact: dict[str, Any] | None,
+) -> tuple[dict[str, Any], Path]:
+    if not retired_writing_path_authorized(root, action):
+        raise ValueError("retired writing document path is not authorized for this target")
+    path = Path(action["path"])
+    current = artifact_signature(path)
+    if current.get("kind") != "file" or not signatures_match(current, action.get("installed_signature")):
+        raise ValueError("retired writing document changed before removal preparation")
+    backup = backup_file(root, run_id, path)
+    if backup is None or not signatures_match(artifact_signature(backup), current):
+        raise ValueError("retired writing document backup verification failed")
+    fsync_path_and_parent(backup)
+    directory = pending_retired_removal_dir(root)
+    prepare_state_directory(root, directory)
+    marker_name = sha256_text(artifact_key(action))[7:31] + ".json"
+    marker = directory / marker_name
+    quarantine_dir = state_dir(root) / "retired-quarantine" / run_id
+    prepare_state_directory(root, quarantine_dir)
+    quarantine = quarantine_dir / (sha256_text(str(path))[7:31] + ".removed")
+    preflight_state_path(root, quarantine)
+    preflight_state_path(root, marker)
+    payload = {
+        "schema_version": "pending-retired-removal.v1",
+        "run_id": run_id,
+        "artifact_key": artifact_key(action),
+        "artifact": str(path),
+        "backup": str(backup),
+        "expected_signature": current,
+        "had_state_record": previous_state_artifact is not None,
+        "quarantine": str(quarantine),
+        "agent": action.get("agent"),
+        "artifact_id": action.get("artifact_id"),
+        "artifact_name": action.get("artifact_name"),
+        "authority_state_key": (
+            previous_state_artifact.get("key")
+            if previous_state_artifact is not None
+            else retired_writing_authority_key(state, action)
+        ),
+    }
+    write_text_atomic(marker, json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+    fsync_path_and_parent(marker)
+    prepared = dict(action)
+    prepared["prepared_backup"] = str(backup)
+    prepared["pending_removal_marker"] = str(marker)
+    prepared["retired_quarantine"] = str(quarantine)
+    return prepared, marker
+
+
+def recover_pending_retired_removals(root: Path, state: dict[str, Any]) -> None:
+    directory = pending_retired_removal_dir(root)
+    if not directory.exists():
+        return
+    preflight_state_path(root, directory)
+    for marker in sorted(directory.glob("*.json")):
+        preflight_state_path(root, marker)
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid pending retired-removal marker: {marker}") from exc
+        if payload.get("schema_version") != "pending-retired-removal.v1":
+            raise ValueError(f"unsupported pending retired-removal marker: {marker}")
+        path = Path(str(payload.get("artifact", "")))
+        backup = Path(str(payload.get("backup", "")))
+        quarantine = Path(str(payload.get("quarantine", "")))
+        if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
+            raise ValueError(f"pending retired-removal path is outside selected root: {path}")
+        marker_action = {
+            "agent": payload.get("agent"),
+            "artifact_id": payload.get("artifact_id"),
+            "artifact_name": payload.get("artifact_name"),
+            "path": str(path),
+        }
+        if not retired_writing_path_authorized(root, marker_action):
+            raise ValueError(f"pending retired-removal path is not authorized: {path}")
+        authority_key = payload.get("authority_state_key")
+        authority_records = [
+            *state.get("artifacts", []),
+            *state.get("uninstall_records", []),
+        ]
+        run_committed = retired_run_record_committed(root, payload)
+        state_run_seen = any(
+            isinstance(item, dict) and item.get("run_id") == payload.get("run_id")
+            for item in state.get("runs", [])
+        )
+        if not run_committed and not state_run_seen and not any(
+            isinstance(item, dict)
+            and item.get("key") == authority_key
+            and item.get("agent") == payload.get("agent")
+            and item.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            for item in authority_records
+        ):
+            raise ValueError(f"pending retired-removal authority record is missing: {marker}")
+        preflight_state_path(root, backup)
+        preflight_state_path(root, quarantine)
+        expected = payload.get("expected_signature")
+        if not isinstance(expected, dict) or expected.get("kind") != "file":
+            raise ValueError(f"pending retired-removal signature is invalid: {marker}")
+        if not signatures_match(artifact_signature(backup), expected):
+            raise ValueError(f"pending retired-removal backup changed: {backup}")
+        committed = run_committed
+        current = artifact_signature(path)
+        quarantined = artifact_signature(quarantine)
+        if quarantined.get("exists") and not signatures_match(quarantined, expected):
+            raise ValueError(f"pending retired-removal quarantine changed: {quarantine}")
+        if not current.get("exists"):
+            if not committed:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if quarantined.get("exists"):
+                    os.replace(quarantine, path)
+                else:
+                    shutil.copy2(backup, path)
+                if not signatures_match(artifact_signature(path), expected):
+                    raise ValueError(f"pending retired-removal recovery failed: {path}")
+            elif quarantined.get("exists"):
+                quarantine.unlink()
+        elif not signatures_match(current, expected) or committed:
+            raise ValueError(f"pending retired-removal target is ambiguous: {path}")
+        elif quarantined.get("exists"):
+            quarantine.unlink()
+        marker.unlink()
+
+
+def require_private_pending_retirement_journal(root: Path) -> None:
+    directory = pending_retired_removal_dir(root)
+    if os.name != "posix" or not directory.exists():
+        return
+    current_uid = os.getuid()
+    for path in [state_dir(root), directory, *sorted(directory.glob("*.json"))]:
+        info = path.stat(follow_symlinks=False)
+        if info.st_uid != current_uid or info.st_mode & 0o077:
+            raise ValueError(f"pending retired-removal journal is not owner-private: {path}")
+
+
+def fsync_path_and_parent(path: Path) -> None:
+    if os.name != "posix" or not path.exists():
+        return
+    file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        os.fsync(file_fd)
+    finally:
+        os.close(file_fd)
+    directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def retired_writing_allowed_paths(root: Path, agent: str) -> set[Path]:
+    try:
+        target = target_for(root, agent)
+    except ValueError:
+        return set()
+    paths = {
+        target.target_dir_for("instruction-doc") / "claim-preserving-writing.md"
+    }
+    if agent == "antigravity":
+        legacy = antigravity_legacy_plugin_dir(root)
+        if legacy is not None:
+            paths.add(legacy / "rules" / "claim-preserving-writing.md")
+    return {Path(os.path.abspath(path)) for path in paths}
+
+
+def retired_writing_path_authorized(root: Path, action: dict[str, Any]) -> bool:
+    if action.get("artifact_id") != "instruction-doc:claim-preserving-writing":
+        return False
+    if action.get("artifact_name") not in {None, "claim-preserving-writing"}:
+        return False
+    path = Path(os.path.abspath(str(action.get("path", ""))))
+    return path in retired_writing_allowed_paths(root, str(action.get("agent", "")))
+
+
+def retired_writing_authority_key(state: dict[str, Any], action: dict[str, Any]) -> str | None:
+    expected = action.get("installed_signature")
+    for item in state.get("artifacts", []):
+        if not isinstance(item, dict):
+            continue
+        if (
+            item.get("agent") == action.get("agent")
+            and item.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+            and any(
+                signatures_match(expected, signature)
+                for signature in recorded_state_signatures(item)
+            )
+        ):
+            return str(item.get("key"))
+    return None
+
+
+def recorded_state_signatures(record: dict[str, Any]) -> list[dict[str, Any]]:
+    signatures: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = record
+    while isinstance(current, dict):
+        signature = current.get("installed_signature")
+        if isinstance(signature, dict):
+            signatures.append(signature)
+        previous = current.get("previous_state_artifact")
+        current = previous if isinstance(previous, dict) else None
+    return signatures
+
+
+def retired_run_record_committed(root: Path, payload: dict[str, Any]) -> bool:
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str):
+        return False
+    try:
+        path = run_record_path(root, run_id)
+        preflight_state_path(root, path)
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    actions = record.get("actions") if isinstance(record, dict) else None
+    if not isinstance(actions, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("key") == payload.get("artifact_key")
+        and item.get("artifact_id") == "instruction-doc:claim-preserving-writing"
+        and item.get("state_operation") == "remove"
+        for item in actions
+    )
 
 
 def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
@@ -648,6 +954,9 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "managed_id",
         "managed_body",
         "compat_table_policy",
+        "retired_artifact",
+        "blocked_consumers",
+        "router_phase",
     ):
         if key in action:
             result[key] = action[key]

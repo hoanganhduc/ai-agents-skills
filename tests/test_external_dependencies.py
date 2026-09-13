@@ -606,16 +606,22 @@ class ExternalDependencyEnvironmentTests(unittest.TestCase):
                 "PIP_INDEX_URL": "https://private.example/simple",
                 "PYTHONPATH": "/private/python",
                 "PATH": "/private/bin",
+                "SYSTEMROOT": str(home / "hostile-windows"),
             }
             with mock.patch.dict(os.environ, inherited, clear=False):
                 env = _child_environment(home)
-            for name in set(inherited) - {"PATH"}:
+            for name in set(inherited) - {"PATH", "SYSTEMROOT"}:
                 self.assertNotIn(name, env)
             self.assertEqual(env["PIP_CONFIG_FILE"], os.devnull)
             self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
             self.assertEqual(env["PYTHONNOUSERSITE"], "1")
             self.assertEqual(env["HOME"], str(home))
             self.assertEqual(env["PATH"], os.defpath)
+            if os.name == "nt":
+                self.assertTrue(Path(env["SYSTEMROOT"]).is_absolute())
+                self.assertNotEqual(env["SYSTEMROOT"], inherited["SYSTEMROOT"])
+            else:
+                self.assertNotIn("SYSTEMROOT", env)
 
     def test_child_process_uses_private_cwd_when_invoked_from_a_hostile_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

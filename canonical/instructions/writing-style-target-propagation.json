@@ -7,51 +7,51 @@
     {
       "target": "codex",
       "target_status": "installed",
-      "destination": ".codex/instructions/",
+      "destination": ".codex/instructions/ with a managed AGENTS.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "claude",
       "target_status": "installed",
-      "destination": ".claude/instructions/",
+      "destination": ".claude/instructions/ with a managed CLAUDE.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "deepseek",
       "target_status": "installed",
-      "destination": ".deepseek/instructions/",
+      "destination": ".deepseek/instructions/ with a managed AGENTS.md routing block; native loading remains unverified without a compatible CLI",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "opencode",
       "target_status": "installed",
-      "destination": "opencode instruction-doc surface",
+      "destination": "opencode instruction-doc surface with a managed global AGENTS.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "antigravity",
       "target_status": "installed",
-      "destination": "antigravity plugin rules surface",
+      "destination": "antigravity plugin rules surface with a managed global GEMINI.md routing block",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
     },
     {
       "target": "grok",
-      "target_status": "unverified",
-      "destination": ".grok/rules/ (copied; home-scope rules loading remains unverified)",
+      "target_status": "installed",
+      "destination": ".grok/rules/ (native global-rule discovery verified with Grok 1.0.5)",
       "artifact_profile": "workflow-instructions",
-      "release_disposition": "accepted-follow-up"
+      "release_disposition": "satisfied"
     },
     {
       "target": "kimi",
-      "target_status": "fallback-only",
-      "destination": ".kimi-code/instructions/ (inert managed storage referenced by skills)",
+      "target_status": "installed",
+      "destination": ".kimi-code/instructions/ (inert managed storage activated by a managed AGENTS.md router and native skills)",
       "artifact_profile": "workflow-instructions",
-      "release_disposition": "accepted-follow-up"
+      "release_disposition": "satisfied"
     },
     {
       "target": "chatgpt-local-coder",

@@ -25,11 +25,24 @@ without acquiring edit authority.
   - code-writing policy;
   - a new review gate, skill, schema, validator, receipt, registry, dependency
     mechanism, or automatic edit application;
-  - automatic cleanup of compatibility instruction copies installed by an
-    older manifest; the installer has no generic retired-artifact sweep, so
-    that upgrade path requires a separately scoped installer change;
-  - installing to real agent homes, submitting reviews, deleting source
-    material, committing, or pushing.
+  - submitting reviews, deleting source material, changing code-writing rules,
+    editing provider/MCP/hook configuration, committing, or pushing.
+
+## Follow-up: Installed Target Activation
+
+The approved follow-up adds the previously excluded installer upgrade path.
+It is limited to the four writing instructions and their existing consumers.
+
+- Add a short managed routing block on targets whose instruction-doc directory
+  is not a proven native auto-load surface. Keep Grok on its native rules
+  surface.
+- Refresh only already-managed writing-policy consumer skills; never create an
+  absent consumer as a side effect of selecting instruction documents.
+- Retire installed `claim-preserving-writing.md` copies only when their exact
+  state records and signatures authorize removal and all replacements are
+  active.
+- Add sanitized, version-scoped loader checks, with Codex as the primary native
+  acceptance target.
 
 ## Assumptions
 
@@ -52,6 +65,14 @@ without acquiring edit authority.
 
 - Four canonical prose instructions and one writing-review template install
   through the existing artifact system.
+- A full or previously completed four-document install produces an active
+  target-appropriate route without duplicating policy text.
+- Partial, modified, or untrusted document sets cannot leave an active managed
+  writing router behind.
+- Already-managed writing consumers update only when their installed signatures
+  still match state; user-modified and absent consumers are preserved.
+- Retired compatibility copies are removed last, backed up, rollback-capable,
+  and never removed when a live consumer still references them.
 - Retired compatibility documents have no live consumer or manifest reference.
 - New requirements have contiguous IDs, sources, anchors, tests, matrix rows,
   and registry allocations.

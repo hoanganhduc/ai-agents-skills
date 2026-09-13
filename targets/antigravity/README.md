@@ -19,6 +19,10 @@ directory. Plugin payloads are grouped under the managed `ai-agents-skills`
 plugin so personas, rules, templates, hook config, and MCP config have a native
 Antigravity package boundary.
 
+Writing documents are routed through the managed global `GEMINI.md` block, so
+activation does not depend on whether a plugin import lists a `rules`
+component. The rule documents remain separate and are not inlined.
+
 The managed `mcp_config.json`, `hooks.json`, and `settings.json` scaffolds are
 no-op JSON files by default. They establish reversible installer ownership of
 the native surfaces without enabling unknown servers, commands, hooks, models,
