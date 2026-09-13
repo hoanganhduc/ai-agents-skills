@@ -45,6 +45,18 @@ Keep claims separate from evidence, assumptions, caveats, and open gaps. Do not
 make unsupported claims sound more certain. Preserve caveats unless the user
 explicitly asks to change them.
 
+Before substantive drafting or rewriting that could change an argument, extract
+the atomic claims and map each substantive claim to its support. Freeze the
+claims that must remain unchanged and list any claims that the author allows to
+evolve. After revision, audit every added, removed, strengthened, weakened, or
+unsupported claim, together with every change to a caveat or support mapping.
+Remove unsupported additions or obtain explicit acceptance for them. A revision
+is not ready until its caveats and limitations still match the intended
+argument and the claim-level changes are visible.
+
+Purely mechanical edits that cannot alter a claim, such as correcting a typo or
+normalizing whitespace, do not require a claim ledger.
+
 ## Audience And Purpose
 
 Choose wording for the reader and task. Prefer direct explanations over
@@ -57,11 +69,30 @@ Organize prose so the reader sees the purpose before the details. Use headings,
 short paragraphs, and local transitions where they reduce ambiguity. Avoid
 duplicated explanations and unused definitions.
 
+Give each paragraph one main job. A paragraph break should mark a new step in
+the explanation rather than serve as decoration.
+
 ## Sentence-Level Defaults
 
 Use short, precise sentences. Prefer common terminology over private names. When
 a non-common concept is necessary, define it before first use and explain its
 role briefly.
+
+## Grammar And Scope
+
+An opening participial phrase must modify the grammatical subject of its main
+clause. If the intended actor differs, replace the phrase with an explicit
+clause; otherwise the sentence attributes the action to the wrong object.
+
+Use commas to distinguish a nonrestrictive clause from a restrictive clause.
+Set off information that can be removed without changing the referent, and do
+not set off information that selects the referent. Determine the distinction
+from meaning rather than mechanically from `that` versus `which`. Insert a
+comma when its absence would make scope ambiguous or place two mathematical
+symbols next to one another without a readable boundary.
+
+Choose `a` or `an` by the pronunciation of the following word, symbol,
+abbreviation, or initialism, not by its first written letter.
 
 ## Research-Paper Sentence Openings
 

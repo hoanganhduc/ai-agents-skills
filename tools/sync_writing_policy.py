@@ -47,6 +47,10 @@ INDEX_SPECS = MappingProxyType({
         "overlay_ref",
         "canonical/instructions/graph-combinatorics-style.md",
     ),
+    "mathscinet-zbmath-review-style.index.json": (
+        "overlay_ref",
+        "canonical/instructions/mathscinet-zbmath-review-style.md",
+    ),
 })
 
 

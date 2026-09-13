@@ -52,6 +52,22 @@ Routing rule for review-only requests:
 - if the user asks for a multi-agent review, use `agent-group-discuss`
 - do not auto-route review-only requests to `annotated-review`
 
+If the request names Mathematical Reviews/MathSciNet or zbMATH, an assignment
+from either service, or a copy supplied by either service, load
+`mathscinet-zbmath-review-style.md` and complete its provenance gate before
+library lookup, attachment opening, parsing, annotation, compilation, logging,
+or delegation. A restricted or unresolved assignment must stop before content
+access; annotation does not create an exception.
+
+If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
+stop before content access, ref resolution, tool invocation, prompt assembly,
+artifact persistence, or delegation. Do not reconstruct its rules from memory.
+
+Even when a separately obtained public copy is authorized for content
+processing, do not compile it merely because this skill is active. Compilation
+requires separate user authorization and a containment review; the
+bibliographic-review writing route never supplies that authority.
+
 ## Strict Zotero rule
 
 Zotero is off by default for reviews.
@@ -129,9 +145,16 @@ Final review or annotation artifacts should include `style_profile_ref`,
 `style_applied: true` value is not enough unless it is backed by the workflow's
 record of the loaded policy and selected requirements.
 
+When an annotation body or review finding proposes replacement prose, follow
+the Writing Recommendation Contract in `writing-review.md`. Tie literal text to
+the affected frozen claim IDs, evidence refs, and active requirement IDs, and
+flag changes to claims, caveats, citations, or support. The recommendation is
+advisory; do not mutate the authoritative source during a review-only phase.
+
 ## Recommended templates
 
 When this skill is involved, consider these workflow templates (install via
 the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
 - `cross-agent-adversarial-review` -- Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.
+- `writing-review` -- Independent review-to-revision handoff using existing claim ledgers, V1 packets, and parent-owned acceptance.

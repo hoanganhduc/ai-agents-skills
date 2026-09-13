@@ -16,7 +16,7 @@
         "required": ["target", "target_status", "destination", "artifact_profile", "release_disposition"],
         "additionalProperties": false,
         "properties": {
-          "target": {"enum": ["codex", "claude", "deepseek", "opencode", "antigravity", "copilot", "openclaw"]},
+          "target": {"enum": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi", "copilot", "openclaw"]},
           "target_status": {"enum": ["installed", "absent", "unsupported", "fallback-only", "blocked", "unverified"]},
           "destination": {"type": "string"},
           "artifact_profile": {"type": "string"},

@@ -9,6 +9,7 @@
         "template:tasks-todo",
         "template:draft-claim-ledger",
         "template:draft-revision-map",
+        "template:writing-review",
         "template:research-scope-brief",
         "template:research-evidence-matrix",
         "template:research-verification-checklist",
@@ -50,11 +51,13 @@
         "template:manager-worker-research-review",
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
+        "template:writing-review",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
-        "instruction-doc:graph-combinatorics-style"
+        "instruction-doc:graph-combinatorics-style",
+        "instruction-doc:mathscinet-zbmath-review-style"
       ]
     },
     "workflow-instructions": {
@@ -69,7 +72,7 @@
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
         "instruction-doc:graph-combinatorics-style",
-        "instruction-doc:claim-preserving-writing",
+        "instruction-doc:mathscinet-zbmath-review-style",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
@@ -77,7 +80,6 @@
         "instruction-doc:github-actions-offload-routing",
         "instruction-doc:compute-offload-routing",
         "instruction-doc:scrapling-integration",
-        "instruction-doc:language-style-rules",
         "instruction-doc:autonomous-loop-enforcement",
         "instruction-doc:provider-credit-quota"
       ]
@@ -141,9 +143,10 @@
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
         "instruction-doc:graph-combinatorics-style",
-        "instruction-doc:claim-preserving-writing",
+        "instruction-doc:mathscinet-zbmath-review-style",
         "template:draft-claim-ledger",
-        "template:draft-revision-map"
+        "template:draft-revision-map",
+        "template:writing-review"
       ]
     },
     "workflow-artifacts": {
@@ -154,6 +157,7 @@
         "template:tasks-todo",
         "template:draft-claim-ledger",
         "template:draft-revision-map",
+        "template:writing-review",
         "template:research-scope-brief",
         "template:research-evidence-matrix",
         "template:research-verification-checklist",
@@ -187,7 +191,7 @@
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
         "instruction-doc:graph-combinatorics-style",
-        "instruction-doc:claim-preserving-writing",
+        "instruction-doc:mathscinet-zbmath-review-style",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
@@ -195,7 +199,6 @@
         "instruction-doc:github-actions-offload-routing",
         "instruction-doc:compute-offload-routing",
         "instruction-doc:scrapling-integration",
-        "instruction-doc:language-style-rules",
         "instruction-doc:autonomous-loop-enforcement",
         "instruction-doc:provider-credit-quota",
         "agent-persona:literature-scout",
@@ -303,6 +306,21 @@
           "antigravity"
         ],
         "depends_on_skills": [
+          "draft-writing"
+        ]
+      },
+      "writing-review": {
+        "description": "Independent review-to-revision handoff using existing claim, style, citation, delegation, and final-gate contracts.",
+        "source": "writing-review.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity"
+        ],
+        "depends_on_skills": [
+          "cross-agent-delegation",
           "draft-writing"
         ]
       },
@@ -769,22 +787,6 @@
           "antigravity"
         ]
       },
-      "claim-preserving-writing": {
-        "description": "Guidance for preserving claims, evidence, caveats, and revision deltas during drafting.",
-        "source": "claim-preserving-writing.md",
-        "supported_agents": [
-          "codex",
-          "claude",
-          "deepseek",
-          "opencode",
-          "antigravity",
-          "grok",
-          "kimi"
-        ],
-        "depends_on_skills": [
-          "draft-writing"
-        ]
-      },
       "writing-style-settings": {
         "description": "Canonical general writing-style policy for writing-producing workflows.",
         "source": "writing-style-settings.md",
@@ -814,6 +816,19 @@
       "graph-combinatorics-style": {
         "description": "Graph-theoretic and combinatorial terminology, notation, and sentence-construction overlay.",
         "source": "graph-combinatorics-style.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity",
+          "grok",
+          "kimi"
+        ]
+      },
+      "mathscinet-zbmath-review-style": {
+        "description": "Mathematical Reviews/MathSciNet and zbMATH bibliographic-review overlay with provenance-first source controls.",
+        "source": "mathscinet-zbmath-review-style.md",
         "supported_agents": [
           "codex",
           "claude",
@@ -915,17 +930,6 @@
       "scrapling-integration": {
         "description": "Guidance for browser-heavy extraction when default web tooling is insufficient.",
         "source": "scrapling-integration.md",
-        "supported_agents": [
-          "codex",
-          "claude",
-          "deepseek",
-          "opencode",
-          "antigravity"
-        ]
-      },
-      "language-style-rules": {
-        "description": "Portable language and file-type style notes adapted from local agent rules.",
-        "source": "language-style-rules.md",
         "supported_agents": [
           "codex",
           "claude",

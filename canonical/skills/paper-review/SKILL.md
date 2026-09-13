@@ -25,6 +25,20 @@ In that case, use `annotated-review` instead.
 If the user explicitly asks for multiple agents, a panel, or a multi-agent review,
 use `agent-group-discuss` instead of this skill.
 
+If the user asks to write a Mathematical Reviews/MathSciNet or zbMATH public
+bibliographic review, route to `draft-writing` with
+`mathscinet-zbmath-review-style.md` instead of this referee-style workflow.
+
+If the request names either service, an assignment from either service, or a
+copy supplied by either service, load `mathscinet-zbmath-review-style.md` and complete its provenance gate
+before library lookup, attachment opening, parsing, browsing, logging, or
+delegation. Unknown or mixed provenance stops the workflow before content
+access.
+
+If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
+stop before content access, ref resolution, tool invocation, prompt assembly,
+artifact persistence, or delegation. Do not reconstruct its rules from memory.
+
 ## Document lookup order for review tasks
 
 If the user did not already provide a source path, attached file, PDF, or source tree:
@@ -82,6 +96,23 @@ review-only request unless the user also asked to formalize or prove.
 - For review-only requests, stop after the review. Do not annotate, store notes,
   patch manuscripts, retrieve extra nonessential artifacts, or begin fixes
   unless the user explicitly asks for those actions.
+
+### Book-specific branch
+
+When reviewing a book, also assess the intended audience and prerequisites;
+organization and navigation; proof and exposition quality; examples and
+exercises; figures; index, glossary, and notation aids; and the bibliography's
+attribution and currency. Select only the factors material to the requested
+review. If a venue or commissioning context is supplied, report venue fit
+separately from correctness and exposition.
+
+## Revision Recommendations
+
+When recommending a revision, follow the Writing Recommendation Contract in
+`writing-review.md`. Tie any literal replacement text to the affected frozen
+claim IDs, evidence refs, and active requirement IDs; flag any change to a
+claim, caveat, citation, or support mapping. Recommendations remain advisory
+and must not be applied during a review-only request.
 
 ## Local And Global Errors
 
@@ -160,3 +191,4 @@ When this skill is involved, consider these workflow templates (install via
 the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
 - `cross-agent-adversarial-review` -- Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.
+- `writing-review` -- Independent review-to-revision handoff using existing claim ledgers, V1 packets, and parent-owned acceptance.

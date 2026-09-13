@@ -1,8 +1,8 @@
 {
   "schema_version": "writing-style.target-propagation.v1",
-  "generated_for_release": "2026-06-20",
+  "generated_for_release": "2026-09-13",
   "policy_ref": "canonical/instructions/writing-style-settings.md",
-  "overlay_refs": ["canonical/instructions/math-manuscript-style.md"],
+  "overlay_refs": ["canonical/instructions/math-manuscript-style.md", "canonical/instructions/graph-combinatorics-style.md", "canonical/instructions/mathscinet-zbmath-review-style.md"],
   "rows": [
     {
       "target": "codex",
@@ -38,6 +38,20 @@
       "destination": "antigravity plugin rules surface",
       "artifact_profile": "workflow-instructions",
       "release_disposition": "satisfied"
+    },
+    {
+      "target": "grok",
+      "target_status": "unverified",
+      "destination": ".grok/rules/ (copied; home-scope rules loading remains unverified)",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "accepted-follow-up"
+    },
+    {
+      "target": "kimi",
+      "target_status": "fallback-only",
+      "destination": ".kimi-code/instructions/ (inert managed storage referenced by skills)",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "accepted-follow-up"
     },
     {
       "target": "copilot",

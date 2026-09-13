@@ -1,0 +1,149 @@
+{
+  "schema_version": "writing-style.overlay-index.v1",
+  "overlay_version": "2026-09-13",
+  "overlay_ref": "canonical/instructions/mathscinet-zbmath-review-style.md",
+  "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
+  "content_hash": "sha256:52d17b7cae3699e32f03afad09c598434de0d30edeb3a25b9a0fffed9c83fdb1",
+  "requirements": [
+    {
+      "id": "WS-MREV-0001",
+      "title": "Resolve review-material provenance before content access",
+      "scope": "MathSciNet and zbMATH bibliographic-review workflows",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "provenance-gate",
+      "source_ledger_ids": ["ML-0159"],
+      "test_ids": ["WS-T-0301"]
+    },
+    {
+      "id": "WS-MREV-0002",
+      "title": "Keep Mathematical Reviews supplied material out of AI tools",
+      "scope": "Mathematical Reviews assigned-item workflows",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restricted-material",
+      "source_ledger_ids": ["ML-0160"],
+      "test_ids": ["WS-T-0302"]
+    },
+    {
+      "id": "WS-MREV-0003",
+      "title": "Keep zbMATH supplied material within its authorized review use",
+      "scope": "zbMATH assigned-item workflows",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "restricted-material",
+      "source_ledger_ids": ["ML-0161"],
+      "test_ids": ["WS-T-0303"]
+    },
+    {
+      "id": "WS-MREV-0004",
+      "title": "Treat independently obtained material as a separate authorization decision",
+      "scope": "MathSciNet and zbMATH bibliographic-review workflows",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "provenance-gate",
+      "source_ledger_ids": ["ML-0162"],
+      "test_ids": ["WS-T-0304"]
+    },
+    {
+      "id": "WS-MREV-0005",
+      "title": "Write a decision-to-read review around context result and method",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "review-purpose-and-shape",
+      "source_ledger_ids": ["ML-0163"],
+      "test_ids": ["WS-T-0305"]
+    },
+    {
+      "id": "WS-MREV-0006",
+      "title": "Do not submit the abstract or a minor variation as a zbMATH review",
+      "scope": "zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "independence-from-the-abstract",
+      "source_ledger_ids": ["ML-0164"],
+      "test_ids": ["WS-T-0306"]
+    },
+    {
+      "id": "WS-MREV-0007",
+      "title": "Prefer an independent Mathematical Reviews review to fallback treatments",
+      "scope": "Mathematical Reviews bibliographic reviews",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "independence-from-the-abstract",
+      "source_ledger_ids": ["ML-0165"],
+      "test_ids": ["WS-T-0307"]
+    },
+    {
+      "id": "WS-MREV-0008",
+      "title": "Separate factual record from evidence-bound evaluation",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "evaluation-and-criticism",
+      "source_ledger_ids": ["ML-0166"],
+      "test_ids": ["WS-T-0308"]
+    },
+    {
+      "id": "WS-MREV-0009",
+      "title": "Document criticism error and overlap claims precisely",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "evaluation-and-criticism",
+      "source_ledger_ids": ["ML-0167"],
+      "test_ids": ["WS-T-0309"]
+    },
+    {
+      "id": "WS-MREV-0010",
+      "title": "Do not turn a zbMATH review into a referee report",
+      "scope": "zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "evaluation-and-criticism",
+      "source_ledger_ids": ["ML-0168"],
+      "test_ids": ["WS-T-0310"]
+    },
+    {
+      "id": "WS-MREV-0011",
+      "title": "Verify related work citations and discoverability terms",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "related-work-and-discoverability",
+      "source_ledger_ids": ["ML-0169"],
+      "test_ids": ["WS-T-0311"]
+    },
+    {
+      "id": "WS-MREV-0012",
+      "title": "Follow the current Mathematical Reviews delivery rules",
+      "scope": "Mathematical Reviews bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "overrides",
+      "markdown_anchor": "platform-specific-delivery",
+      "source_ledger_ids": ["ML-0170"],
+      "test_ids": ["WS-T-0312"]
+    },
+    {
+      "id": "WS-MREV-0013",
+      "title": "Follow the current zbMATH delivery rules",
+      "scope": "zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "overrides",
+      "markdown_anchor": "platform-specific-delivery",
+      "source_ledger_ids": ["ML-0171"],
+      "test_ids": ["WS-T-0313"]
+    },
+    {
+      "id": "WS-MREV-0014",
+      "title": "Use exceptional reviews and book-review guidance as heuristics",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "heuristic",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "examples-as-heuristics",
+      "source_ledger_ids": ["ML-0172"],
+      "test_ids": ["WS-T-0314"]
+    }
+  ]
+}

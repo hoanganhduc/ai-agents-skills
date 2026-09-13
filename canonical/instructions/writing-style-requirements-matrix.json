@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.requirements-matrix.v1",
-  "generated_for_release": "2026-09-12",
+  "generated_for_release": "2026-09-13",
   "requirements": [
     {
       "id": "WS-GEN-0001",
@@ -1431,6 +1431,226 @@
       "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0191"],
       "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GEN-0009",
+      "source_location": "Trzeciak (2005), Strunk and White, and Krantz (2017)",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0009"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GEN-0010",
+      "source_location": "Trzeciak (2005), Strunk and White, and Krantz (2017)",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0010"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GEN-0011",
+      "source_location": "Trzeciak (2005) and Merriam-Webster usage guidance",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0011"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0092",
+      "source_location": "user requirement and retired compatibility-source audit",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0192"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0093",
+      "source_location": "Holst (2015), section 5.3; Krantz (2017), section 2.5",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0193"],
+      "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MATH-0094",
+      "source_location": "Knuth, Larrabee and Roberts (1989), section 37",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0194"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0095",
+      "source_location": "Knuth, Larrabee and Roberts (1989), sections 18-21",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector", "tikz-draw"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0195"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GRAPH-0045",
+      "source_location": "user requirement; general standard-source rule",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0245"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0001",
+      "source_location": "local safeguard derived from current MR and zbMATH material restrictions",
+      "scope": "MathSciNet and zbMATH bibliographic-review workflows",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0301"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0002",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, accessed 2026-09-13",
+      "scope": "Mathematical Reviews assigned-item workflows",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0302"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0003",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01, partial direct access disclosed",
+      "scope": "zbMATH assigned-item workflows",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0303"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0004",
+      "source_location": "local source-grounded authorization safeguard",
+      "scope": "MathSciNet and zbMATH bibliographic-review workflows",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0304"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0005",
+      "source_location": "current AMS and zbMATH reviewer guidance; Edward Dunne MathOverflow answer",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0305"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0006",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01",
+      "scope": "zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0306"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0007",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, accessed 2026-09-13",
+      "scope": "Mathematical Reviews bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0307"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0008",
+      "source_location": "AMS Evaluative reviews guidance and MathOverflow community guidance",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0308"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0009",
+      "source_location": "current AMS and zbMATH reviewer guidance",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0309"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0010",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01",
+      "scope": "zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0310"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0011",
+      "source_location": "current AMS and zbMATH reviewer guidance and MathOverflow community guidance",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0311"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0012",
+      "source_location": "AMS Mathematical Reviews Guide for Reviewers, page states Updated February 2015, accessed 2026-09-13",
+      "scope": "Mathematical Reviews bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0312"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0013",
+      "source_location": "zbMATH Guide for Reviewers, updated 2024-11-01, and review template v2.1",
+      "scope": "zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0313"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0014",
+      "source_location": "AMS exceptional reviews, MathOverflow examples, and Krantz (2017), sections 4.2-4.3",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0314"],
+      "mechanical_status": "heuristic"
     }
   ],
   "non_mechanical_rationales": [
@@ -1489,6 +1709,48 @@
       "reason": "Command-style sentence openings can be partly scanned mechanically, but deciding whether a standard disciplinary opening is clearer requires prose review.",
       "reviewer": "writing-style-policy",
       "date": "2026-06-21"
+    },
+    {
+      "id": "WSR-0009",
+      "requirement_id": "WS-MATH-0093",
+      "reason": "Abstract content depends on the contribution and venue; the checklist is mandatory to consider but not a fixed sentence order.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0010",
+      "requirement_id": "WS-MATH-0094",
+      "reason": "Removing headings and citation markers is a temporary readability test whose result requires prose judgment.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0011",
+      "requirement_id": "WS-MATH-0095",
+      "reason": "Whether a figure materially clarifies structure is a semantic judgment; figure production remains a separate routed workflow.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0012",
+      "requirement_id": "WS-GRAPH-0045",
+      "reason": "Whether a definition is standard for the intended audience depends on the verified source, concept, edition, and notation.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0013",
+      "requirement_id": "WS-MREV-0005",
+      "reason": "The balance among context, result, method, and technical detail depends on the item and intended database reader.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0014",
+      "requirement_id": "WS-MREV-0014",
+      "reason": "Exceptional reviews and historical books are examples for judgment, not service requirements or fixed templates.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-13"
     }
   ]
 }

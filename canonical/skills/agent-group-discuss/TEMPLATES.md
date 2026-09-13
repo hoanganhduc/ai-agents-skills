@@ -245,6 +245,11 @@ The global/local distinction and its detection methods are adapted from Terence
 Tao, "On local and global errors in mathematical papers and how to detect them";
 `paper-review` carries the same material for single-reviewer runs.
 
+Any recommendation that supplies literal replacement prose must follow the
+Writing Recommendation Contract in `writing-review.md`: cite the affected
+frozen claim, evidence, and active style requirements; disclose claim or caveat
+changes; and leave acceptance and application to the parent and writer phases.
+
 ---
 
 ## Template: Structured Research Team
