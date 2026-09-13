@@ -2143,6 +2143,179 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     apply_plan(root, {"actions": [action], "skipped_agents": [], "root": str(root)}, dry_run=True)
             self.assertFalse((root / ".openclaw" / "skills" / "source-research" / "SKILL.md").exists())
 
+    def test_chatgpt_local_coder_detects_runtime_config_before_installer_home(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            if os.name == "nt":
+                config = root / "AppData" / "Roaming" / "chatgpt-local-coder"
+            elif sys.platform == "darwin":
+                config = root / "Library" / "Application Support" / "chatgpt-local-coder"
+            else:
+                config = root / ".config" / "chatgpt-local-coder"
+            config.mkdir(parents=True)
+
+            from installer.ai_agents_skills.agents import (
+                agent_home_status,
+                detect_agents,
+                target_for,
+            )
+
+            target = target_for(root, "chatgpt-local-coder")
+            self.assertFalse(target.home.exists())
+            status = agent_home_status(root, target)
+            self.assertTrue(status["eligible"])
+            self.assertEqual(status["detection_evidence"]["kind"], "config-directory")
+            self.assertEqual(Path(status["detection_evidence"]["path"]), config)
+
+            artifacts = [
+                ("instruction-doc", slug)
+                for slug in (
+                    "writing-style-settings",
+                    "math-manuscript-style",
+                    "graph-combinatorics-style",
+                    "mathscinet-zbmath-review-style",
+                )
+            ]
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["chatgpt-local-coder"]),
+                artifacts=artifacts,
+                runtime_profile="none",
+            )
+            actions = [
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "instruction-doc"
+            ]
+            self.assertEqual(len(actions), 4)
+            self.assertTrue(all(action["operation"] == "create" for action in actions))
+            self.assertTrue(
+                all(
+                    Path(action["path"]).parent
+                    == root / ".chatgpt-local-coder" / "instructions"
+                    for action in actions
+                )
+            )
+            router = next(
+                action
+                for action in plan["actions"]
+                if action.get("artifact_id") == "instruction-block:writing-instructions"
+            )
+            self.assertEqual(router["path"], str(root / ".chatgpt-local-coder" / "AGENTS.md"))
+            self.assertEqual(router["operation"], "upsert")
+            self.assertIn("mathscinet-zbmath-review-style.md", router["content"])
+            self.assertIn("do not apply them as code-writing rules", router["content"])
+
+            from installer.ai_agents_skills.planner import (
+                chatgpt_local_coder_writing_router_actions,
+            )
+
+            for conflict_kind in ("file", "symlink", "other"):
+                with self.subTest(conflict_kind=conflict_kind):
+                    synthetic = [
+                        {
+                            "agent": "chatgpt-local-coder",
+                            "artifact_type": "instruction-doc",
+                            "artifact_name": slug,
+                            "operation": "skip" if index == 0 else "create",
+                            "current_signature": {"exists": True, "kind": conflict_kind},
+                        }
+                        for index, slug in enumerate(
+                            (
+                                "writing-style-settings",
+                                "math-manuscript-style",
+                                "graph-combinatorics-style",
+                                "mathscinet-zbmath-review-style",
+                            )
+                        )
+                    ]
+                    disabled = chatgpt_local_coder_writing_router_actions(
+                        [target],
+                        synthetic,
+                    )[0]
+                    self.assertIn("routing is disabled", disabled["content"])
+                    self.assertNotIn("mathscinet-zbmath-review-style.md", disabled["content"])
+
+            from installer.ai_agents_skills.lifecycle import filter_artifacts
+
+            records = [
+                {
+                    "key": "doc-key",
+                    "agent": "chatgpt-local-coder",
+                    "artifact_id": "instruction-doc:writing-style-settings",
+                },
+                {
+                    "key": "router-key",
+                    "agent": "chatgpt-local-coder",
+                    "artifact_id": "instruction-block:writing-instructions",
+                },
+            ]
+            selected_for_uninstall = filter_artifacts(
+                records,
+                None,
+                None,
+                {"instruction-doc:writing-style-settings"},
+                lifecycle_scope=records,
+            )
+            self.assertEqual(
+                {item["artifact_id"] for item in selected_for_uninstall},
+                {
+                    "instruction-doc:writing-style-settings",
+                    "instruction-block:writing-instructions",
+                },
+            )
+
+    def test_chatgpt_local_coder_cli_detection_is_real_root_only(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            from installer.ai_agents_skills.agents import agent_home_status, target_for
+
+            target = target_for(root, "chatgpt-local-coder")
+            with patch("installer.ai_agents_skills.agents.shutil.which", return_value="clc") as which:
+                self.assertFalse(agent_home_status(root, target)["eligible"])
+                which.assert_not_called()
+                with patch(
+                    "installer.ai_agents_skills.agents.looks_like_real_system_root",
+                    return_value=True,
+                ):
+                    status = agent_home_status(root, target)
+            self.assertTrue(status["eligible"])
+            self.assertEqual(status["detection_evidence"], {"kind": "cli", "path": "clc"})
+
+            target.home.mkdir()
+            with (
+                patch(
+                    "installer.ai_agents_skills.agents.looks_like_real_system_root",
+                    return_value=True,
+                ),
+                patch("installer.ai_agents_skills.agents.shutil.which", return_value=None),
+            ):
+                self.assertFalse(agent_home_status(root, target)["eligible"])
+
+    def test_chatgpt_local_coder_rejects_external_config_before_probing_it(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            from installer.ai_agents_skills.agents import agent_home_status, target_for
+
+            probed: list[Path] = []
+            original_is_dir = Path.is_dir
+
+            def track_is_dir(path: Path) -> bool:
+                probed.append(path)
+                return original_is_dir(path)
+
+            with (
+                patch.dict(os.environ, {"CLC_CONFIG_DIR": str(outside)}),
+                patch.object(Path, "is_dir", track_is_dir),
+            ):
+                status = agent_home_status(root, target_for(root, "chatgpt-local-coder"))
+            self.assertFalse(status["eligible"])
+            self.assertNotIn(outside, probed)
+
     def test_all_default_agent_fake_root_detects_available_homes(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:

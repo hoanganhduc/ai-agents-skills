@@ -54,6 +54,13 @@
       "release_disposition": "accepted-follow-up"
     },
     {
+      "target": "chatgpt-local-coder",
+      "target_status": "installed",
+      "destination": ".chatgpt-local-coder/instructions/ with an auto-loaded AGENTS.md routing block",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
       "target": "copilot",
       "target_status": "unsupported",
       "destination": "no supported instruction-doc surface in current installer",

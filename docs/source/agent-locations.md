@@ -132,9 +132,15 @@ the drive primary does not nest those panel calls). See
 unsupported; unset that variable before real-system install. See
 `targets/kimi/README.md`.
 
-chatgpt-local-coder is included in default target detection when
-`~/.chatgpt-local-coder` exists. It is the local MCP coding host published as
-the `chatgpt-local-coder` npm package (`clc` for short), and it runs natively on
+chatgpt-local-coder is included in default target detection when its dedicated
+installer home exists in a fake-root fixture, or, on a real-system root, when
+the config directory for the current platform exists (`%APPDATA%` on Windows,
+Application Support on macOS, or XDG config on Linux) or its CLI is available
+on PATH. A real-system artifact home alone is not runtime evidence. Runtime detection is intentionally
+separate from `~/.chatgpt-local-coder`: that directory is the host's declared
+`agentHomeDir` for ai-agents-skills artifacts and may be created by the first
+managed install. It is the local MCP coding host published as the
+`chatgpt-local-coder` npm package (`clc` for short), and it runs natively on
 Windows, Linux, and macOS. The installer copies directory-layout skills under
 `~/.chatgpt-local-coder/skills/`, writes managed instruction blocks into
 `~/.chatgpt-local-coder/AGENTS.md`, and copies personas, templates, instruction
@@ -146,6 +152,11 @@ loads `~/.chatgpt-local-coder/AGENTS.md` as its user-level memory file. Its
 credentials live in the host config directory (`~/.config/chatgpt-local-coder`
 by XDG default; `%APPDATA%` on Windows and `Library/Application Support` on
 macOS), not in the agent home, so the installer never touches them.
+When all four writing-policy instruction documents are selected together, the
+planner also maintains one short `writing-instructions` block in the host's
+auto-loaded `AGENTS.md`. The block routes prose tasks to the full documents on
+demand instead of importing them inline, which would exceed the host's default
+project-memory line limit and truncate later overlays.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

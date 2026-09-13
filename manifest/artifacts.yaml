@@ -797,7 +797,8 @@
           "opencode",
           "antigravity",
           "grok",
-          "kimi"
+          "kimi",
+          "chatgpt-local-coder"
         ]
       },
       "math-manuscript-style": {
@@ -810,7 +811,8 @@
           "opencode",
           "antigravity",
           "grok",
-          "kimi"
+          "kimi",
+          "chatgpt-local-coder"
         ]
       },
       "graph-combinatorics-style": {
@@ -823,7 +825,8 @@
           "opencode",
           "antigravity",
           "grok",
-          "kimi"
+          "kimi",
+          "chatgpt-local-coder"
         ]
       },
       "mathscinet-zbmath-review-style": {
@@ -836,7 +839,8 @@
           "opencode",
           "antigravity",
           "grok",
-          "kimi"
+          "kimi",
+          "chatgpt-local-coder"
         ]
       },
       "research-quick-actions": {

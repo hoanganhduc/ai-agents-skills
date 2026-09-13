@@ -25,6 +25,17 @@ from .state import (
 from .windows_security import require_handle_bound_mutation
 
 
+CHATGPT_LOCAL_CODER_WRITING_DOC_IDS = frozenset(
+    {
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style",
+        "instruction-doc:graph-combinatorics-style",
+        "instruction-doc:mathscinet-zbmath-review-style",
+    }
+)
+CHATGPT_LOCAL_CODER_WRITING_ROUTER_ID = "instruction-block:writing-instructions"
+
+
 def uninstall(
     root: Path,
     skills: set[str] | None = None,
@@ -156,8 +167,34 @@ def filter_artifacts(
             continue
         selected.append(item)
     if artifact_ids:
-        return selected
+        return expand_chatgpt_local_coder_writing_router_scope(
+            lifecycle_scope or artifacts,
+            selected,
+        )
     return expand_runtime_lifecycle_scope(lifecycle_scope or artifacts, selected)
+
+
+def expand_chatgpt_local_coder_writing_router_scope(
+    artifacts: list[Any],
+    selected: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not any(
+        item.get("agent") == "chatgpt-local-coder"
+        and item.get("artifact_id") in CHATGPT_LOCAL_CODER_WRITING_DOC_IDS
+        for item in selected
+    ):
+        return selected
+    selected_keys = {item.get("key") for item in selected}
+    for item in artifacts:
+        if not isinstance(item, dict) or item.get("key") in selected_keys:
+            continue
+        if (
+            item.get("agent") == "chatgpt-local-coder"
+            and item.get("artifact_id") == CHATGPT_LOCAL_CODER_WRITING_ROUTER_ID
+        ):
+            selected.append(item)
+            break
+    return selected
 
 
 def rollback_target_item(item: dict[str, Any]) -> bool:
