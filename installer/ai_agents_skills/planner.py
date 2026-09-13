@@ -35,6 +35,14 @@ from .runtime import build_runtime_actions
 from .state import artifact_signature, load_state, sha256_file, sha256_text
 
 
+CHATGPT_LOCAL_CODER_WRITING_DOCS = (
+    "writing-style-settings",
+    "math-manuscript-style",
+    "graph-combinatorics-style",
+    "mathscinet-zbmath-review-style",
+)
+
+
 def build_plan(
     root: Path,
     manifests: dict[str, Any],
@@ -168,6 +176,7 @@ def build_plan(
                     state=state,
                 )
             )
+    actions.extend(chatgpt_local_coder_writing_router_actions(agents, actions))
     actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
     actions.extend(antigravity_legacy_plugin_actions(root, agents, actions, state))
     actions.extend(
@@ -883,6 +892,73 @@ def artifact_action(
         action["classification"] = "blocked"
         action["reason"] = "missing managed backing skill: " + ", ".join(missing)
     return action
+
+
+def chatgpt_local_coder_writing_router_actions(
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    target = next((agent for agent in agents if agent.name == "chatgpt-local-coder"), None)
+    if target is None:
+        return []
+    doc_actions = {
+        action.get("artifact_name"): action
+        for action in actions
+        if action.get("agent") == "chatgpt-local-coder"
+        and action.get("artifact_type") == "instruction-doc"
+        and action.get("artifact_name") in CHATGPT_LOCAL_CODER_WRITING_DOCS
+    }
+    if set(doc_actions) != set(CHATGPT_LOCAL_CODER_WRITING_DOCS):
+        return []
+    bid = block_id("writing-instructions")
+    routing_active = all(
+        action.get("operation") in {"create", "update", "noop", "adopt"}
+        for action in doc_actions.values()
+    )
+    if routing_active:
+        body = [
+            "- Before drafting, rewriting, polishing, or reviewing prose, read `~/.chatgpt-local-coder/instructions/writing-style-settings.md`.",
+            "- For mathematical manuscripts or LaTeX paper prose, also read `~/.chatgpt-local-coder/instructions/math-manuscript-style.md`.",
+            "- For graph theory or combinatorics prose, also read `~/.chatgpt-local-coder/instructions/graph-combinatorics-style.md`.",
+            "- For MathSciNet or zbMATH reviews, also read `~/.chatgpt-local-coder/instructions/mathscinet-zbmath-review-style.md` before accessing the reviewed document.",
+            "- These are scientific-prose rules; do not apply them as code-writing rules.",
+        ]
+    else:
+        body = [
+            "- Writing-policy routing is disabled because the complete managed document set is not trusted and active.",
+            "- Do not load files from `~/.chatgpt-local-coder/instructions/` as writing policy until a plan reports all four writing documents as create, update, noop, or adopt.",
+        ]
+    block = "\n".join(
+        [f"<!-- {bid}:start -->", "# Writing Instructions", "", *body, f"<!-- {bid}:end -->"]
+    )
+    classification = classify_block(target.instructions_file, "writing-instructions")
+    operation = "upsert"
+    reason = None
+    if classification == "conflict":
+        operation = "skip"
+        reason = "managed writing-instructions block is malformed or duplicated"
+    elif (
+        classification == "managed"
+        and current_block(target.instructions_file, "writing-instructions") == block
+    ):
+        operation = "noop"
+    action = {
+        "kind": "managed-block",
+        "agent": target.name,
+        "skill": "writing-instructions",
+        "path": str(target.instructions_file),
+        "block_id": bid,
+        "content": block,
+        "classification": classification,
+        "operation": operation,
+        "artifact_type": "instruction-block",
+        "artifact_id": "instruction-block:writing-instructions",
+        "artifact_name": "writing-instructions",
+        "current_signature": artifact_signature(target.instructions_file),
+    }
+    if reason is not None:
+        action["reason"] = reason
+    return [action]
 
 
 def artifact_target_path(

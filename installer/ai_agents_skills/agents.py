@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .capabilities import looks_like_real_system_root, resolved_path_within
+from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .openclaw_target_gate import openclaw_target_capabilities, openclaw_target_decision
 
 
@@ -215,9 +217,9 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             artifact_dirs={
                 "agent-persona": home / "agents",
                 "template": home / "templates",
-                # The host reads skills, personas and instruction docs; it has no
-                # slash-command loader, so aliases install as reference docs the
-                # way they do for Codex and DeepSeek rather than as commands.
+                # The host loads skills and AGENTS.md. These additional artifact
+                # directories are managed support storage; instruction docs are
+                # consumed when a loaded skill references them.
                 "instruction-doc": home / "instructions",
                 "entrypoint-alias": home / "instructions" / "entrypoints",
                 "command": home / "commands",
@@ -386,6 +388,48 @@ def contained_xdg_config_home(root: Path) -> Path:
     return root / ".config"
 
 
+def chatgpt_local_coder_detection_evidence(root: Path) -> dict[str, str] | None:
+    """Detect the host independently from its optional installer artifact home.
+
+    ChatGPT Local Coder 1.0.0 resolves runtime config under APPDATA on Windows,
+    Application Support on macOS, or XDG config on Linux. Its separate
+    ``~/.chatgpt-local-coder`` directory is the ai-agents-skills destination and
+    need not exist before the first managed install.
+    """
+    candidates: list[Path] = []
+    configured = os.environ.get("CLC_CONFIG_DIR")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    if os.name == "nt":
+        candidates.append(root / "AppData" / "Roaming" / "chatgpt-local-coder")
+    elif sys.platform == "darwin":
+        candidates.append(root / "Library" / "Application Support" / "chatgpt-local-coder")
+    else:
+        candidates.append(root / ".config" / "chatgpt-local-coder")
+    seen: set[str] = set()
+    for candidate in candidates:
+        absolute = candidate if candidate.is_absolute() else Path(os.path.abspath(candidate))
+        key = os.path.normcase(os.path.normpath(absolute))
+        if key in seen:
+            continue
+        seen.add(key)
+        if not normalized_path_within(root, absolute):
+            continue
+        if (
+            absolute.is_dir()
+            and not absolute.is_symlink()
+            and resolved_path_within(root, absolute)
+        ):
+            return {"kind": "config-directory", "path": str(absolute)}
+
+    if looks_like_real_system_root(root):
+        for command in ("chatgpt-local-coder", "clc"):
+            executable = shutil.which(command)
+            if executable:
+                return {"kind": "cli", "path": executable}
+    return None
+
+
 def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[AgentTarget]:
     candidates = list(requested) if requested else DEFAULT_AGENT_NAMES
     targets: list[AgentTarget] = []
@@ -402,14 +446,33 @@ def agent_home_statuses(root: Path, requested: Iterable[str] | None = None) -> l
 
 
 def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
+    runtime_evidence: dict[str, str] | None = None
+    if target.name == "chatgpt-local-coder" and looks_like_real_system_root(root):
+        runtime_evidence = chatgpt_local_coder_detection_evidence(root)
+        if runtime_evidence is None:
+            return {
+                "agent": target.name,
+                "eligible": False,
+                "reason": "ChatGPT Local Coder runtime config directory and CLI were not detected",
+            }
     if not target.home.exists() and not target.home.is_symlink():
         if target.name == "chatgpt-local-coder":
+            evidence = chatgpt_local_coder_detection_evidence(root)
+            if evidence is not None:
+                return {
+                    "agent": target.name,
+                    "eligible": True,
+                    "reason": (
+                        f"ChatGPT Local Coder detected via {evidence['kind']}; "
+                        f"installer artifacts target {target.home}"
+                    ),
+                    "detection_evidence": evidence,
+                }
             return {
                 "agent": target.name,
                 "eligible": False,
                 "reason": (
-                    "dedicated ~/.chatgpt-local-coder installer home not detected; "
-                    "ChatGPT Local Coder connector availability is separate and is not probed here"
+                    "ChatGPT Local Coder agent home, runtime config directory, and CLI were not detected"
                 ),
             }
         return {"agent": target.name, "eligible": False, "reason": "agent home not detected"}
@@ -433,6 +496,13 @@ def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
             "agent": target.name,
             "eligible": False,
             "reason": "target is fake-root only",
+        }
+    if runtime_evidence is not None:
+        return {
+            "agent": target.name,
+            "eligible": True,
+            "reason": f"ChatGPT Local Coder detected via {runtime_evidence['kind']}",
+            "detection_evidence": runtime_evidence,
         }
     return {"agent": target.name, "eligible": True, "reason": "agent home detected"}
 

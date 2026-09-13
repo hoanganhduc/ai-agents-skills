@@ -354,10 +354,17 @@ class WritingStyleSystemTests(unittest.TestCase):
         rows = {row["target"]: row for row in report["rows"]}
         self.assertEqual(
             set(rows),
-            {"codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi", "copilot", "openclaw"},
+            {"codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi", "chatgpt-local-coder", "copilot", "openclaw"},
         )
 
-        for target in ("codex", "claude", "deepseek", "opencode", "antigravity"):
+        for target in (
+            "codex",
+            "claude",
+            "deepseek",
+            "opencode",
+            "antigravity",
+            "chatgpt-local-coder",
+        ):
             with self.subTest(target=target):
                 self.assertEqual(rows[target]["target_status"], "installed")
                 self.assertEqual(rows[target]["release_disposition"], "satisfied")
