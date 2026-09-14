@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.acceptance-traceability.v1",
-  "generated_for_release": "2026-09-13",
+  "generated_for_release": "2026-09-14",
   "criteria": [
     {"id": "AC-0001", "subject_type": "source-universe", "subject_id": "writing-style-source-universe", "criterion": "Old-rule source universe is recorded.", "release_disposition": "satisfied"},
     {"id": "AC-0002", "subject_type": "migration-ledger", "subject_id": "writing-style-migration-ledger", "criterion": "Every retained old rule has a disposition.", "release_disposition": "satisfied"},
@@ -50,10 +50,10 @@
     {"id": "AC-0046", "subject_type": "overlay", "subject_id": "verified-standard-graph-source", "criterion": "Graph-definition omission requires a verified standard source without canonizing one textbook.", "release_disposition": "satisfied"},
     {"id": "AC-0047", "subject_type": "workflow", "subject_id": "claim-preserving-consolidation", "criterion": "Claim preservation, revision deltas, caveats, support changes, and mechanical-edit exemption survive compatibility-document retirement.", "release_disposition": "satisfied"},
     {"id": "AC-0048", "subject_type": "artifact-profile", "subject_id": "writing-review", "criterion": "The thin writing-review template composes existing writing, review, citation, delegation, and final-gate mechanisms.", "release_disposition": "satisfied"},
-    {"id": "AC-0049", "subject_type": "overlay", "subject_id": "mathscinet-zbmath-review-style", "criterion": "The bibliographic-review overlay preserves service-specific current guidance and provenance-first restrictions.", "release_disposition": "satisfied"},
+    {"id": "AC-0049", "subject_type": "overlay", "subject_id": "mathscinet-zbmath-review-style", "criterion": "The bibliographic-review overlay preserves service-specific current guidance without adding unrequested access, transfer, compilation, delegation, retention, or deletion restrictions.", "release_disposition": "satisfied"},
     {"id": "AC-0050", "subject_type": "workflow", "subject_id": "writing-recommendation-contract", "criterion": "Review consumers bind literal replacement prose to frozen claims, evidence, and active style requirements without edit authority.", "release_disposition": "satisfied"},
     {"id": "AC-0051", "subject_type": "workflow", "subject_id": "book-review-branch", "criterion": "Paper review has one conditional book-specific checklist rather than a duplicate workflow.", "release_disposition": "satisfied"},
-    {"id": "AC-0052", "subject_type": "test", "subject_id": "review-provenance-and-packet-regressions", "criterion": "Tests cover instruction-level fail-closed provenance ordering and missing-overlay behavior, coherent inert V1 packet composition, and no automatic edit application; runtime zero-call enforcement is not claimed.", "release_disposition": "satisfied"},
+    {"id": "AC-0052", "subject_type": "test", "subject_id": "review-source-boundary-and-packet-regressions", "criterion": "Tests cover nonblocking material-source classification, missing-overlay disclosure, coherent inert V1 packet composition, and no automatic edit application.", "release_disposition": "satisfied"},
     {"id": "AC-0053", "subject_type": "release", "subject_id": "no-outward-implementation", "criterion": "Repository implementation performs no real-system install, source deletion, review submission, commit, or push.", "release_disposition": "satisfied"}
   ]
 }

@@ -9,20 +9,17 @@ metadata:
 
 Use this after a draft exists and before presenting research as final.
 
-## Restricted Review Provenance Gate
+## Service-Supplied Review Material
 
 If the draft or requested review names Mathematical Reviews/MathSciNet or
-zbMATH, a bibliographic review assigned by either service, or a copy supplied
-by either service, load
-`mathscinet-zbmath-review-style.md` and complete its provenance gate before
-opening the draft, resolving evidence refs, or handing content to another tool.
-Unknown or mixed provenance stops the workflow before content access. In the
-`mr-grammar-only` state, inspect only the isolated reviewer-authored review body
-and limit recommendations to spelling, grammar, syntax, and surface LaTeX.
+zbMATH, load `mathscinet-zbmath-review-style.md` before assessing or finalizing
+the review. The request does not by itself imply that the item was supplied by
+either service. Do not require a provenance declaration or stop before content
+access unless the user states, or the artifact itself indicates, that it is
+service-supplied.
 
 If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
-stop before content access, ref resolution, tool invocation, prompt assembly,
-artifact persistence, or delegation. Do not reconstruct its rules from memory.
+disclose the missing style guidance and do not claim service-format compliance.
 
 ## What to inspect
 

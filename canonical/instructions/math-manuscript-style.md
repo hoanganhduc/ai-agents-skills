@@ -44,8 +44,9 @@ domain overlay individually.
 
 When the requested output is a Mathematical Reviews/MathSciNet or zbMATH
 bibliographic review, load `mathscinet-zbmath-review-style.md` and record
-`mathscinet-zbmath-review-style` in `active_overlays`. Its provenance gate runs
-before any assigned item is opened, retrieved, parsed, quoted, or delegated.
+`mathscinet-zbmath-review-style` in `active_overlays`. Do not infer that the
+reviewed item was supplied by either service merely because the user requests
+a review for that service.
 
 ## Definitions And Notation
 

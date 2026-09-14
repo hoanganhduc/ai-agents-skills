@@ -1534,7 +1534,7 @@
     },
     {
       "id": "WS-MREV-0001",
-      "source_location": "local safeguard derived from current MR and zbMATH material restrictions",
+      "source_location": "user correction removing the local provenance precondition, 2026-09-14",
       "scope": "MathSciNet and zbMATH bibliographic-review workflows",
       "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
       "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
@@ -1564,7 +1564,7 @@
     },
     {
       "id": "WS-MREV-0004",
-      "source_location": "local source-grounded authorization safeguard",
+      "source_location": "user correction removing unrequested review-material restrictions, 2026-09-14",
       "scope": "MathSciNet and zbMATH bibliographic-review workflows",
       "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
       "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],

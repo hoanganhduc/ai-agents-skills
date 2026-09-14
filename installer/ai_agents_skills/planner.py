@@ -1058,7 +1058,7 @@ def writing_router_block(root: Path, manifests: dict[str, Any], target: AgentTar
         f"- Before drafting, rewriting, polishing, or reviewing prose, read `{paths['writing-style-settings']}`.",
         f"- For mathematical manuscripts or LaTeX paper prose, also read `{paths['math-manuscript-style']}`.",
         f"- For graph theory or combinatorics prose, also read `{paths['graph-combinatorics-style']}`.",
-        f"- For MathSciNet or zbMATH reviews, also read `{paths['mathscinet-zbmath-review-style']}` before accessing the reviewed document.",
+        f"- For MathSciNet or zbMATH reviews, also read `{paths['mathscinet-zbmath-review-style']}` before drafting or reviewing the bibliographic review; do not infer service-supplied status from the request alone.",
         "- These are scientific-prose rules; do not apply them as code-writing rules.",
     ]
     return "\n".join(

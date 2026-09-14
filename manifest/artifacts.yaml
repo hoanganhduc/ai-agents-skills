@@ -830,7 +830,7 @@
         ]
       },
       "mathscinet-zbmath-review-style": {
-        "description": "Mathematical Reviews/MathSciNet and zbMATH bibliographic-review overlay with provenance-first source controls.",
+        "description": "Mathematical Reviews/MathSciNet and zbMATH bibliographic-review overlay with source-attributed service guidance and evidence-bound review practice.",
         "source": "mathscinet-zbmath-review-style.md",
         "supported_agents": [
           "codex",

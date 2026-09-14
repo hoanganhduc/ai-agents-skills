@@ -29,15 +29,15 @@ If the user asks to write a Mathematical Reviews/MathSciNet or zbMATH public
 bibliographic review, route to `draft-writing` with
 `mathscinet-zbmath-review-style.md` instead of this referee-style workflow.
 
-If the request names either service, an assignment from either service, or a
-copy supplied by either service, load `mathscinet-zbmath-review-style.md` and complete its provenance gate
-before library lookup, attachment opening, parsing, browsing, logging, or
-delegation. Unknown or mixed provenance stops the workflow before content
-access.
+If the request names either service, load
+`mathscinet-zbmath-review-style.md` before drafting or finalizing the review.
+The request does not by itself imply that the item was supplied by either
+service. Do not require a provenance declaration or stop before content access
+unless the user states, or the artifact itself indicates, that it is
+service-supplied.
 
 If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
-stop before content access, ref resolution, tool invocation, prompt assembly,
-artifact persistence, or delegation. Do not reconstruct its rules from memory.
+disclose the missing style guidance and do not claim service-format compliance.
 
 ## Document lookup order for review tasks
 
