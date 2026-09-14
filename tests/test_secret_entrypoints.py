@@ -2106,6 +2106,9 @@ class SecretEntrypointStaticTests(unittest.TestCase):
 
         self.assertIn('exec 9<"$PYTHON"', wrapper)
         self.assertIn("AAS_VNTHUQUAN_PYTHON_FD=9", wrapper)
+        self.assertIn('python_real="$PYTHON"', wrapper)
+        self.assertIn('PYTHON="$python_real"', wrapper)
+        self.assertNotIn('PYTHON="/dev/fd/$AAS_VNTHUQUAN_PYTHON_FD"', wrapper)
         self.assertNotIn("exec {AAS_VNTHUQUAN_PYTHON_FD}", wrapper)
 
     def test_windows_runner_uses_minimal_environment_and_holds_command_guard(self) -> None:
