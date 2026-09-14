@@ -2590,16 +2590,16 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     agents={"codex"},
                     platform=current_platform(),
                 )
-            self.assertEqual(result["status"], "ok")
-            self.assertEqual(result["cli_version"], "0.154.0")
-            self.assertNotIn("stdout", json.dumps(result))
-            self.assertTrue(all(check["ok"] for check in result["checks"]))
-            with patch("installer.ai_agents_skills.codex.MAX_PROMPT_INPUT_BYTES", 1):
-                oversized = run_codex_native_smoke(
-                    root,
-                    agents={"codex"},
-                    platform=current_platform(),
-                )
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["cli_version"], "0.154.0")
+                self.assertNotIn("stdout", json.dumps(result))
+                self.assertTrue(all(check["ok"] for check in result["checks"]))
+                with patch("installer.ai_agents_skills.codex.MAX_PROMPT_INPUT_BYTES", 1):
+                    oversized = run_codex_native_smoke(
+                        root,
+                        agents={"codex"},
+                        platform=current_platform(),
+                    )
             self.assertEqual(oversized["status"], "degraded")
             self.assertIn("exceeded", oversized["reason"])
 
