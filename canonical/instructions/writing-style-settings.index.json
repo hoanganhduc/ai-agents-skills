@@ -1,8 +1,8 @@
 {
   "schema_version": "writing-style.policy-index.v1",
-  "policy_version": "2026-09-13",
+  "policy_version": "2026-09-14",
   "policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "sha256:5d9e50e44114261d9bd62470bf6c501cf1f41aca6fe3dfe9174be6c8f5bb4b61",
+  "content_hash": "sha256:5be11d972239eb15733c06716c13e6b877d2b298d5d7a6eab96a7f8e5f443ff3",
   "requirements": [
     {
       "id": "WS-GEN-0001",
@@ -133,6 +133,30 @@
       "markdown_anchor": "grammar-and-scope",
       "source_ledger_ids": ["ML-0146"],
       "test_ids": ["WS-T-0011"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0012",
+      "title": "Never place multiple prose sentences on one LaTeX source line",
+      "scope": "all writing workflows that create or edit .tex files",
+      "severity": "hard",
+      "tags": ["latex", "source-lines", "sentences"],
+      "markdown_anchor": "latex-source-preservation-and-line-discipline",
+      "source_ledger_ids": ["ML-0184"],
+      "test_ids": ["WS-T-0012"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0013",
+      "title": "Preserve restorable content inside LaTeX source",
+      "scope": "all writing workflows that edit existing .tex files",
+      "severity": "hard",
+      "tags": ["latex", "comments", "preservation", "restoration"],
+      "markdown_anchor": "latex-source-preservation-and-line-discipline",
+      "source_ledger_ids": ["ML-0185"],
+      "test_ids": ["WS-T-0013"],
       "overlays": ["math-manuscript-style"],
       "target_adapters": []
     }

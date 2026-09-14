@@ -110,6 +110,31 @@ Use formatting only when it helps scan or verify the content. Keep lists
 parallel. Prefer inline equations or identifiers unless display formatting is
 needed for readability or mathematical importance.
 
+## LaTeX Source Preservation And Line Discipline
+
+These rules apply to every writing workflow that creates or edits a `.tex`
+file, regardless of subject, genre, template, or downstream venue.
+
+Never place prose from more than one complete sentence on the same physical
+source line. A single sentence may occupy one source line or span several when
+emphasis or readability requires it. Apply the same line discipline to active
+prose and prose preserved inside LaTeX comments. This is a source-code rule
+only: it does not control line wrapping, sentence layout, or pagination in the
+generated PDF.
+
+When revising an existing `.tex` file, do not delete source merely because it
+is no longer needed. Comment out the superseded or unused lines and add the
+replacement separately, so the previous source remains visible and can be
+restored later if needed. Delete content from a `.tex` file only when deletion
+is genuinely necessary for the requested result. This content-preservation
+rule does not prohibit deleting a whole unnecessary file; file deletion remains
+subject to the ordinary scope and safety rules for filesystem changes.
+
+Removal, rather than comment preservation, is mandatory when confidentiality,
+privacy, security, licensing, anonymization or redaction, or unsafe executable
+content requires it. Remove only the affected content and preserve the
+remainder when doing so is safe.
+
 ## Uncertainty And Gaps
 
 State material assumptions, unchecked evidence, and blocked inspection. Use

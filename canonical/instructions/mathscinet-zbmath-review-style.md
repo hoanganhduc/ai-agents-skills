@@ -110,6 +110,22 @@ statement would require extensive notation or formulas, prefer a few accurate,
 relatively nontechnical sentences. Include only the definitions and proof ideas
 needed to understand the contribution.
 
+Form a working one-sentence contribution thesis: what the item adds or
+clarifies, and why that contribution may matter to the database's intended
+reader. The thesis need not be an explicit recommendation or use promotional
+language; a precise account of the main result may itself carry the thesis.
+
+Select results in proportion to the item and to the review's purpose. A few
+representative results with distinct explanatory roles are often more useful
+than a theorem-by-theorem inventory. One central result can be enough, while a
+complete account can be appropriate when the item contains only a few results.
+
+When the review asserts importance, novelty, or broader significance, give the
+verified concrete basis: for example, a resolved question, a new framework or
+method, a sharp boundary or transition, a useful connection, or a
+classification result. An accurate descriptive account of a contribution does
+not need to be inflated into a claim of importance.
+
 ## Independence From The Abstract
 
 `[zbMATH]` Do not submit a verbatim copy or minor variation of the author's
@@ -120,6 +136,40 @@ the source terms and venue permit it.
 `[MR]` An independent, insightful review is preferred. Recommending the author
 summary or publication without a review is a service-specific fallback to use
 sparingly, not a drafting shortcut.
+
+## Post-Publication Stance And Criticism Admission
+
+`[local safeguard]` Treat both workflows as post-publication bibliographic
+review, not as a pre-submission acceptance report. Do not organize the text as
+a defect list, request revisions, or give an accept/reject verdict. A factual
+correction or a consequential limitation may still be included when it is
+verified and helps the reader use the published item accurately.
+
+Before admitting a mathematical criticism, inspect the exact reviewed version
+and the relevant definitions, conventions, standing assumptions, local
+hypotheses, and surrounding argument. Distinguish an assumption established by
+the paper's context from a new hypothesis invented only to rescue the claim.
+Classify the issue as a false statement, a scope limitation, a proof gap, a
+typographical problem, or unresolved uncertainty, and require precise evidence
+for the chosen classification.
+
+Do not present a counterexample as a refutation when an identifiable contextual
+assumption or stable convention rules it out. Conversely, do not silently add
+a new assumption merely because it would make the statement true. If an
+established contextual assumption materially narrows how readers can use the
+result, describe the scope accurately rather than alleging a false theorem.
+
+A gap in the displayed proof does not by itself prove that the theorem is
+false. Include such a gap in a public review only when it is fully verified,
+consequential for readers, and described according to the evidence actually
+available.
+
+OCR, plain-text extraction, or memory alone is insufficient evidence for a
+wording-sensitive mathematical criticism. Check an authorized page image or a
+source that reliably corresponds to the exact reviewed version. TeX from a
+different version may clarify notation but must not override the reviewed
+publication. If notation was renamed across versions, record the correspondence
+and disclose it when the distinction matters to the criticism.
 
 ## Evaluation And Criticism
 
@@ -172,12 +222,26 @@ prerequisites, a reading roadmap, a carefully chosen theorem, a proof method,
 related resources, and precise criticism. They do not require length, humor,
 anecdotes, a scathing tone, or imitation of the reviewer's voice.
 
+Inspect a small authorized set of examples when the format is unfamiliar or an
+editorial choice remains unresolved. Record the structural technique that is
+useful, not distinctive wording. Do not require an example search for every
+review, and do not treat an exceptional review as representative of ordinary
+service expectations. Current service guidance still outranks examples.
+
 For a book, do not default to a chapter-by-chapter report. Situate the book in
 its subject, then select the decision-relevant aspects: intended audience and
 prerequisites; scope and organization; proof and exposition quality; examples
 and exercises; figures; index, glossary, and notation aids; bibliography,
 attribution, and currency. The review remains about the book, not an unrelated
 essay about the field.
+
+## Scientific Prose And LaTeX
+
+Apply the inherited scientific-prose and LaTeX rules in
+`math-manuscript-style.md`. In particular, use `\emph{}` at the first defining
+occurrence of a term and not as a quota or repeated decoration. Keep
+mathematical notation in math mode, prefer service-standard LaTeX, and do not
+introduce custom macros when the service forbids them.
 
 ## Execution Boundary
 
@@ -193,9 +257,20 @@ Before delivery, confirm that:
 
 - the provenance decision preceded every content-accessing tool call;
 - the review adds value beyond the abstract;
+- a factual, nonpromotional contribution thesis explains why the intended
+  reader may wish to consult the item;
+- result selection is proportionate and does not default to a theorem
+  inventory;
 - context, result, and method are proportionate to the item;
 - facts, evaluations, and uncertainty are distinguishable;
-- criticism and citations have precise evidence;
+- claims of importance, novelty, criticism, and related work have precise
+  evidence;
+- mathematical criticism was checked against the exact reviewed version and
+  its relevant context rather than OCR alone;
+- notation correspondences across versions are recorded when they affect a
+  claim;
+- `\emph{}` appears at first defining occurrences rather than as repeated
+  decoration;
 - service-specific language, length, LaTeX, MSC, keyword, and reference rules
   were checked against the current guide;
 - no restricted content, reviewer identity, portal data, or confidential

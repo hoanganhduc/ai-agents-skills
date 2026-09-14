@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.migration-ledger.v1",
-  "generated_for_release": "2026-09-13",
+  "generated_for_release": "2026-09-14",
   "rows": [
     {
       "edge_id": "ML-0001",
@@ -1948,6 +1948,94 @@
       "destination_docs": [],
       "disposition": "supersede",
       "reviewer_status": "superseded"
+    },
+    {
+      "edge_id": "ML-0178",
+      "source_location": "user-directed post-publication review revision, 2026-09-14; synthesis of the current review workflow",
+      "old_rule_text": "A review should make clear why the intended database reader might consult the item, without turning the opening into promotion.",
+      "normalized_rule_text": "Require a factual contribution thesis that states what the item adds and its relevance to the intended reader.",
+      "classification_tags": ["math-review", "purpose", "contribution", "user-approved"],
+      "normative_requirement_ids": ["WS-MREV-0015"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0179",
+      "source_location": "user-directed post-publication review revision, 2026-09-14; synthesis of the current review workflow",
+      "old_rule_text": "A bibliographic review need not list every theorem and should select results according to their explanatory role.",
+      "normalized_rule_text": "Select representative results proportionately rather than defaulting to a theorem inventory.",
+      "classification_tags": ["math-review", "result-selection", "proportion", "user-approved"],
+      "normative_requirement_ids": ["WS-MREV-0016"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0180",
+      "source_location": "user-directed post-publication review revision, 2026-09-14; evidence-first synthesis of the current review workflow",
+      "old_rule_text": "Claims that a contribution is important must explain the verified mathematical or literary basis for that importance.",
+      "normalized_rule_text": "Ground asserted importance, novelty, or significance in a concrete verified contribution without inflating descriptive claims.",
+      "classification_tags": ["math-review", "significance", "evidence", "user-approved"],
+      "normative_requirement_ids": ["WS-MREV-0017"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0181",
+      "source_location": "local safeguard for both post-publication bibliographic-review workflows, reviewed 2026-09-14",
+      "old_rule_text": "Post-publication bibliographic reviews should inform readers rather than simulate an acceptance report or requested-revision letter.",
+      "normalized_rule_text": "Keep both public bibliographic-review workflows distinct from prepublication refereeing while permitting verified reader-relevant corrections.",
+      "classification_tags": ["math-review", "post-publication", "routing", "local-safeguard"],
+      "normative_requirement_ids": ["WS-MREV-0018"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0182",
+      "source_location": "user correction after exact-context review of a theorem claim, 2026-09-14",
+      "old_rule_text": "An apparent counterexample is not a refutation when an established contextual assumption rules it out; a newly invented rescue assumption is different.",
+      "normalized_rule_text": "Check the exact version and all relevant contextual assumptions before classifying a mathematical criticism, and distinguish a proof gap from a false theorem.",
+      "classification_tags": ["math-review", "criticism", "context", "theorem-verification", "user-approved"],
+      "normative_requirement_ids": ["WS-MREV-0019"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0183",
+      "source_location": "user correction after comparing PDF extraction with the exact arXiv source and publication context, 2026-09-14",
+      "old_rule_text": "OCR or extracted text can corrupt a theorem statement, and source from another version can use different notation.",
+      "normalized_rule_text": "Verify wording-sensitive criticism against the exact reviewed version and record notation correspondences across versions.",
+      "classification_tags": ["math-review", "source-fidelity", "version", "ocr", "user-approved"],
+      "normative_requirement_ids": ["WS-MREV-0020"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0184",
+      "source_location": "user requirement, 2026-09-14",
+      "old_rule_text": "Each sentence must start on its own source line and may span further lines when needed; no source line may contain prose from multiple complete sentences.",
+      "normalized_rule_text": "Never place prose from multiple complete sentences on one physical source line in active or commented .tex source; allow a single sentence to span lines and do not constrain rendered PDF layout.",
+      "classification_tags": ["latex", "source-lines", "all-genres", "user-approved"],
+      "normative_requirement_ids": ["WS-GEN-0012"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0185",
+      "source_location": "user requirement and clarification, 2026-09-14",
+      "old_rule_text": "Commenting out unused content inside a LaTeX file preserves it for later restoration; deleting a whole unnecessary file is a separate operation.",
+      "normalized_rule_text": "Preserve superseded or unused .tex content in comments by default, delete it when genuinely necessary, require removal across confidentiality, privacy, security, licensing, anonymization, redaction, or unsafe-content boundaries, and keep whole-file deletion outside this rule.",
+      "classification_tags": ["latex", "content-preservation", "restoration", "sensitive-content", "all-genres", "user-approved"],
+      "normative_requirement_ids": ["WS-GEN-0013"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
     }
   ]
 }

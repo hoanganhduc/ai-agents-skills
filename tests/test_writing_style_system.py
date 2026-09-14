@@ -215,7 +215,7 @@ class WritingStyleSystemTests(unittest.TestCase):
 
         self.assertEqual(
             {test_id for row in overlay["requirements"] for test_id in row["test_ids"]},
-            {f"WS-T-{number:04d}" for number in range(301, 315)},
+            {f"WS-T-{number:04d}" for number in range(301, 321)},
         )
         actual_test_methods = {
             "test_source_audited_rules_and_review_contract_are_present",
@@ -443,12 +443,54 @@ class WritingStyleSystemTests(unittest.TestCase):
         self.assertIn("Let ... be ...", normalized_overlay)
         self.assertIn("command-style openings", normalized_overlay)
 
+    def test_global_latex_source_preservation_and_line_discipline_are_canonical(self) -> None:
+        policy = (REPO_ROOT / "canonical/instructions/writing-style-settings.md").read_text(encoding="utf-8")
+        math_overlay = (REPO_ROOT / "canonical/instructions/math-manuscript-style.md").read_text(encoding="utf-8")
+        policy_index = load_json("canonical/instructions/writing-style-settings.index.json")
+        ledger = load_json("canonical/instructions/writing-style-migration-ledger.json")
+        matrix = load_json("canonical/instructions/writing-style-requirements-matrix.json")
+
+        requirements = {row["id"]: row for row in policy_index["requirements"]}
+        self.assertEqual(
+            set(requirements).intersection({"WS-GEN-0012", "WS-GEN-0013"}),
+            {"WS-GEN-0012", "WS-GEN-0013"},
+        )
+        self.assertEqual(requirements["WS-GEN-0012"]["test_ids"], ["WS-T-0012"])
+        self.assertEqual(requirements["WS-GEN-0013"]["test_ids"], ["WS-T-0013"])
+
+        ledger_rows = {row["edge_id"]: row for row in ledger["rows"]}
+        self.assertEqual(ledger_rows["ML-0184"]["normative_requirement_ids"], ["WS-GEN-0012"])
+        self.assertEqual(ledger_rows["ML-0185"]["normative_requirement_ids"], ["WS-GEN-0013"])
+
+        matrix_rows = {row["id"]: row for row in matrix["requirements"]}
+        normalized_policy = re.sub(r"\s+", " ", policy)
+        normalized_math = re.sub(r"\s+", " ", math_overlay)
+        for needle in (
+            "every writing workflow that creates or edits a `.tex` file",
+            "Never place prose from more than one complete sentence on the same physical source line",
+            "A single sentence may occupy one source line or span several",
+            "does not control line wrapping, sentence layout, or pagination in the generated PDF",
+            "can be restored later if needed",
+            "Delete content from a `.tex` file only when deletion is genuinely necessary",
+            "does not prohibit deleting a whole unnecessary file",
+            "Removal, rather than comment preservation, is mandatory",
+            "confidentiality, privacy, security, licensing",
+            "unsafe executable content",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, normalized_policy)
+        self.assertIn("global LaTeX source-preservation rule", normalized_math)
+        self.assertIn("deletion of a whole file is distinct", normalized_math)
+        self.assertIn("Never preserve secrets", normalized_math)
+        self.assertIn("mandatory removal exception", normalized_math)
+
     def test_source_audited_rules_and_review_contract_are_present(self) -> None:
         general = (INSTRUCTIONS / "writing-style-settings.md").read_text(encoding="utf-8")
         math = (INSTRUCTIONS / "math-manuscript-style.md").read_text(encoding="utf-8")
         graph = (INSTRUCTIONS / "graph-combinatorics-style.md").read_text(encoding="utf-8")
         database_review = (INSTRUCTIONS / "mathscinet-zbmath-review-style.md").read_text(encoding="utf-8")
         writing_review = (REPO_ROOT / "canonical/templates/writing-review.md").read_text(encoding="utf-8")
+        normalized_database_review = re.sub(r"\s+", " ", database_review)
 
         for needle in ("participial phrase", "restrictive clause", "pronunciation"):
             self.assertIn(needle, general)
@@ -473,8 +515,14 @@ class WritingStyleSystemTests(unittest.TestCase):
             "Already-ingested material",
             "Do not compile",
             "Updated February",
+            "one-sentence contribution thesis",
+            "theorem-by-theorem inventory",
+            "Post-Publication Stance And Criticism Admission",
+            "assumption established by",
+            "OCR, plain-text extraction, or memory alone is insufficient",
+            "first defining occurrence of a term",
         ):
-            self.assertIn(needle, database_review)
+            self.assertIn(needle, normalized_database_review)
 
         for needle in (
             "cross-agent-delegation.task.v1",
@@ -540,7 +588,7 @@ class WritingStyleSystemTests(unittest.TestCase):
         mrev_rows = [
             row for row in matrix["requirements"] if row["id"].startswith("WS-MREV-")
         ]
-        self.assertEqual(len(mrev_rows), 14)
+        self.assertEqual(len(mrev_rows), 20)
         for row in mrev_rows:
             self.assertIn("prose", row["workflows"], row["id"])
 

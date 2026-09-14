@@ -1,9 +1,9 @@
 {
   "schema_version": "writing-style.overlay-index.v1",
-  "overlay_version": "2026-09-13",
+  "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/math-manuscript-style.md",
   "base_policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "sha256:3eac2f361f9b8ebc38556e228fefcf0b28320d681eace7444026120c348e1578",
+  "content_hash": "sha256:ac1872a410dd337fe630c44dbb2dafa04d568ca29ca8bbbb096c3f191f0c5143",
   "requirements": [
     {
       "id": "WS-MATH-0001",

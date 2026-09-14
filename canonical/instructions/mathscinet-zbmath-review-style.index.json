@@ -1,9 +1,9 @@
 {
   "schema_version": "writing-style.overlay-index.v1",
-  "overlay_version": "2026-09-13",
+  "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/mathscinet-zbmath-review-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "sha256:52d17b7cae3699e32f03afad09c598434de0d30edeb3a25b9a0fffed9c83fdb1",
+  "content_hash": "sha256:743793918a1ad3b1e82fd62343203c5a7d767582690c25df3a01092ce343db60",
   "requirements": [
     {
       "id": "WS-MREV-0001",
@@ -144,6 +144,66 @@
       "markdown_anchor": "examples-as-heuristics",
       "source_ledger_ids": ["ML-0172"],
       "test_ids": ["WS-T-0314"]
+    },
+    {
+      "id": "WS-MREV-0015",
+      "title": "State a factual contribution thesis for the intended reader",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "review-purpose-and-shape",
+      "source_ledger_ids": ["ML-0178"],
+      "test_ids": ["WS-T-0315"]
+    },
+    {
+      "id": "WS-MREV-0016",
+      "title": "Select results proportionately instead of inventorying theorems",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "review-purpose-and-shape",
+      "source_ledger_ids": ["ML-0179"],
+      "test_ids": ["WS-T-0316"]
+    },
+    {
+      "id": "WS-MREV-0017",
+      "title": "Ground importance novelty and significance claims concretely",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "review-purpose-and-shape",
+      "source_ledger_ids": ["ML-0180"],
+      "test_ids": ["WS-T-0317"]
+    },
+    {
+      "id": "WS-MREV-0018",
+      "title": "Keep public bibliographic review distinct from prepublication refereeing",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "post-publication-stance-and-criticism-admission",
+      "source_ledger_ids": ["ML-0181"],
+      "test_ids": ["WS-T-0318"]
+    },
+    {
+      "id": "WS-MREV-0019",
+      "title": "Admit criticism only after exact-version and context checks",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "post-publication-stance-and-criticism-admission",
+      "source_ledger_ids": ["ML-0182"],
+      "test_ids": ["WS-T-0319"]
+    },
+    {
+      "id": "WS-MREV-0020",
+      "title": "Verify wording-sensitive criticism against the reviewed version",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "post-publication-stance-and-criticism-admission",
+      "source_ledger_ids": ["ML-0183"],
+      "test_ids": ["WS-T-0320"]
     }
   ]
 }
