@@ -77,6 +77,11 @@ class SkillPythonUsageError(SkillPythonError):
     """A request that cannot be honoured as written (CLI exit 2)."""
 
 
+def _require_linux_skill_python() -> None:
+    if not sys.platform.startswith("linux"):
+        raise SkillPythonError("skill Python venv provisioning is Linux-only")
+
+
 @dataclass(frozen=True)
 class SkillPythonTarget:
     skill: str
@@ -540,8 +545,7 @@ def build_skill_python_plan(
     checkout: Path | None = None,
 ) -> dict[str, Any]:
     """Decide what a run would do; nothing is written."""
-    if os.name != "posix":
-        raise SkillPythonError("skill Python venv provisioning is POSIX-only")
+    _require_linux_skill_python()
     if recreate and remove:
         raise SkillPythonUsageError("--recreate and --remove are mutually exclusive")
     home = Path(home)
@@ -651,6 +655,7 @@ def _write_receipt(venv: Path, receipt: dict[str, Any]) -> Path:
 
 def apply_skill_python_plan(plan: dict[str, Any], *, run: Runner = subprocess.run, log: Callable[[str], Any] = print) -> dict[str, Any]:
     """Perform the plan: identify, adopt or create, pip, normalize, admit, receipt."""
+    _require_linux_skill_python()
     home = Path(plan["home"])
     venv = Path(plan["venv"])
     checkout = Path(plan["checkout"])

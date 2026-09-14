@@ -38,6 +38,7 @@ service-supplied.
 
 If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
 disclose the missing style guidance and do not claim service-format compliance.
+Do not reconstruct it from memory.
 
 ## Document lookup order for review tasks
 
