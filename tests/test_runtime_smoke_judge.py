@@ -377,7 +377,7 @@ class RuntimeSmokeJudgeTests(unittest.TestCase):
         self.assertEqual(result["status"], "not-applicable")
         self.assertEqual(result["reason"], "POSIX launcher mode check")
 
-    @unittest.skipUnless(os.name == "posix", "POSIX runtime fixture")
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux runtime fixture")
     def test_installed_functional_verdict_and_complete_credential_coverage(self):
         from installer.ai_agents_skills.agents import detect_agents
         from installer.ai_agents_skills.apply import apply_plan

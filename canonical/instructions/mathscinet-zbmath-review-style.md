@@ -228,4 +228,7 @@ Before delivery, confirm that:
   decoration;
 - service-specific language, length, LaTeX, MSC, keyword, and reference rules
   were checked against the current guide;
+- inclusion or exclusion of reviewer identity, portal data, and confidential
+  correspondence follows explicit user instructions and directly verified
+  source terms;
 - the active style profile and requirement IDs are recorded.

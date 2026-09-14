@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -212,7 +213,37 @@ def cfg_version_xy(venv: Path) -> str:
     raise AssertionError("pyvenv.cfg carries no version")
 
 
-@unittest.skipIf(os.name != "posix", "skill Python venvs are POSIX-only")
+class PlatformBoundaryTests(unittest.TestCase):
+    def test_non_linux_plan_refuses_before_filesystem_checks(self) -> None:
+        with mock.patch.object(skill_python.sys, "platform", "darwin"), \
+             mock.patch.object(skill_python, "refuse_protected_location") as protected, \
+             mock.patch.object(skill_python, "attested_base_python") as attested:
+            with self.assertRaisesRegex(SkillPythonError, "provisioning is Linux-only"):
+                build_skill_python_plan(
+                    Path("/tmp/home"),
+                    synthetic_manifests(),
+                    skills=None,
+                    venv=Path("/tmp/venv"),
+                    python=None,
+                    include_opt_in=False,
+                    recreate=False,
+                    remove=False,
+                    checkout=Path("/tmp/checkout"),
+                )
+        protected.assert_not_called()
+        attested.assert_not_called()
+
+    def test_non_linux_apply_refuses_before_umask_or_lock(self) -> None:
+        with mock.patch.object(skill_python.sys, "platform", "darwin"), \
+             mock.patch.object(skill_python.os, "umask") as umask, \
+             mock.patch.object(skill_python, "external_provision_lock") as lock:
+            with self.assertRaisesRegex(SkillPythonError, "provisioning is Linux-only"):
+                apply_skill_python_plan({})
+        umask.assert_not_called()
+        lock.assert_not_called()
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "skill Python venv attestation is Linux-only")
 class SkillPythonCase(unittest.TestCase):
     def setUp(self) -> None:
         if not os.path.exists(SYSTEM_PYTHON):

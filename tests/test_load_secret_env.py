@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -107,6 +108,7 @@ class LoadSecretEnvChildLaunchTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout.strip().splitlines()[-1])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "attested skill Python venv is Linux-only")
     def test_child_path_prepends_admitted_prefix_bin(self) -> None:
         venv = self.make_venv("venv")
         completed = self.loader(

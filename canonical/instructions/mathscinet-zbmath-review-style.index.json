@@ -3,7 +3,7 @@
   "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/mathscinet-zbmath-review-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "sha256:33555c2618d088096e862e2c7bafb218d6fed4d7281abb764cfffbbc94c5e71f",
+  "content_hash": "sha256:25337ab23895b39c3166b7e7d9d051b7b91118ad871f70e2a08a846835123df9",
   "requirements": [
     {
       "id": "WS-MREV-0001",
