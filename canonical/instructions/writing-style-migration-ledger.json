@@ -1745,11 +1745,11 @@
       "source_location": "local safeguard derived from AMS and zbMATH assigned-material restrictions; reviewed 2026-09-13",
       "old_rule_text": "Determine service, provenance, artifact, terms, destination, purpose, retention, and deletion conditions before any content-accessing tool call.",
       "normalized_rule_text": "Fail closed on unknown or mixed review-material provenance before content access.",
-      "classification_tags": ["math-review", "provenance", "confidentiality", "local-safeguard"],
-      "normative_requirement_ids": ["WS-MREV-0001"],
-      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
-      "disposition": "migrate",
-      "reviewer_status": "approved"
+      "classification_tags": ["math-review", "provenance", "confidentiality", "local-safeguard", "rejected", "overbroad"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "superseded"
     },
     {
       "edge_id": "ML-0160",
@@ -1778,11 +1778,11 @@
       "source_location": "local safeguard reviewed 2026-09-13; source-grounded authorization boundary",
       "old_rule_text": "A separately obtained public copy is a distinct artifact and does not reclassify a restricted supplied copy.",
       "normalized_rule_text": "Require artifact-specific processing permission and separate reading authority from execution authority.",
-      "classification_tags": ["math-review", "authorization", "untrusted-content", "local-safeguard"],
-      "normative_requirement_ids": ["WS-MREV-0004"],
-      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
-      "disposition": "migrate",
-      "reviewer_status": "approved"
+      "classification_tags": ["math-review", "authorization", "untrusted-content", "local-safeguard", "rejected", "unapproved"],
+      "normative_requirement_ids": [],
+      "destination_docs": [],
+      "disposition": "deprecate",
+      "reviewer_status": "superseded"
     },
     {
       "edge_id": "ML-0163",
@@ -2035,6 +2035,28 @@
       "normative_requirement_ids": ["WS-GEN-0013"],
       "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
       "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0186",
+      "source_location": "user correction removing an unapproved local provenance precondition, 2026-09-14",
+      "old_rule_text": "A request for a Mathematical Reviews/MathSciNet or zbMATH review does not establish that the local or user-provided item was supplied by that service.",
+      "normalized_rule_text": "Do not require a provenance declaration or block access to ordinary local, user-provided, or public review material unless the user or artifact identifies it as service-supplied.",
+      "classification_tags": ["math-review", "provenance", "content-access", "user-correction"],
+      "normative_requirement_ids": ["WS-MREV-0001"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md", "canonical/instructions/math-manuscript-style.md", "canonical/entrypoints/review.md", "canonical/skills/draft-writing/SKILL.md", "canonical/skills/paper-review/SKILL.md", "canonical/skills/annotated-review/SKILL.md", "canonical/skills/agent-group-discuss/SKILL.md", "canonical/skills/prose/SKILL.md", "canonical/skills/research-report-reviewer/SKILL.md", "installer/ai_agents_skills/planner.py"],
+      "disposition": "supersede",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0187",
+      "source_location": "user correction removing all unrequested review-material restrictions, 2026-09-14",
+      "old_rule_text": "Do not add restrictions in review workflows unless the user requested them or a directly verified source requires them.",
+      "normalized_rule_text": "Prohibit unrequested access, transfer, compilation, delegation, retention, and deletion restrictions in MathSciNet and zbMATH review guidance.",
+      "classification_tags": ["math-review", "scope-control", "authorization", "user-correction"],
+      "normative_requirement_ids": ["WS-MREV-0004"],
+      "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
+      "disposition": "supersede",
       "reviewer_status": "approved"
     }
   ]

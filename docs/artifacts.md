@@ -61,7 +61,7 @@ make install ARGS="--no-skills --artifact-profile repo-management --dry-run"
 | `instruction-doc:github-actions-offload-routing` | When to route compute to GitHub Actions (private repo, budget-gated, last in the recommended five-lane order). | `modal-research-compute` |
 | `instruction-doc:graph-combinatorics-style` | Graph-theoretic and combinatorial terminology, notation, and sentence-construction overlay. |  |
 | `instruction-doc:math-manuscript-style` | Mathematical manuscript, TCS, graph-theoretic, and Lean-synchronized prose style overlay. |  |
-| `instruction-doc:mathscinet-zbmath-review-style` | Mathematical Reviews/MathSciNet and zbMATH bibliographic-review overlay with provenance-first source controls. |  |
+| `instruction-doc:mathscinet-zbmath-review-style` | Mathematical Reviews/MathSciNet and zbMATH bibliographic-review overlay with source-attributed service guidance and evidence-bound review practice. |  |
 | `instruction-doc:modal-offload-routing` | When to keep work local and when to route heavy compute elsewhere. | `modal-research-compute` |
 | `instruction-doc:operating-discipline` | Always-on cross-task behaviors (surface assumptions, manage confusion, push back, scope discipline, verify) plus an index of which gate to invoke when. |  |
 | `instruction-doc:provider-credit-quota` | How to classify and handle agent-provider credit/usage/rate-limit exhaustion across drive, panel, AGD, and cross-agent delegation: exclude exhausted providers, fail over primary before infinite wait, never treat CLI credits as a research stop. | `autonomous-research-loop`, `cross-agent-delegation`, `agent-group-discuss`, `model-router` |

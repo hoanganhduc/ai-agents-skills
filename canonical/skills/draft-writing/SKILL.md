@@ -27,14 +27,15 @@ For paper/book review requests, use the relevant review workflow unless the
 user is asking to rewrite or prepare draft text.
 
 For a request to write a Mathematical Reviews/MathSciNet or zbMATH
-bibliographic review, load `mathscinet-zbmath-review-style.md` and complete its
-provenance gate before opening, retrieving, parsing, or delegating the assigned
-item from either service. This is a writing route, not the ordinary
-referee-style `paper-review` route.
+bibliographic review, load `mathscinet-zbmath-review-style.md` before drafting
+or finalizing the review. This is a writing route, not the ordinary
+referee-style `paper-review` route. The request does not by itself imply that
+the item was supplied by either service. Do not require a provenance
+declaration or stop before content access unless the user states, or the
+artifact itself indicates, that it is service-supplied.
 
 If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
-stop before content access, ref resolution, tool invocation, prompt assembly,
-artifact persistence, or delegation. Do not reconstruct its rules from memory.
+disclose the missing style guidance and do not claim service-format compliance.
 
 ## Core Workflow
 

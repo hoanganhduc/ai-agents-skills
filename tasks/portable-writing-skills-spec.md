@@ -50,8 +50,8 @@ It is limited to the four writing instructions and their existing consumers.
 - Mathematical-writing books are candidate sources, not blanket authority.
 - Review recommendations remain advisory and the parent owns validation and
   acceptance.
-- Unknown or mixed MathSciNet/zbMATH source provenance fails closed before a
-  document is opened or routed to a tool.
+- A MathSciNet/zbMATH review request does not by itself classify a local or
+  user-provided item as service-supplied or create a content-access precondition.
 
 ## Interfaces
 
@@ -76,8 +76,9 @@ It is limited to the four writing instructions and their existing consumers.
 - Retired compatibility documents have no live consumer or manifest reference.
 - New requirements have contiguous IDs, sources, anchors, tests, matrix rows,
   and registry allocations.
-- MathSciNet/zbMATH provenance denial occurs before lookup, parsing,
-  delegation, logging, compilation, or writes.
+- MathSciNet/zbMATH guidance adds no access, transfer, compilation, delegation,
+  retention, or deletion restriction without user or directly verified source
+  authority.
 - Existing V1 delegation packets carry only inert refs and advisory actions;
   no new authority-bearing fields are introduced.
 - Review-driven edits close every reviewer comment and preserve or explicitly
@@ -95,11 +96,12 @@ It is limited to the four writing instructions and their existing consumers.
 
 ## Risks
 
-- A domain overlay loaded after document retrieval would disclose restricted
-  review material; routing tests must prove zero tool calls on denial.
+- A review request may be mistaken for evidence that an item was supplied by a
+  reviewing service; routing tests must reject that inference and must not add
+  a content-access precondition.
 - Historical advice may duplicate or contradict current policy; migration rows
   must record merge, supersede, deprecate, or reference-only treatment.
-- Raw reviewer correspondence may contain confidential or personal data;
-  templates use minimized paraphrases and restricted inert refs.
+- Review templates must not add review-specific retention or delegation rules
+  beyond explicit user instructions or directly verified source terms.
 - Citation-removal and figure-use checks may be overread; they are readability
   decisions only and never waive attribution or trigger figure generation.

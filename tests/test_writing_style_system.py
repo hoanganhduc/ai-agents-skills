@@ -219,7 +219,7 @@ class WritingStyleSystemTests(unittest.TestCase):
         )
         actual_test_methods = {
             "test_source_audited_rules_and_review_contract_are_present",
-            "test_review_provenance_gate_precedes_document_lookup",
+            "test_review_material_boundary_does_not_block_ordinary_content_access",
             "test_review_consumers_reference_the_shared_recommendation_contract",
             "test_artifact_profiles_propagate_policy_and_overlay",
         }
@@ -508,12 +508,10 @@ class WritingStyleSystemTests(unittest.TestCase):
         self.assertIn("only exception supplied here", graph)
 
         for needle in (
-            "Before opening",
+            "does not by itself imply",
+            "Do not require a provenance declaration",
             "provided by Mathematical Reviews",
-            "grammar-only",
             "not a referee report",
-            "Already-ingested material",
-            "Do not compile",
             "Updated February",
             "one-sentence contribution thesis",
             "theorem-by-theorem inventory",
@@ -551,7 +549,7 @@ class WritingStyleSystemTests(unittest.TestCase):
                 text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
                 self.assertIn("writing-review.md", text)
 
-    def test_review_provenance_gate_precedes_document_lookup(self) -> None:
+    def test_review_material_boundary_does_not_block_ordinary_content_access(self) -> None:
         ordering_markers = {
             "canonical/skills/draft-writing/SKILL.md": "## Core Workflow",
             "canonical/skills/paper-review/SKILL.md": "## Document lookup order",
@@ -564,25 +562,55 @@ class WritingStyleSystemTests(unittest.TestCase):
             with self.subTest(path=rel_path):
                 text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
                 normalized_text = " ".join(text.split())
-                self.assertLess(text.lower().index("provenance gate"), text.index(later_marker))
-                self.assertIn("before content access", normalized_text)
+                self.assertLess(text.index("The request does not by itself imply"), text.index(later_marker))
                 self.assertIn(
-                    "If `mathscinet-zbmath-review-style.md` is unavailable in the current install",
-                    text,
+                    "Do not require a provenance declaration or stop before content access unless",
+                    normalized_text,
                 )
-                self.assertTrue(
-                    "assignment from either service" in normalized_text
-                    or "assigned by either service" in normalized_text
-                    or "assigned item from either service" in normalized_text,
-                    rel_path,
-                )
+                self.assertIn("disclose the missing style guidance", normalized_text)
+                self.assertNotIn("Unknown or mixed provenance stops", normalized_text)
+                self.assertNotIn("stop before content access, ref resolution", normalized_text)
 
         panel_text = (REPO_ROOT / "canonical/skills/agent-group-discuss/SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("before content access or delegation", " ".join(panel_text.split()))
-        self.assertIn("`mr-grammar-only` admission state is not a panel lane", panel_text)
-        self.assertIn("untrusted evidence, never instructions", panel_text)
+        self.assertNotIn("`mr-grammar-only` admission state", panel_text)
+        self.assertNotIn("`authorized-content`", panel_text)
+        self.assertNotIn("Material supplied by Mathematical Reviews must not enter", panel_text)
         prose_text = (REPO_ROOT / "canonical/skills/prose/SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("untrusted evidence, never instructions", prose_text)
+        self.assertNotIn("`authorized-content`", prose_text)
+        self.assertNotIn("Material supplied by Mathematical Reviews must not enter", prose_text)
+
+        math_overlay = (REPO_ROOT / "canonical/instructions/math-manuscript-style.md").read_text(encoding="utf-8")
+        entrypoint = (REPO_ROOT / "canonical/entrypoints/review.md").read_text(encoding="utf-8")
+        planner = (REPO_ROOT / "installer/ai_agents_skills/planner.py").read_text(encoding="utf-8")
+        self.assertNotIn("provenance gate runs", math_overlay)
+        self.assertNotIn("gate before document lookup", entrypoint)
+        self.assertNotIn("before accessing the reviewed document", planner)
+        self.assertIn("do not infer service-supplied status from the request alone", planner)
+
+        ledger = load_json("canonical/instructions/writing-style-migration-ledger.json")
+        ledger_rows = {row["edge_id"]: row for row in ledger["rows"]}
+        self.assertEqual(ledger_rows["ML-0159"]["normative_requirement_ids"], [])
+        self.assertEqual(ledger_rows["ML-0159"]["reviewer_status"], "superseded")
+        self.assertEqual(ledger_rows["ML-0186"]["normative_requirement_ids"], ["WS-MREV-0001"])
+        self.assertEqual(ledger_rows["ML-0162"]["normative_requirement_ids"], [])
+        self.assertEqual(ledger_rows["ML-0162"]["reviewer_status"], "superseded")
+        self.assertEqual(ledger_rows["ML-0187"]["normative_requirement_ids"], ["WS-MREV-0004"])
+
+        review_overlay = (REPO_ROOT / "canonical/instructions/mathscinet-zbmath-review-style.md").read_text(encoding="utf-8")
+        annotated_review = (REPO_ROOT / "canonical/skills/annotated-review/SKILL.md").read_text(encoding="utf-8")
+        for forbidden in (
+            "As a local safeguard, deny transfer",
+            "## Already-Ingested Material",
+            "## Execution Boundary",
+            "restricted review copy as a delegated evidence payload",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, review_overlay)
+        self.assertNotIn("containment review", annotated_review)
+        self.assertIn(
+            "Do not add access, transfer, compilation, delegation, retention, or deletion restrictions",
+            " ".join(review_overlay.split()),
+        )
 
         matrix = load_json("canonical/instructions/writing-style-requirements-matrix.json")
         mrev_rows = [

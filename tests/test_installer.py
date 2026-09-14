@@ -952,7 +952,7 @@ class ManifestTests(unittest.TestCase):
         selected = resolve_skills(args, manifests)
         self.assertEqual(selected, ["draft-writing"])
 
-    def test_review_skills_fail_closed_when_optional_review_overlay_is_not_installed(self) -> None:
+    def test_review_skills_disclose_when_optional_review_overlay_is_not_installed(self) -> None:
         manifests = load_manifests()
         review_skills = (
             "draft-writing",
@@ -980,6 +980,10 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(skill=skill):
                 self.assertIn(
                     "If `mathscinet-zbmath-review-style.md` is unavailable",
+                    skill_actions[skill]["content"],
+                )
+                self.assertIn(
+                    "disclose the missing style guidance",
                     skill_actions[skill]["content"],
                 )
         self.assertFalse(
@@ -1155,8 +1159,9 @@ class ManifestTests(unittest.TestCase):
                 "short outline paragraph",
             ],
             "canonical/instructions/mathscinet-zbmath-review-style.md": [
-                "Before opening",
-                "provided by Mathematical Reviews",
+                "by itself imply that the reviewed item",
+                "require a provenance declaration or delay opening",
+                "Mathematical Reviews must not be uploaded",
                 "not a referee report",
             ],
         }

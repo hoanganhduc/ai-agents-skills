@@ -52,21 +52,15 @@ Routing rule for review-only requests:
 - if the user asks for a multi-agent review, use `agent-group-discuss`
 - do not auto-route review-only requests to `annotated-review`
 
-If the request names Mathematical Reviews/MathSciNet or zbMATH, an assignment
-from either service, or a copy supplied by either service, load
-`mathscinet-zbmath-review-style.md` and complete its provenance gate before
-library lookup, attachment opening, parsing, annotation, compilation, logging,
-or delegation. A restricted or unresolved assignment must stop before content
-access; annotation does not create an exception.
+If the request names Mathematical Reviews/MathSciNet or zbMATH, load
+`mathscinet-zbmath-review-style.md` before drafting or finalizing the review.
+The request does not by itself imply that the item was supplied by either
+service. Do not require a provenance declaration or stop before content access
+unless the user states, or the artifact itself indicates, that it is
+service-supplied.
 
 If `mathscinet-zbmath-review-style.md` is unavailable in the current install,
-stop before content access, ref resolution, tool invocation, prompt assembly,
-artifact persistence, or delegation. Do not reconstruct its rules from memory.
-
-Even when a separately obtained public copy is authorized for content
-processing, do not compile it merely because this skill is active. Compilation
-requires separate user authorization and a containment review; the
-bibliographic-review writing route never supplies that authority.
+disclose the missing style guidance and do not claim service-format compliance.
 
 ## Strict Zotero rule
 

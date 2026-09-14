@@ -3,16 +3,16 @@
   "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/mathscinet-zbmath-review-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "sha256:743793918a1ad3b1e82fd62343203c5a7d767582690c25df3a01092ce343db60",
+  "content_hash": "sha256:33555c2618d088096e862e2c7bafb218d6fed4d7281abb764cfffbbc94c5e71f",
   "requirements": [
     {
       "id": "WS-MREV-0001",
-      "title": "Resolve review-material provenance before content access",
+      "title": "Do not infer service-supplied status from a review request",
       "scope": "MathSciNet and zbMATH bibliographic-review workflows",
       "severity": "hard",
-      "relationship_to_general": "additive",
-      "markdown_anchor": "provenance-gate",
-      "source_ledger_ids": ["ML-0159"],
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "material-source-boundary",
+      "source_ledger_ids": ["ML-0186"],
       "test_ids": ["WS-T-0301"]
     },
     {
@@ -37,12 +37,12 @@
     },
     {
       "id": "WS-MREV-0004",
-      "title": "Treat independently obtained material as a separate authorization decision",
+      "title": "Do not add unrequested review-material restrictions",
       "scope": "MathSciNet and zbMATH bibliographic-review workflows",
       "severity": "hard",
-      "relationship_to_general": "additive",
-      "markdown_anchor": "provenance-gate",
-      "source_ledger_ids": ["ML-0162"],
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "material-source-boundary",
+      "source_ledger_ids": ["ML-0187"],
       "test_ids": ["WS-T-0304"]
     },
     {
