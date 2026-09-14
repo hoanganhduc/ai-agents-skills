@@ -61,12 +61,15 @@ if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ]; then
   printf 'AAS_RUNTIME_PYTHON does not match the attested system Python runtime\n' >&2
   exit 127
 fi
+python_real="$PYTHON"
 exec 9<"$PYTHON"
 AAS_VNTHUQUAN_PYTHON_FD=9
 if [ -e "/proc/self/fd/$AAS_VNTHUQUAN_PYTHON_FD" ]; then
   PYTHON="/proc/self/fd/$AAS_VNTHUQUAN_PYTHON_FD"
 elif [ -e "/dev/fd/$AAS_VNTHUQUAN_PYTHON_FD" ]; then
-  PYTHON="/dev/fd/$AAS_VNTHUQUAN_PYTHON_FD"
+  # BSD fdesc denies execve on read-only /dev/fd nodes.  Keep the attested
+  # inode referenced by the descriptor, but execute the checked real path.
+  PYTHON="$python_real"
 else
   printf 'attested system Python runtime could not be descriptor-bound\n' >&2
   exit 127
