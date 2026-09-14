@@ -592,10 +592,16 @@ starting elsewhere means re-deriving them and getting some of them wrong:
 `cleveref`, `biblatex` with the `biber` backend, `tikz`, `enumerate`, and
 theorem environments sharing one counter through `aliascnt`.
 
-Having copied the template, delete what this manuscript does not use. A
-template ships the union of what several manuscripts might need, and anything
-left behind will eventually be mistaken for part of the paper — by a
-co-author, by a submission system, or by whoever picks the work up later.
+Having copied the template, follow the global LaTeX source-preservation rule in
+`writing-style-settings.md`. Comment out unused textual source rather than
+deleting it, so the material can be restored later if needed. Delete content
+from a `.tex` file only when deletion is genuinely necessary. Keep preserved
+comments clearly separated from active manuscript content so a co-author, a
+submission system, or a later maintainer does not mistake them for part of the
+paper. Never preserve secrets, personal or confidential data, restricted
+material, text that must be anonymized or redacted, or unsafe executable
+content merely to retain a restoration path; apply the mandatory removal
+exception in the general policy.
 
 Concretely, in a manuscript started from the template above: the committed
 `main.pdf` is the template's own preview and is rebuilt on the first
@@ -603,7 +609,10 @@ compilation; `mplainnat.bst` serves the optional BibTeX path, which this policy
 does not take; the example figure under `figs/` is a placeholder, not a figure
 of this paper; and only one of `Makefile` and `make.bat` is used on a given
 machine. Remove the template's own `refs.bib` entries rather than leaving
-sample references in the bibliography.
+sample references in the bibliography. Remove unnecessary template files from
+the manuscript copy when appropriate; deletion of a whole file is distinct from
+deletion of content inside a `.tex` file and follows the ordinary filesystem
+safety rules.
 
 This applies to the copy, not to the template repository, which keeps all of
 these on purpose.

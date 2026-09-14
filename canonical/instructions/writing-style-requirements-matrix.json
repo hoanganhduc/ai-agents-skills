@@ -1,6 +1,6 @@
 {
   "schema_version": "writing-style.requirements-matrix.v1",
-  "generated_for_release": "2026-09-13",
+  "generated_for_release": "2026-09-14",
   "requirements": [
     {
       "id": "WS-GEN-0001",
@@ -1463,6 +1463,26 @@
       "mechanical_status": "reviewed-non-mechanical"
     },
     {
+      "id": "WS-GEN-0012",
+      "source_location": "user requirement, 2026-09-14",
+      "scope": "all writing workflows that create or edit .tex files",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0012"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GEN-0013",
+      "source_location": "user requirement and clarification, 2026-09-14",
+      "scope": "all writing workflows that edit existing .tex files",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0013"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
       "id": "WS-MATH-0092",
       "source_location": "user requirement and retired compatibility-source audit",
       "scope": "math manuscripts",
@@ -1651,6 +1671,66 @@
       "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0314"],
       "mechanical_status": "heuristic"
+    },
+    {
+      "id": "WS-MREV-0015",
+      "source_location": "user-directed post-publication review revision, 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0315"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0016",
+      "source_location": "user-directed post-publication review revision, 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0316"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0017",
+      "source_location": "user-directed post-publication review revision, 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0317"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0018",
+      "source_location": "local safeguard for both post-publication bibliographic-review workflows, reviewed 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0318"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MREV-0019",
+      "source_location": "user correction after exact-context review of a theorem claim, 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0319"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MREV-0020",
+      "source_location": "user correction after comparing PDF extraction with exact source and publication context, 2026-09-14",
+      "scope": "MathSciNet and zbMATH bibliographic reviews",
+      "canonical_destination": "canonical/instructions/mathscinet-zbmath-review-style.md",
+      "workflows": ["draft-writing", "paper-review", "annotated-review", "agent-group-discuss", "prose", "research-report-reviewer"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0320"],
+      "mechanical_status": "deterministic"
     }
   ],
   "non_mechanical_rationales": [
@@ -1751,6 +1831,48 @@
       "reason": "Exceptional reviews and historical books are examples for judgment, not service requirements or fixed templates.",
       "reviewer": "writing-style-policy",
       "date": "2026-09-13"
+    },
+    {
+      "id": "WSR-0015",
+      "requirement_id": "WS-GEN-0012",
+      "reason": "Sentence boundaries in LaTeX source can be obscured by abbreviations, commands, comments, and environments, so automated checks can flag candidates but prose review confirms compliance; rendered PDF wrapping is outside the rule.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
+    },
+    {
+      "id": "WSR-0016",
+      "requirement_id": "WS-GEN-0013",
+      "reason": "Whether deleting ordinary source content is genuinely necessary depends on the requested outcome; review must distinguish restorable content edits from whole-file management, while confidentiality, privacy, security, licensing, anonymization, redaction, and unsafe-content boundaries require removal.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
+    },
+    {
+      "id": "WSR-0017",
+      "requirement_id": "WS-MREV-0015",
+      "reason": "The contribution thesis depends on the item, its literature context, and the intended database reader, and must remain factual rather than promotional.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
+    },
+    {
+      "id": "WSR-0018",
+      "requirement_id": "WS-MREV-0016",
+      "reason": "The number and choice of representative results depend on the structure of the item and the explanatory role each result serves.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
+    },
+    {
+      "id": "WSR-0019",
+      "requirement_id": "WS-MREV-0017",
+      "reason": "Whether a verified contribution supports an importance, novelty, or significance claim requires mathematical and literature judgment.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
+    },
+    {
+      "id": "WSR-0020",
+      "requirement_id": "WS-MREV-0019",
+      "reason": "Determining whether context supplies an assumption, whether a proposed assumption merely rescues a claim, and whether an issue is a proof gap or false theorem requires exact-version mathematical review.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-09-14"
     }
   ]
 }
