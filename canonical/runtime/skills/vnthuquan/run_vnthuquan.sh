@@ -61,7 +61,8 @@ if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ]; then
   printf 'AAS_RUNTIME_PYTHON does not match the attested system Python runtime\n' >&2
   exit 127
 fi
-exec {AAS_VNTHUQUAN_PYTHON_FD}<"$PYTHON"
+exec 9<"$PYTHON"
+AAS_VNTHUQUAN_PYTHON_FD=9
 if [ -e "/proc/self/fd/$AAS_VNTHUQUAN_PYTHON_FD" ]; then
   PYTHON="/proc/self/fd/$AAS_VNTHUQUAN_PYTHON_FD"
 elif [ -e "/dev/fd/$AAS_VNTHUQUAN_PYTHON_FD" ]; then

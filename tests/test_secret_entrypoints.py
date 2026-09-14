@@ -2099,6 +2099,15 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
 
 class SecretEntrypointStaticTests(unittest.TestCase):
+    def test_vnthuquan_python_binding_is_compatible_with_bash_3(self) -> None:
+        wrapper = (RUNTIME_SOURCE / "skills" / "vnthuquan" / "run_vnthuquan.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('exec 9<"$PYTHON"', wrapper)
+        self.assertIn("AAS_VNTHUQUAN_PYTHON_FD=9", wrapper)
+        self.assertNotIn("exec {AAS_VNTHUQUAN_PYTHON_FD}", wrapper)
+
     def test_windows_runner_uses_minimal_environment_and_holds_command_guard(self) -> None:
         runner = (RUNTIME_SOURCE / "runners" / "run_skill.ps1").read_text(
             encoding="utf-8"
