@@ -148,10 +148,12 @@ class PosixWrapperCompatibilityTests(unittest.TestCase):
     def test_exported_python_remains_usable_after_child_closes_inherited_fds(self) -> None:
         for case in CASES:
             for managed in (False, True):
-                with self.subTest(wrapper=case[1], managed=managed), tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp).resolve()
-                    command, env, _ = self._stage(root, case, managed=managed, reexec=True)
-                    self._assert_ok(self._run(command, env, root), "reexec_ok")
+                for credentials in (False, True):
+                    with self.subTest(wrapper=case[1], managed=managed, credentials=credentials), tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp).resolve()
+                        command, env, _ = self._stage(root, case, managed=managed,
+                                                      credentials=credentials, reexec=True)
+                        self._assert_ok(self._run(command, env, root), "reexec_ok")
 
     def test_occupied_read_and_write_descriptors_are_not_clobbered(self) -> None:
         for case in CASES:

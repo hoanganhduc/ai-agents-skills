@@ -159,7 +159,6 @@ if [ "$credential_present" -eq 1 ]; then
   [ "$PYTHON" -ef "$system_python" ] || exit 127
   select_unused_fd AAS_LEANEXPLORE_SCRIPT_FD || exit 127
   eval "exec ${AAS_LEANEXPLORE_SCRIPT_FD}<\"\$SCRIPT\"" || exit 127
-  export AAS_RUNTIME_PYTHON="$system_python"
 else
   if [ -n "$configured_python" ]; then
     case "$configured_python" in
@@ -174,6 +173,14 @@ else
     printf 'error: no usable Python runtime found. Set AAS_RUNTIME_PYTHON or install Python 3.\n' >&2
     exit 127
   fi
+fi
+
+# The outer runner may pass a borrowed descriptor even without a key. Keep
+# that binding for this exec, but export a selector usable after FD cleanup.
+if [ "$PYTHON" -ef /usr/bin/python3 ]; then
+  export AAS_RUNTIME_PYTHON=/usr/bin/python3
+else
+  export AAS_RUNTIME_PYTHON="$PYTHON"
 fi
 
 # Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
