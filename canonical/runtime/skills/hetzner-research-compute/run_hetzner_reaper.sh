@@ -36,6 +36,23 @@ case "$script_path" in */*) script_parent="${script_path%/*}" ;; *) script_paren
 ROOT="$(cd -- "$script_parent" && builtin pwd -P)"
 PYTHON="${AAS_RUNTIME_PYTHON:-}"
 
+# Choose an unused FD without Bash 4's {var}< syntax.  Probe by duplication,
+# not by reading it: inherited read-only and write-only FDs must both survive.
+# Keep clear of the outer runner's 200+ range and Bash's script descriptor.
+# Callers open the FD immediately; only this bounded integer enters eval.
+select_unused_fd() {
+  local variable="$1" number=10
+  while [ "$number" -lt 200 ]; do
+    if ! ( : <&"$number" ) 2>/dev/null; then
+      printf -v "$variable" '%s' "$number"
+      return 0
+    fi
+    number=$((number + 1))
+  done
+  printf 'no unused runtime descriptor is available\n' >&2
+  return 1
+}
+
 trusted_python_metadata_ok() {
   local candidate="$1" metadata owner mode links current_uid
   metadata="$(/usr/bin/stat -Lc '%u:%a:%h' -- "$candidate" 2>/dev/null || \
@@ -56,17 +73,25 @@ trusted_python_metadata_ok() {
 }
 
 bind_selected_python_inode() {
-  local selected="$PYTHON"
-  exec {AAS_PYTHON_EXEC_FD}<"$selected" || return 1
+  local selected=/usr/bin/python3
+  [ "$PYTHON" -ef "$selected" ] || return 1
+  select_unused_fd AAS_PYTHON_EXEC_FD || return 1
+  eval "exec ${AAS_PYTHON_EXEC_FD}<\"\$selected\"" || return 1
   if [ -e "/proc/self/fd/$AAS_PYTHON_EXEC_FD" ]; then
     PYTHON="/proc/self/fd/$AAS_PYTHON_EXEC_FD"
+    [ "$PYTHON" -ef "$selected" ] && return 0
   elif [ -e "/dev/fd/$AAS_PYTHON_EXEC_FD" ]; then
-    PYTHON="/dev/fd/$AAS_PYTHON_EXEC_FD"
-  else
-    exec {AAS_PYTHON_EXEC_FD}<&-
-    return 1
+    # Darwin cannot exec a read-only fdesc node. Verify the actual inherited
+    # FD with fstat (not BSD fdesc's synthetic device/mode), then exec only
+    # the fixed system path, never a caller-controlled equivalent pathname.
+    # This is a pathname launch, not Linux's bound-inode execution guarantee.
+    if "$selected" -I -c 'import os,sys; a=os.fstat(int(sys.argv[1])); b=os.stat("/usr/bin/python3"); sys.exit((a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino))' "$AAS_PYTHON_EXEC_FD"; then
+      PYTHON="$selected"
+      return 0
+    fi
   fi
-  [ "$PYTHON" -ef "$selected" ]
+  eval "exec ${AAS_PYTHON_EXEC_FD}<&-"
+  return 1
 }
 
 resolve_python() {
@@ -175,12 +200,18 @@ resolve_secret_loader() {
 if ! PYTHON="$(resolve_python)"; then
   exit 127
 fi
+# A descriptor alias belongs to this process. Export a stable selector for
+# children that close inherited FDs; keep the bound inode for this exec.
+resolved_python="$PYTHON"
+if [ "$resolved_python" -ef /usr/bin/python3 ]; then
+  resolved_python=/usr/bin/python3
+fi
 if { [ -n "$compute_pointer" ] || [ -n "$hcloud_token" ] || [ -n "$hcloud_ssh_keys" ]; } &&
   ! bind_selected_python_inode; then
   printf 'Hetzner reaper launch could not bind the trusted Python inode.\n' >&2
   exit 127
 fi
-export AAS_RUNTIME_PYTHON="$PYTHON"
+export AAS_RUNTIME_PYTHON="$resolved_python"
 
 for tool_spec in \
   AAS_HETZNER_HCLOUD_BIN:hcloud \
@@ -262,7 +293,7 @@ if [ -n "$compute_pointer" ]; then
     --retain-env AAS_HETZNER_SCP_BIN
     --retain-env AAS_HETZNER_RSYNC_BIN
     --retain-env AAS_HETZNER_SSH_KEYGEN_BIN
-    "${loader_argv0[@]}"
+    ${loader_argv0[@]+"${loader_argv0[@]}"}
     -- "${command[@]}"
   )
 else
