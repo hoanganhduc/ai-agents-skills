@@ -60,7 +60,10 @@ def run_runtime_smoke(
     selected_skills = selected_runtime_skills(manifests, skills)
     venv = skill_venv_row()
     with tempfile.TemporaryDirectory(prefix="aas-runtime-smoke-") as tmp:
-        root = Path(tmp)
+        # This root was just created by this harness. Use its physical path so
+        # macOS /var -> /private/var aliases do not enter secret canary paths.
+        # User-supplied secret paths still go through the strict no-follow gate.
+        root = Path(tmp).resolve()
         (root / ".codex").mkdir(parents=True)
         agents = detect_agents(root, ["codex"])
         plan = build_plan(
