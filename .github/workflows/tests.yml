@@ -254,6 +254,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Check POSIX credential entrypoints
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest tests.test_secret_entrypoints tests.test_suite_text_encoding -v
+
       - name: Run unit tests
         run: make test
 

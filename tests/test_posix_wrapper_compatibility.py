@@ -9,12 +9,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 RUNTIME = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
 CASES = (
     ("calibre", "run_cal.sh", "cal.py"),
+    ("zotero", "run_zot.sh", "zot.py"),
     ("hetzner-research-compute", "run_hetzner_research_compute.sh", "hetzner_research_compute.py"),
     ("hetzner-research-compute", "run_hetzner_reaper.sh", "hetzner_reaper.py"),
     ("kaggle-research-compute", "run_kaggle_research_compute.sh", "kaggle_research_compute.py"),
@@ -27,6 +29,7 @@ VALUES = {
     "KAGGLE_API_TOKEN": "compat-kaggle-canary",
     "KAGGLE_CONFIG_DIR": "/synthetic/kaggle-config",
     "CALIBRE_GDRIVE_FOLDER_ID": "compat-calibre-canary",
+    "ZOTERO_API_KEY": "compat-zotero-canary",
     "LEANEXPLORE_API_KEY": "compat-lean-canary",
 }
 OBSERVED = tuple(VALUES) + ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "OPENAI_API_KEY")
@@ -60,11 +63,12 @@ class PosixWrapperCompatibilityTests(unittest.TestCase):
                "AAS_RUNTIME_PYTHON": "/usr/bin/python3", "OPENAI_API_KEY": "cross-lane-canary"}
         expected: dict[str, str] = {}
         if credentials:
-            if skill == "calibre":
-                expected = {"CALIBRE_GDRIVE_FOLDER_ID": VALUES["CALIBRE_GDRIVE_FOLDER_ID"]}
-                pointer = root / "calibre.json"
+            if skill in {"calibre", "zotero"}:
+                key = "CALIBRE_GDRIVE_FOLDER_ID" if skill == "calibre" else "ZOTERO_API_KEY"
+                expected = {key: VALUES[key]}
+                pointer = root / (skill + ".json")
                 pointer.write_text(json.dumps(expected), encoding="utf-8")
-                env["AAS_CALIBRE_SECRETS_FILE"] = str(pointer)
+                env["AAS_CALIBRE_SECRETS_FILE" if skill == "calibre" else "AAS_ZOTERO_SECRETS_FILE"] = str(pointer)
                 if not managed:
                     env.update(expected)
             elif skill == "lean-explore-mcp":
@@ -209,7 +213,7 @@ class PosixWrapperCompatibilityTests(unittest.TestCase):
             value = "literal$(printf injected);'double\"backtick`text`"
             env["LEANEXPLORE_API_KEY"] = value
             program = wrapper.with_name("lean_explore_mcp.py")
-            program.write_text(program.read_text().replace(repr(VALUES["LEANEXPLORE_API_KEY"]), repr(value)), encoding="utf-8")
+            program.write_text(program.read_text(encoding="utf-8").replace(repr(VALUES["LEANEXPLORE_API_KEY"]), repr(value)), encoding="utf-8")
             result = self._run(command, env, root)
             self._assert_ok(result)
             self.assertNotIn(value, result.stdout + result.stderr)
@@ -224,6 +228,31 @@ class PosixWrapperCompatibilityTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assertNotIn(value, result.stderr)
+
+    def test_telegram_alias_preserves_request_without_memfd(self) -> None:
+        body = (RUNTIME / "skills" / "zotero" / "send_telegram.sh").read_text(encoding="utf-8")
+        loader = body.split("secure_shell_loader='", 1)[1].split("'\n", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            sender = root / "sender.sh"
+            sender.write_text(
+                'IFS= read -r request <&"$AAS_FILE_DELIVERY_REQUEST_FD"\n'
+                '[ "$request" = "synthetic-private-request" ] && printf "request-preserved\\n"\n',
+                encoding="utf-8",
+            )
+            sender.chmod(0o600)
+            # Exercise the Darwin transport on Linux too, without a production
+            # override or a live queue. Only the isolated loader loses memfd.
+            program = "import os; os.__dict__.pop('memfd_create', None); exec(" + repr(loader) + ")"
+            result = subprocess.run(
+                [sys.executable, "-I", "-c", program, str(sender)],
+                input="synthetic-private-request\n", cwd=root,
+                env={"HOME": str(root), "PATH": "/usr/bin:/bin"},
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "request-preserved")
+            self.assertNotIn("synthetic-private-request", result.stdout + result.stderr)
 
     def test_each_managed_wrapper_rejects_an_unsafe_launcher(self) -> None:
         for case in CASES:
