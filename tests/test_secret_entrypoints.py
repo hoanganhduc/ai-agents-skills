@@ -865,6 +865,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         finally:
             os.umask(previous_umask)
 
+    @unittest.skipUnless(sys.platform == "linux", "fixture assumes Linux direct system-Python venv layout")
     def test_stdlib_wrappers_ignore_the_admitted_venv_prefix(self) -> None:
         cases = (
             ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
@@ -1175,7 +1176,12 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     else:
                         self.assertEqual(completed.returncode, 0, completed.stderr)
                         runtime_value = json.loads(completed.stdout)["runtime"]
-                        self.assertRegex(runtime_value, r"^/(?:proc/self|dev)/fd/[0-9]+$")
+                        if sys.platform == "darwin":
+                            # Darwin's existing runner contract executes the fixed
+                            # system pathname, not an executable /dev/fd node.
+                            self.assertEqual(runtime_value, _SYSTEM_PYTHON)
+                        else:
+                            self.assertRegex(runtime_value, r"^/proc/self/fd/[0-9]+$")
                     self.assertFalse(marker.exists())
 
     def test_secret_pointer_without_resolved_python_uses_trusted_system_python(self) -> None:
@@ -1919,7 +1925,11 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             env = {
                 "HOME": str(home),
                 "PATH": "/usr/bin:/bin",
-                "AAS_RUNTIME_PYTHON": "/usr/bin/python3",
+                # This doctor has no compute authority pointer or ambient
+                # compute credentials. Its configurable interpreter needs the
+                # TOML dependency installed for the test environment. Separate
+                # credential-bearing wrapper tests still pin system Python.
+                "AAS_RUNTIME_PYTHON": sys.executable,
                 "OPENCLAW_WORKSPACE": str(workspace),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "AAS_PROVIDER_SECRETS_FILE": "/provider-pointer-must-not-cross",
