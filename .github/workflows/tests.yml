@@ -238,6 +238,22 @@ jobs:
       - name: Install runtime smoke dependencies
         run: python -m pip install networkx psutil requests
 
+      - name: Check native POSIX wrapper compatibility
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          python .github/scripts/posix-wrapper-compatibility.py
+          --report "$RUNNER_TEMP/posix-wrapper-compatibility.json"
+
+      - name: Preserve wrapper compatibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-wrapper-compatibility-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/posix-wrapper-compatibility.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Run unit tests
         run: make test
 

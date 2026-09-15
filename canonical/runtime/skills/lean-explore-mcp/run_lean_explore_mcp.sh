@@ -55,6 +55,23 @@ SCRIPT_DIR="$(cd -- "$script_parent" && builtin pwd -P)"
 SCRIPT="$SCRIPT_DIR/lean_explore_mcp.py"
 WRAPPER="$SCRIPT_DIR/run_lean_explore_mcp.sh"
 
+# Choose an unused FD without Bash 4's {var}< syntax.  Probe by duplication,
+# not by reading it: inherited read-only and write-only FDs must both survive.
+# Keep clear of the outer runner's 200+ range and Bash's script descriptor.
+# Callers open the FD immediately; only this bounded integer enters eval.
+select_unused_fd() {
+  local variable="$1" number=10
+  while [ "$number" -lt 200 ]; do
+    if ! ( : <&"$number" ) 2>/dev/null; then
+      printf -v "$variable" '%s' "$number"
+      return 0
+    fi
+    number=$((number + 1))
+  done
+  printf 'no unused runtime descriptor is available\n' >&2
+  return 1
+}
+
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type current_uid
   metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
@@ -126,26 +143,23 @@ if [ "$credential_present" -eq 1 ]; then
     printf 'credential-bearing LeanExplore launch rejected the selected Python runtime.\n' >&2
     exit 127
   fi
-  selected_python="${configured_python:-$system_python}"
-  exec {AAS_LEANEXPLORE_PYTHON_FD}<"$selected_python"
+  selected_python="$system_python"
+  select_unused_fd AAS_LEANEXPLORE_PYTHON_FD || exit 127
+  eval "exec ${AAS_LEANEXPLORE_PYTHON_FD}<\"\$selected_python\"" || exit 127
   if [ -e "/proc/self/fd/$AAS_LEANEXPLORE_PYTHON_FD" ]; then
     PYTHON="/proc/self/fd/$AAS_LEANEXPLORE_PYTHON_FD"
   elif [ -e "/dev/fd/$AAS_LEANEXPLORE_PYTHON_FD" ]; then
-    PYTHON="/dev/fd/$AAS_LEANEXPLORE_PYTHON_FD"
+    # Check the inherited FD, but only exec the fixed system path on Darwin.
+    "$system_python" -I -c 'import os,sys; a=os.fstat(int(sys.argv[1])); b=os.stat("/usr/bin/python3"); sys.exit((a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino))' "$AAS_LEANEXPLORE_PYTHON_FD" || exit 127
+    PYTHON="$system_python"
   else
     printf 'credential-bearing LeanExplore launch could not bind Python.\n' >&2
     exit 127
   fi
   [ "$PYTHON" -ef "$system_python" ] || exit 127
-  exec {AAS_LEANEXPLORE_SCRIPT_FD}<"$SCRIPT"
-  if [ -e "/proc/self/fd/$AAS_LEANEXPLORE_SCRIPT_FD" ]; then
-    SCRIPT="/proc/self/fd/$AAS_LEANEXPLORE_SCRIPT_FD"
-  elif [ -e "/dev/fd/$AAS_LEANEXPLORE_SCRIPT_FD" ]; then
-    SCRIPT="/dev/fd/$AAS_LEANEXPLORE_SCRIPT_FD"
-  else
-    printf 'credential-bearing LeanExplore launch could not bind its helper.\n' >&2
-    exit 127
-  fi
+  select_unused_fd AAS_LEANEXPLORE_SCRIPT_FD || exit 127
+  eval "exec ${AAS_LEANEXPLORE_SCRIPT_FD}<\"\$SCRIPT\"" || exit 127
+  export AAS_RUNTIME_PYTHON="$system_python"
 else
   if [ -n "$configured_python" ]; then
     case "$configured_python" in
@@ -195,8 +209,16 @@ fi
 
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 if [ -n "$lean_explore_api_key" ]; then
-  exec {AAS_LEANEXPLORE_KEY_FD}<<<"$lean_explore_api_key"
+  select_unused_fd AAS_LEANEXPLORE_KEY_FD || exit 127
+  eval "exec ${AAS_LEANEXPLORE_KEY_FD}<<<\"\$lean_explore_api_key\"" || exit 127
   export AAS_LEANEXPLORE_KEY_FD
 fi
 export AAS_LEANEXPLORE_WRAPPER_PATH="$WRAPPER"
+if [ "$credential_present" -eq 1 ]; then
+  # Read the already-open script once, on both POSIX substrates. Reopening
+  # /dev/fd on Darwin shares an offset and can silently execute an empty file.
+  # Keep the inode binding rather than falling back to reopening its pathname.
+  bound_script_loader='import os,stat,sys; f=int(sys.argv[1]); p=sys.argv[2]; b=os.fstat(f); ok=stat.S_ISREG(b.st_mode) and b.st_uid in {0,os.geteuid()} and not (stat.S_IMODE(b.st_mode)&0o022) and (b.st_uid==0 or b.st_nlink==1) and b.st_size<=16777216; ok or (_ for _ in ()).throw(RuntimeError("runtime helper is unavailable or untrusted")); os.lseek(f,0,os.SEEK_SET); d=b""; rem=b.st_size; exec("while rem:\n c=os.read(f,min(65536,rem))\n c or (_ for _ in ()).throw(RuntimeError(\"runtime helper was truncated\"))\n d+=c; rem-=len(c)"); a=os.fstat(f); (b.st_dev,b.st_ino,b.st_size,b.st_mtime_ns,b.st_ctime_ns,b.st_nlink)==(a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns,a.st_ctime_ns,a.st_nlink) or (_ for _ in ()).throw(RuntimeError("runtime helper changed while reading")); os.close(f); c=compile(d,p,"exec"); sys.argv=[p,*sys.argv[3:]]; g={"__name__":"__main__","__file__":p,"__package__":None,"__cached__":None}; exec(c,g,g)'
+  exec -a "$python_argv0" "$PYTHON" -I -c "$bound_script_loader" "$AAS_LEANEXPLORE_SCRIPT_FD" "$SCRIPT" "$@"
+fi
 exec -a "$python_argv0" "$PYTHON" -I "$SCRIPT" "$@"

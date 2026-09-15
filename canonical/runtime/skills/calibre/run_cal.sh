@@ -41,6 +41,23 @@ if [ -z "$runtime_workspace" ]; then
 fi
 case "$runtime_workspace" in /*) ;; *) printf 'AAS_RUNTIME_WORKSPACE must be absolute\n' >&2; exit 127 ;; esac
 
+# Choose an unused FD without Bash 4's {var}< syntax.  Probe by duplication,
+# not by reading it: inherited read-only and write-only FDs must both survive.
+# Keep clear of the outer runner's 200+ range and Bash's script descriptor.
+# Callers open the FD immediately; only this bounded integer enters eval.
+select_unused_fd() {
+  local variable="$1" number=10
+  while [ "$number" -lt 200 ]; do
+    if ! ( : <&"$number" ) 2>/dev/null; then
+      printf -v "$variable" '%s' "$number"
+      return 0
+    fi
+    number=$((number + 1))
+  done
+  printf 'no unused runtime descriptor is available\n' >&2
+  return 1
+}
+
 trusted_regular_file() {
   local candidate="$1" metadata owner mode links kind current_uid
   metadata="$(/usr/bin/stat -c '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
@@ -67,11 +84,16 @@ if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ]; then
   printf 'AAS_RUNTIME_PYTHON does not match the attested system Python runtime\n' >&2
   exit 127
 fi
-exec {AAS_CALIBRE_PYTHON_FD}<"$PYTHON"
+python_real="$PYTHON"
+select_unused_fd AAS_CALIBRE_PYTHON_FD || exit 127
+eval "exec ${AAS_CALIBRE_PYTHON_FD}<\"\$PYTHON\"" || exit 127
 if [ -e "/proc/self/fd/$AAS_CALIBRE_PYTHON_FD" ]; then
   PYTHON="/proc/self/fd/$AAS_CALIBRE_PYTHON_FD"
+  [ "$PYTHON" -ef "$python_real" ] || exit 127
 elif [ -e "/dev/fd/$AAS_CALIBRE_PYTHON_FD" ]; then
-  PYTHON="/dev/fd/$AAS_CALIBRE_PYTHON_FD"
+  # Darwin's fdesc node is not executable; use the fixed attested path.
+  /usr/bin/python3 -I -c 'import os,sys; a=os.fstat(int(sys.argv[1])); b=os.stat("/usr/bin/python3"); sys.exit((a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino))' "$AAS_CALIBRE_PYTHON_FD" || exit 127
+  PYTHON="$python_real"
 else
   printf 'attested system Python runtime could not be descriptor-bound\n' >&2
   exit 127
@@ -82,7 +104,7 @@ fi
 [ -n "$calibre_folder_id" ] && export CALIBRE_GDRIVE_FOLDER_ID="$calibre_folder_id"
 export AAS_RUNTIME_WORKSPACE="$runtime_workspace"
 export OPENCLAW_WORKSPACE="$runtime_workspace"
-export AAS_RUNTIME_PYTHON="$PYTHON"
+export AAS_RUNTIME_PYTHON="$python_real"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 
 # Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
