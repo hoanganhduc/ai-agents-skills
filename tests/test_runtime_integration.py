@@ -78,6 +78,27 @@ def create_fake_tool(root: Path, name: str, args_path: Path, *, cwd_path: Path |
 
 
 class RuntimeIntegrationTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX no-follow secret path regression")
+    def test_temporary_smoke_uses_real_owned_root_under_tempdir_alias(self) -> None:
+        # macOS tempfile paths commonly start at /var, a system symlink. The
+        # harness owns this scratch root: canonicalize it before constructing
+        # private canary paths, without relaxing any secret-loader path rule.
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            actual = parent / "actual-scratch"
+            actual.mkdir(mode=0o700)
+            alias = parent / "tempdir-alias"
+            alias.symlink_to(actual, target_is_directory=True)
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.tempfile.TemporaryDirectory",
+                return_value=contextlib.nullcontext(str(alias)),
+            ):
+                result = run_runtime_smoke(load_manifests(), skills={"calibre"})
+            self.assertEqual(result["status"], "ok", result["results"])
+            self.assertEqual(result["verify_status"], "ok")
+            self.assertEqual(result["checked"], 1)
+            self.assertTrue(alias.is_symlink())
+
     def test_runtime_denied_patterns_match_manifest(self) -> None:
         manifests = load_manifests()
 

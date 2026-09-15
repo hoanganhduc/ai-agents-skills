@@ -82,7 +82,7 @@ _SYSTEM_PYTHON = os.path.realpath("/usr/bin/python3")
 
 
 def _bash_supports_descriptor_binding() -> bool:
-    """The wrappers' {var}< descriptor binding requires bash >= 4.4."""
+    """Legacy gate imported by Linux-only admitted-venv tests, not POSIX wrappers."""
     try:
         probe = subprocess.run(
             ["/bin/bash", "-c", 'printf %s "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'],
@@ -105,10 +105,6 @@ def _bash_supports_descriptor_binding() -> bool:
 @unittest.skipUnless(
     os.path.isfile("/usr/bin/python3"),
     "live credential wrappers require the attested OS python3",
-)
-@unittest.skipUnless(
-    _bash_supports_descriptor_binding(),
-    "POSIX credential wrappers require bash >= 4.4; macOS /bin/bash is 3.2",
 )
 class PosixSecretEntrypointTests(unittest.TestCase):
     @staticmethod
@@ -204,7 +200,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, entrypoint, pointer, ambient in cases:
             with self.subTest(skill=skill), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
+                root = Path(temporary).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -263,7 +259,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_direct_structured_wrapper_rejects_replaced_symlink_helper(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="send-email",
@@ -338,7 +334,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         })
         for skill, wrapper_name, entrypoint, supplied, expected in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
+                root = Path(temporary).resolve()
                 wrapper = self._stage_entrypoint(
                     root, skill=skill, wrapper=wrapper_name, python_entrypoint=entrypoint
                 )
@@ -414,7 +410,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, entrypoint, pointer in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
+                root = Path(temporary).resolve()
                 wrapper = self._stage_entrypoint(
                     root, skill=skill, wrapper=wrapper_name, python_entrypoint=entrypoint
                 )
@@ -491,7 +487,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         }
         for skill, wrapper_name, python_entrypoint, command, expected_keys in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -518,7 +514,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 completed = subprocess.run(
-                    ["bash", str(wrapper), command],
+                    ["/bin/bash", str(wrapper), command],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -565,7 +561,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, python_entrypoint, expected_keys in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -580,7 +576,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     }
                 )
                 completed = subprocess.run(
-                    ["bash", str(wrapper), "doctor"],
+                    ["/bin/bash", str(wrapper), "doctor"],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -665,7 +661,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, entrypoint, arguments, credential in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -701,7 +697,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_managed_lean_explore_projection_reaches_only_final_helper_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="lean-explore-mcp",
@@ -746,7 +742,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_credential_runner_allows_its_attested_workspace_but_rejects_an_external_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="lean-explore-mcp",
@@ -817,7 +813,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_kaggle_direct_launch_rejects_ambient_credentials_without_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -835,7 +831,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
 
             completed = subprocess.run(
-                ["bash", str(wrapper), "doctor"],
+                ["/bin/bash", str(wrapper), "doctor"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -869,6 +865,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         finally:
             os.umask(previous_umask)
 
+    @unittest.skipUnless(sys.platform == "linux", "fixture assumes Linux direct system-Python venv layout")
     def test_stdlib_wrappers_ignore_the_admitted_venv_prefix(self) -> None:
         cases = (
             ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
@@ -876,7 +873,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, entrypoint in cases:
             with self.subTest(skill=skill), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 root.chmod(0o700)
                 wrapper = self._stage_entrypoint(
                     root,
@@ -915,7 +912,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 completed = subprocess.run(
-                    ["bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
+                    ["/bin/bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -942,7 +939,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             (*case, selector) for case in cases for selector in ("arbitrary", "closure")
         ):
             with self.subTest(skill=skill, selector=selector), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -964,7 +961,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 env = self._env(root)
                 env["AAS_RUNTIME_PYTHON"] = str(selected)
                 completed = subprocess.run(
-                    ["bash", str(wrapper), "selftest"],
+                    ["/bin/bash", str(wrapper), "selftest"],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -989,7 +986,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             (*case, fixture) for case in cases for fixture in ("group-writable", "symlink")
         ):
             with self.subTest(skill=skill, fixture=fixture), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 root.chmod(0o700)
                 wrapper = self._stage_entrypoint(
                     root,
@@ -1011,7 +1008,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 env = self._env(home)
                 self.assertNotIn("AAS_SKILL_VENV", env)
                 completed = subprocess.run(
-                    ["bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
+                    ["/bin/bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -1037,7 +1034,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             ("send_telegram.sh", (), "not json", "file-delivery stdin is not valid bounded UTF-8 JSON"),
         )
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             root.chmod(0o700)
             previous_umask = os.umask(0o077)
             try:
@@ -1059,7 +1056,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             for name, arguments, stdin, message in cases:
                 with self.subTest(wrapper=name, arguments=arguments):
                     completed = subprocess.run(
-                        ["bash", str(runner), f"skills/zotero/{name}", *arguments],
+                        ["/bin/bash", str(runner), f"skills/zotero/{name}", *arguments],
                         input=stdin,
                         check=False,
                         text=True,
@@ -1111,7 +1108,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 with self.subTest(
                     skill=skill, selector=selector
                 ), tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp)
+                    root = Path(tmp).resolve()
                     wrapper = self._stage_entrypoint(
                         root,
                         skill=skill,
@@ -1156,7 +1153,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     )
                     relative = f"skills/{skill}/{wrapper_name}"
                     completed = subprocess.run(
-                        ["bash", str(runner), relative, "selftest"],
+                        ["/bin/bash", str(runner), relative, "selftest"],
                         check=False,
                         text=True,
                         encoding="utf-8",
@@ -1179,12 +1176,17 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     else:
                         self.assertEqual(completed.returncode, 0, completed.stderr)
                         runtime_value = json.loads(completed.stdout)["runtime"]
-                        self.assertRegex(runtime_value, r"^/(?:proc/self|dev)/fd/[0-9]+$")
+                        if sys.platform == "darwin":
+                            # Darwin's existing runner contract executes the fixed
+                            # system pathname, not an executable /dev/fd node.
+                            self.assertEqual(runtime_value, _SYSTEM_PYTHON)
+                        else:
+                            self.assertRegex(runtime_value, r"^/proc/self/fd/[0-9]+$")
                     self.assertFalse(marker.exists())
 
     def test_secret_pointer_without_resolved_python_uses_trusted_system_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -1211,7 +1213,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             env["AAS_COMPUTE_SECRETS_FILE"] = str(secrets)
 
             completed = subprocess.run(
-                ["bash", str(wrapper), "doctor"],
+                ["/bin/bash", str(wrapper), "doctor"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -1231,7 +1233,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_secret_launch_ignores_hostile_home_python_closure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -1265,7 +1267,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
 
             completed = subprocess.run(
-                ["bash", str(wrapper), "doctor"],
+                ["/bin/bash", str(wrapper), "doctor"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -1351,7 +1353,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, entrypoint, pointer, body, arguments in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -1375,7 +1377,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 completed = subprocess.run(
-                    ["bash", str(wrapper), *arguments],
+                    ["/bin/bash", str(wrapper), *arguments],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -1408,7 +1410,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for subcommand, credential_bearing in expectations:
             with self.subTest(subcommand=subcommand), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill="autonomous-research-loop-runtime/force-loop",
@@ -1426,7 +1428,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 completed = subprocess.run(
-                    ["bash", str(wrapper), subcommand],
+                    ["/bin/bash", str(wrapper), subcommand],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -1456,7 +1458,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
         for subcommand in ("drain", "start"):
             with self.subTest(subcommand=subcommand), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill="autonomous-research-loop-runtime/force-loop",
@@ -1468,7 +1470,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 env["AAS_COMPUTE_SECRETS_FILE"] = str(compute)
 
                 completed = subprocess.run(
-                    ["bash", str(wrapper), subcommand],
+                    ["/bin/bash", str(wrapper), subcommand],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -1489,7 +1491,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_outer_runner_and_hetzner_wrapper_drop_broad_skill_authority_and_hostile_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="hetzner-research-compute",
@@ -1596,7 +1598,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_direct_drive_loads_provider_and_compute_but_status_does_not(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="autonomous-research-loop-runtime",
@@ -1626,7 +1628,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
 
             driven = subprocess.run(
-                ["bash", str(wrapper), "drive"],
+                ["/bin/bash", str(wrapper), "drive"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -1652,7 +1654,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             self.assertIsNone(child["AAS_PROVIDER_SECRETS_FILE"])
 
             status = subprocess.run(
-                ["bash", str(wrapper), "status"],
+                ["/bin/bash", str(wrapper), "status"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -1668,7 +1670,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_outer_runner_retains_compute_workspace_pin_for_lane_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -1725,7 +1727,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_outer_runner_selects_shared_compute_workspace_when_unpinned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -1784,7 +1786,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_outer_runner_rejects_an_unprotected_shared_compute_parent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="kaggle-research-compute",
@@ -1834,7 +1836,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_outer_runner_retains_compute_workspace_pin_for_reaper_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="hetzner-research-compute",
@@ -1895,7 +1897,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_kaggle_doctor_resolves_canonical_access_token_without_cross_lane_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             workspace = root / "runtime" / "workspace"
             skill_dir = workspace / "skills" / "kaggle-research-compute"
             shutil.copytree(
@@ -1923,7 +1925,11 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             env = {
                 "HOME": str(home),
                 "PATH": "/usr/bin:/bin",
-                "AAS_RUNTIME_PYTHON": "/usr/bin/python3",
+                # This doctor has no compute authority pointer or ambient
+                # compute credentials. Its configurable interpreter needs the
+                # TOML dependency installed for the test environment. Separate
+                # credential-bearing wrapper tests still pin system Python.
+                "AAS_RUNTIME_PYTHON": sys.executable,
                 "OPENCLAW_WORKSPACE": str(workspace),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "AAS_PROVIDER_SECRETS_FILE": "/provider-pointer-must-not-cross",
@@ -1988,7 +1994,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         )
         for skill, wrapper_name, python_entrypoint, command in cases:
             with self.subTest(wrapper=wrapper_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -2020,7 +2026,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                             }
                         )
                         completed = subprocess.run(
-                            ["bash", str(wrapper), command],
+                            ["/bin/bash", str(wrapper), command],
                             check=False,
                             text=True,
                             encoding="utf-8",
@@ -2037,7 +2043,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_direct_drive_rejects_bad_provider_authority_without_value_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="autonomous-research-loop-runtime",
@@ -2058,7 +2064,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 }
             )
             completed = subprocess.run(
-                ["bash", str(wrapper), "drive"],
+                ["/bin/bash", str(wrapper), "drive"],
                 check=False,
                 text=True,
                 encoding="utf-8",
@@ -2074,7 +2080,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
 
     def test_pointer_text_is_never_evaluated_as_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             wrapper = self._stage_entrypoint(
                 root,
                 skill="hetzner-research-compute",
@@ -2085,7 +2091,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             env = self._env(root)
             env["AAS_COMPUTE_SECRETS_FILE"] = f"$(touch {marker})"
             completed = subprocess.run(
-                ["bash", str(wrapper), "doctor"],
+                ["/bin/bash", str(wrapper), "doctor"],
                 check=False,
                 text=True,
                 encoding="utf-8",
