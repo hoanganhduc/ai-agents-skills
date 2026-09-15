@@ -81,6 +81,26 @@ KAGGLE_KEYS = {"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}
 _SYSTEM_PYTHON = os.path.realpath("/usr/bin/python3")
 
 
+def _bash_supports_descriptor_binding() -> bool:
+    """Legacy gate imported by Linux-only admitted-venv tests, not POSIX wrappers."""
+    try:
+        probe = subprocess.run(
+            ["/bin/bash", "-c", 'printf %s "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'],
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=10,
+        )
+    except OSError:
+        return False
+    parts = probe.stdout.strip().split(".")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return False
+    return (int(parts[0]), int(parts[1])) >= (4, 4)
+
+
 @unittest.skipIf(os.name == "nt", "POSIX wrappers are not native Windows targets")
 @unittest.skipUnless(
     os.path.isfile("/usr/bin/python3"),

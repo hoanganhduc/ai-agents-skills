@@ -24,7 +24,7 @@ class CoverageResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
         row = {"test": test.id(), "status": "ok" if err is None else "failed"}
         # Do not serialize arbitrary parameter values or exception text.
-        for key in ("wrapper", "managed"):
+        for key in ("wrapper", "managed", "credentials"):
             if key in subtest.params:
                 row[key] = subtest.params[key]
         self.cases.append(row)
