@@ -3,7 +3,7 @@
   "overlay_version": "2026-09-13",
   "overlay_ref": "canonical/instructions/graph-combinatorics-style.md",
   "base_policy_ref": "canonical/instructions/math-manuscript-style.md",
-  "content_hash": "sha256:8cb6ce10d625e2c64004b9f736e47e259542d615e90a10b01986f1a1991d2ff8",
+  "content_hash": "sha256:dcfaa8cc4551b5fbfaa00fc2839fae4759b5c776b709b108fee07e0fec5cba5a",
   "requirements": [
     {
       "id": "WS-GRAPH-0001",
@@ -454,6 +454,16 @@
       "markdown_anchor": "activation",
       "source_ledger_ids": ["ML-0151"],
       "test_ids": ["WS-T-0245"]
+    },
+    {
+      "id": "WS-GRAPH-0046",
+      "title": "Subscript graph-dependent operators with the host graph",
+      "scope": "graph and combinatorics manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "operators-are-not-numbers",
+      "source_ledger_ids": ["ML-0192"],
+      "test_ids": ["WS-T-0246"]
     }
   ]
 }

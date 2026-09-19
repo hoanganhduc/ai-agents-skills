@@ -1731,6 +1731,56 @@
       "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
       "test_ids": ["WS-T-0320"],
       "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0096",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0196"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0097",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0197"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0098",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0198"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0099",
+      "source_location": "user requirement from local claude-target rules/latex.md, audited 2026-09-20",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0199"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GRAPH-0046",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "scope": "graph and combinatorics manuscripts",
+      "canonical_destination": "canonical/instructions/graph-combinatorics-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+      "test_ids": ["WS-T-0246"],
+      "mechanical_status": "reviewed-non-mechanical"
     }
   ],
   "non_mechanical_rationales": [

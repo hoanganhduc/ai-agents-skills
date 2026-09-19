@@ -3,7 +3,7 @@
   "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/math-manuscript-style.md",
   "base_policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "sha256:477d702d22e0d28b175d7914acec6c741f239b1245e1e4a6844ca60c56533639",
+  "content_hash": "sha256:22aafe3d0cb4f2e5f9f9fd8a2887fbdbc840bd0fc98886b86858579779e76fe9",
   "requirements": [
     {
       "id": "WS-MATH-0001",
@@ -954,6 +954,46 @@
       "markdown_anchor": "figures-and-examples",
       "source_ledger_ids": ["ML-0150"],
       "test_ids": ["WS-T-0195"]
+    },
+    {
+      "id": "WS-MATH-0096",
+      "title": "Restrict inline displaystyle to unavoidable tall operators",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "equations-and-numbers",
+      "source_ledger_ids": ["ML-0188"],
+      "test_ids": ["WS-T-0196"]
+    },
+    {
+      "id": "WS-MATH-0097",
+      "title": "Prove if-and-only-if statements as two labelled directions",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "enumerated-statements-and-their-proofs",
+      "source_ledger_ids": ["ML-0189"],
+      "test_ids": ["WS-T-0197"]
+    },
+    {
+      "id": "WS-MATH-0098",
+      "title": "Put case headings in the item body, not the optional label",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "enumerated-statements-and-their-proofs",
+      "source_ledger_ids": ["ML-0190"],
+      "test_ids": ["WS-T-0198"]
+    },
+    {
+      "id": "WS-MATH-0099",
+      "title": "Preserve entry formatting and field order when editing a .bib file",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "latex-manuscripts",
+      "source_ledger_ids": ["ML-0191"],
+      "test_ids": ["WS-T-0199"]
     }
   ]
 }
