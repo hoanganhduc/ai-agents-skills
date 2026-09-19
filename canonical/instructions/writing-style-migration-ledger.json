@@ -2058,6 +2058,61 @@
       "destination_docs": ["canonical/instructions/mathscinet-zbmath-review-style.md"],
       "disposition": "supersede",
       "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0188",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "old_rule_text": "Use `\\displaystyle` in inline math only for tall or stacked operators such as `\\frac`, `\\binom`, `\\sum`, `\\prod`, `\\bigcup`, and `\\bigcap`; do not add it to ordinary inline formulas.",
+      "normalized_rule_text": "Add displaystyle to an inline formula only for an unavoidable tall or stacked operator, and prefer the slash form over an inline displayed fraction bar.",
+      "classification_tags": ["latex", "equations", "math", "user-approved"],
+      "normative_requirement_ids": ["WS-MATH-0096"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0189",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "old_rule_text": "In manuscript `.tex`, write if-and-only-if proofs with itemized `($\\Rightarrow$)` and `($\\Leftarrow$)` directions when that improves clarity.",
+      "normalized_rule_text": "Prove an if-and-only-if statement as two labelled directions in one list whenever the implications are argued separately.",
+      "classification_tags": ["latex", "proofs", "structure", "user-approved"],
+      "normative_requirement_ids": ["WS-MATH-0097"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0190",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "old_rule_text": "In manuscript `.tex`, list proof cases with `itemize` when the cases are parallel. Use explicit case headings such as `Case 1`, `Case 2`, and so on. Put the heading in the item body, for example `\\item \\textbf{Case 1: ...}`, not in an optional `\\item[...]` label. Use one emphasis style for case headings; prefer bold if the paper has no competing local convention.",
+      "normalized_rule_text": "List parallel proof cases with itemize, put the case heading in the item body rather than the optional label, and keep one emphasis style for case headings.",
+      "classification_tags": ["latex", "proofs", "cases", "user-approved"],
+      "normative_requirement_ids": ["WS-MATH-0098"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0191",
+      "source_location": "user requirement from local claude-target rules/latex.md, audited 2026-09-20",
+      "old_rule_text": "When editing .bib files, preserve existing formatting and field order.",
+      "normalized_rule_text": "Keep entry formatting, field order, and key style when editing an existing .bib file, and change only the fields the task requires.",
+      "classification_tags": ["latex", "bibliography", "preservation", "user-approved"],
+      "normative_requirement_ids": ["WS-MATH-0099"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0192",
+      "source_location": "user requirement from local claude-target instruction manuscript-writing-style.md, audited 2026-09-20",
+      "old_rule_text": "Prefer standard graph notation, including `\\deg_G(v)` and `\\Delta(G)`, when it fits the paper.",
+      "normalized_rule_text": "Carry the host graph in the subscript of a graph-dependent operator whenever more than one graph is in play, and drop it only after fixing one graph for the argument.",
+      "classification_tags": ["graph", "notation", "operators", "user-approved"],
+      "normative_requirement_ids": ["WS-GRAPH-0046"],
+      "destination_docs": ["canonical/instructions/graph-combinatorics-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
     }
   ]
 }

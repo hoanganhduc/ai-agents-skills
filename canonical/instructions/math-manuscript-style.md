@@ -371,6 +371,16 @@ referred to from elsewhere.
 Avoid inline fractions built with a fraction bar; they shrink the type and
 disturb line spacing. Write $(x + 2)/(x + 3)$ instead.
 
+Add `\displaystyle` to an inline formula only when an unavoidable tall or
+stacked operator, such as $\sum$, $\prod$, $\bigcup$, $\bigcap$, or a binomial
+coefficient, would otherwise be compressed past legibility. An ordinary inline
+formula does not take it: the enlarged expression opens up the line spacing
+around it and claims an importance the formula does not have. For a fraction,
+prefer the slash form above to a displayed fraction bar set inline.
+
+- Wrong: `the bound $\displaystyle 2k + 1$ holds`
+- Right: `the bound $2k + 1$ holds` / `$\displaystyle\sum_{v \in S} \deg(v)$`
+
 Use spacing to help the reader parse a long expression, especially around a
 conditioning bar or a set-builder colon.
 
@@ -630,6 +640,11 @@ Manage the bibliography with `biblatex` and `biber`. Entries stay in the `.bib`
 file in one format, styles are selected by option rather than by a `.bst`, and
 the same source compiles for a venue that wants a different citation style.
 
+When editing an existing `.bib` file, keep its entry formatting, field order,
+and key style, and change only the fields the task requires. A bibliography
+reformatted in passing produces a diff in which the substantive change cannot
+be found, and it rewrites entries that other manuscripts may share.
+
 When preparing a camera-ready version, follow the journal's or conference's
 instructions exactly, even where they contradict this policy. Their class file,
 citation style, figure format, page limit and metadata requirements take
@@ -670,6 +685,22 @@ Let $G$ be a connected graph. Then
 A proof whose shape does not match its statement forces the reader to work out
 which paragraph settles which claim, and it hides a part that was never proved
 at all.
+
+Prove an if-and-only-if statement as two labelled directions, `($\Rightarrow$)`
+and `($\Leftarrow$)`, as items of one list, whenever the two implications are
+argued separately. The labels say which implication a paragraph settles without
+the reader reconstructing it from the opening line.
+
+List the cases of a case analysis with `itemize` when the cases are parallel,
+and put the case heading in the item body rather than in the optional label.
+
+- Wrong: `\item[Case 1] $G$ is bipartite.`
+- Right: `\item \textbf{Case 1: $G$ is bipartite.}`
+
+An optional label is typeset in a fixed narrow box, so a heading placed there
+overflows or wraps as soon as it carries a condition. Use one emphasis style
+for every case heading in a manuscript, and prefer bold where the paper has no
+competing convention.
 
 ## Voice And Sentences
 

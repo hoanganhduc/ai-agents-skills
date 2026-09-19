@@ -67,6 +67,12 @@ $\Delta$ is a function on graphs, not a number. Write $\Delta(G)$, or set $\Delt
 and say so. Writing $\Delta$ for a value silently changes what kind of object the
 symbol denotes.
 
+Carry the host graph in the subscript of a graph-dependent operator whenever
+more than one graph is in play: $\deg_G(v)$ and $\Delta(H)$, not $\deg(v)$ and
+$\Delta$. Drop the subscript only after fixing one graph for the whole argument
+and saying so. A bare $\deg(v)$ in a proof that has already passed to a
+subgraph is a common way for a degree count to go wrong unnoticed.
+
 Write any operator whose name is more than one character in roman type, so that
 $\dim$, $\mathrm{cr}$, $\mathrm{mad}$ are not read as products of variables.
 
