@@ -246,10 +246,10 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             "schema_version": 1,
             "artifacts": [
                 {
-                    "key": r"codex:kaggle-research-compute:C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",
+                    "key": r"codex:kaggle-research-compute:C:\Users\...\.codex\skills\kaggle-research-compute\SKILL.md",
                     "agent": "codex",
                     "skill": "kaggle-research-compute",
-                    "artifact": r"C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",
+                    "artifact": r"C:\Users\...\.codex\skills\kaggle-research-compute\SKILL.md",
                     "artifact_type": "skill-file",
                     "managed": True,
                     "uninstall": {"action": "unmanage-only"},
@@ -258,29 +258,29 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             "runs": [],
             "uninstall_records": [],
         }
-        translated = state_for_root(state, PurePosixPath("/mnt/c/Users/demo"))  # type: ignore[arg-type]
+        translated = state_for_root(state, PurePosixPath("/mnt/c/Users/..."))  # type: ignore[arg-type]
         item = translated["artifacts"][0]
         self.assertEqual(
             item["artifact"],
-            "/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
+            "/mnt/c/Users/.../.codex/skills/kaggle-research-compute/SKILL.md",
         )
-        self.assertIn("/mnt/c/Users/demo/.codex/skills", item["key"])
+        self.assertIn("/mnt/c/Users/.../.codex/skills", item["key"])
 
     def test_wsl_state_paths_translate_back_to_native_windows_root(self) -> None:
         state = {
             "schema_version": 1,
             "artifacts": [
                 {
-                    "key": "codex:kaggle-research-compute:/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
+                    "key": "codex:kaggle-research-compute:/mnt/c/Users/.../.codex/skills/kaggle-research-compute/SKILL.md",
                     "agent": "codex",
                     "skill": "kaggle-research-compute",
-                    "artifact": "/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
+                    "artifact": "/mnt/c/Users/.../.codex/skills/kaggle-research-compute/SKILL.md",
                     "artifact_type": "skill-file",
                     "managed": True,
                     "installed_signature": {
                         "exists": True,
                         "kind": "symlink",
-                        "target": "/mnt/c/Users/demo/ai-agents-skills/canonical/skills/kaggle-research-compute/SKILL.md",
+                        "target": "/mnt/c/Users/.../ai-agents-skills/canonical/skills/kaggle-research-compute/SKILL.md",
                     },
                     "uninstall": {"action": "unmanage-only"},
                 }
@@ -288,16 +288,16 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             "runs": [],
             "uninstall_records": [],
         }
-        translated = state_for_root(state, PureWindowsPath(r"C:\Users\demo"))  # type: ignore[arg-type]
+        translated = state_for_root(state, PureWindowsPath(r"C:\Users\..."))  # type: ignore[arg-type]
         item = translated["artifacts"][0]
         self.assertEqual(
             item["artifact"],
-            r"C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",
+            r"C:\Users\...\.codex\skills\kaggle-research-compute\SKILL.md",
         )
-        self.assertIn(r"C:\Users\demo\.codex\skills", item["key"])
+        self.assertIn(r"C:\Users\...\.codex\skills", item["key"])
         self.assertEqual(
             item["installed_signature"]["target"],
-            r"C:\Users\demo\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
+            r"C:\Users\...\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
         )
         self.assertTrue(
             signatures_match(
@@ -305,7 +305,7 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                 {
                     "exists": True,
                     "kind": "symlink",
-                    "target": r"\\?\C:\Users\demo\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
+                    "target": r"\\?\C:\Users\...\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
                 },
             )
         )
@@ -320,8 +320,8 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                         "run_id": run_id,
                         "actions": [
                             {
-                                "artifact": "/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
-                                "key": "codex:kaggle-research-compute:/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
+                                "artifact": "/mnt/c/Users/.../.codex/skills/kaggle-research-compute/SKILL.md",
+                                "key": "codex:kaggle-research-compute:/mnt/c/Users/.../.codex/skills/kaggle-research-compute/SKILL.md",
                             }
                         ],
                     }
@@ -333,10 +333,10 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                 "installer.ai_agents_skills.lifecycle.run_record_path",
                 return_value=run_record,
             ):
-                actions = load_run_actions(PureWindowsPath(r"C:\Users\demo"), state, run_id)  # type: ignore[arg-type]
+                actions = load_run_actions(PureWindowsPath(r"C:\Users\..."), state, run_id)  # type: ignore[arg-type]
             self.assertEqual(
                 actions[0]["artifact"],
-                r"C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",
+                r"C:\Users\...\.codex\skills\kaggle-research-compute\SKILL.md",
             )
 
 
