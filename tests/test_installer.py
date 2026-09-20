@@ -5621,7 +5621,9 @@ class DocsAndLauncherTests(unittest.TestCase):
         compat_job = text.split("  python-compat:\n", 1)[1].split("\n  macos:\n", 1)[0]
         install = "python -m pip install 'tomli>=2; python_version < \"3.11\"'"
         self.assertIn(install, compat_job)
-        self.assertLess(compat_job.index(install), compat_job.index("run: make test"))
+        tests = "run: python .github/scripts/ci_test_checkout.py -- make test"
+        self.assertIn(tests, compat_job)
+        self.assertLess(compat_job.index(install), compat_job.index(tests))
 
     def test_stress_lifecycle_matrix_has_an_independent_timeout_budget(self) -> None:
         text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
@@ -7516,11 +7518,11 @@ class AntigravityTargetTests(unittest.TestCase):
             root = Path(tmp)
             (root / ".gemini" / "antigravity-cli").mkdir(parents=True)
 
-            def install() -> None:
+            def install(*, migrate: bool = False) -> None:
                 args = Args()
                 args.skills = "zotero"
                 selected = resolve_skills(args, manifests)
-                plan = build_plan(root, manifests, selected, detect_agents(root))
+                plan = build_plan(root, manifests, selected, detect_agents(root), migrate=migrate)
                 apply_plan(root, plan, dry_run=False)
 
             # An unmigrated home puts the payload at the pre-migration root.
@@ -7554,7 +7556,13 @@ class AntigravityTargetTests(unittest.TestCase):
                 shutil.rmtree(legacy_skills)
             legacy_skills.symlink_to(config / "skills")
 
-            install()
+            default_plan = build_plan(root, manifests, ["zotero"], detect_agents(root))
+            self.assertFalse([
+                action for action in default_plan["actions"]
+                if action.get("operation") == "remove-obsolete"
+                and str(action.get("path", "")).startswith(str(legacy_payload))
+            ])
+            install(migrate=True)
 
             self.assertEqual(
                 [path for path in legacy_payload.rglob("*") if path.is_file()], []

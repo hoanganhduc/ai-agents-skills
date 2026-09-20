@@ -79,8 +79,16 @@ jobs:
       - name: Install attested system Node runtime
         run: sudo apt-get update && sudo apt-get install -y nodejs
 
+      - name: Check Kaggle CI regressions
+        run: >-
+          python .github/scripts/ci_test_checkout.py -- python -m unittest -v
+          tests.test_ci_kaggle_contracts
+          tests.test_discovery.DiscoveryTests.test_shared_venv_position_in_every_linux_candidate_set
+          tests.test_installer.AntigravityTargetTests.test_removing_the_old_payload_also_retires_its_state_record
+          tests.test_secret_entrypoints.PosixSecretEntrypointTests.test_kaggle_doctor_resolves_guarded_access_token_without_cross_lane_secrets
+
       - name: Run unit tests
-        run: make test
+        run: python .github/scripts/ci_test_checkout.py -- make test
 
       - name: Run runtime smoke
         run: make runtime-smoke
@@ -106,7 +114,7 @@ jobs:
           python-version: "3.11"
 
       - name: Run fake-root lifecycle matrix
-        run: make lifecycle-test ARGS="--matrix stress --platform-shape all"
+        run: python .github/scripts/ci_test_checkout.py -- make lifecycle-test ARGS="--matrix stress --platform-shape all"
 
   linux-capture:
     runs-on: ubuntu-latest
@@ -212,7 +220,7 @@ jobs:
         run: .github/scripts/containment-support.sh
 
       - name: Run unit tests
-        run: make test
+        run: python .github/scripts/ci_test_checkout.py -- make test
 
       - name: Verify generated docs are current
         run: make docs-check
@@ -282,19 +290,19 @@ jobs:
         run: make runtime-smoke
 
       - name: Run unit tests
-        run: make test
+        run: python .github/scripts/ci_test_checkout.py -- make test
 
       - name: Verify generated docs are current
         run: make docs-check
 
       - name: Run platform lifecycle smoke
-        run: make lifecycle-test ARGS="--matrix default --platform-shape macos"
+        run: python .github/scripts/ci_test_checkout.py -- make lifecycle-test ARGS="--matrix default --platform-shape macos"
 
       - name: Run Antigravity-only lifecycle smoke
-        run: make lifecycle-test ARGS="--scenario antigravity-only-auto --platform-shape macos"
+        run: python .github/scripts/ci_test_checkout.py -- make lifecycle-test ARGS="--scenario antigravity-only-auto --platform-shape macos"
 
       - name: Run Kimi-only lifecycle smoke
-        run: make lifecycle-test ARGS="--scenario kimi-only-auto --platform-shape macos"
+        run: python .github/scripts/ci_test_checkout.py -- make lifecycle-test ARGS="--scenario kimi-only-auto --platform-shape macos"
 
   windows:
     runs-on: windows-latest

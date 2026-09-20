@@ -296,7 +296,6 @@ def build_plan(
     )
     if not writing_only_upgrade:
         actions.extend(grok_native_config_actions(agents, actions))
-        actions.extend(target_isolation_config_actions(root, agents, actions, platform))
     actions.extend(
         build_runtime_actions(
             root=root,
@@ -310,6 +309,10 @@ def build_plan(
             state=state,
         )
     )
+    if not writing_only_upgrade:
+        # Runtime creates and records shared parents (notably AppData) with
+        # the modes attested by the plan before settings create their branch.
+        actions.extend(target_isolation_config_actions(root, agents, actions, platform))
     actions.extend(retired_writing_document_actions(root, manifests, agents, actions, state))
     for action in actions:
         planned_modes = plan_managed_parent_chain(root, action)
