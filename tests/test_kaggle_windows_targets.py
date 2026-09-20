@@ -18,7 +18,7 @@ from installer.ai_agents_skills.lifecycle import (
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.state import state_for_root
-from installer.ai_agents_skills.state import artifact_signature
+from installer.ai_agents_skills.state import artifact_signature, signatures_match
 
 
 class KaggleWindowsTargetTests(unittest.TestCase):
@@ -277,6 +277,11 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                     "artifact": "/mnt/c/Users/demo/.codex/skills/kaggle-research-compute/SKILL.md",
                     "artifact_type": "skill-file",
                     "managed": True,
+                    "installed_signature": {
+                        "exists": True,
+                        "kind": "symlink",
+                        "target": "/mnt/c/Users/demo/ai-agents-skills/canonical/skills/kaggle-research-compute/SKILL.md",
+                    },
                     "uninstall": {"action": "unmanage-only"},
                 }
             ],
@@ -290,6 +295,20 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             r"C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",
         )
         self.assertIn(r"C:\Users\demo\.codex\skills", item["key"])
+        self.assertEqual(
+            item["installed_signature"]["target"],
+            r"C:\Users\demo\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
+        )
+        self.assertTrue(
+            signatures_match(
+                item["installed_signature"],
+                {
+                    "exists": True,
+                    "kind": "symlink",
+                    "target": r"\\?\C:\Users\demo\ai-agents-skills\canonical\skills\kaggle-research-compute\SKILL.md",
+                },
+            )
+        )
 
     def test_run_record_actions_translate_for_cross_substrate_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
