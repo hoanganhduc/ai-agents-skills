@@ -53,7 +53,7 @@ Status vocabulary used by `precheck`:
 | `gnupg-system-tool` | GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email. |
 | `hcloud-cli` | Hetzner Cloud CLI used by the hetzner-research-compute lane to provision, run on, and DESTROY disposable compute servers. |
 | `imagemagick-system-tool` | ImageMagick convert/magick for optional post-capture cropping. |
-| `kaggle-cli` | Kaggle CLI (>=1.8.0) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=0.4.1) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json. |
+| `kaggle-cli` | Kaggle CLI (>=2.2.4,<3) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=1.0.2,<2) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
 | `manim-tex-runtime` | LaTeX engine with dvisvgm and standalone/preview (plus cairo/pango) for Manim MathTex rendering. |
@@ -98,8 +98,8 @@ Status vocabulary used by `precheck`:
 | `imagemagick-system-tool` | `tool` | imagemagick-system-tool |
 | `kaggle-auth` | `remote-service` | remote-service |
 | `kaggle-cli` | `tool` | kaggle-cli |
-| `kaggle-python-package` | `python` | kaggle; candidate set `agent` |
-| `kagglehub-python-package` | `python` | kagglehub; candidate set `agent` |
+| `kaggle-python-package` | `python` | kaggle; candidate set `kaggle` |
+| `kagglehub-python-package` | `python` | kagglehub; candidate set `kaggle` |
 | `kokoro-python-package` | `python` | kokoro |
 | `lean-explore-local-cache` | `manual-data` | manual-data |
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
@@ -177,7 +177,7 @@ Evidence inspected:
 | `gnupg` | optional; only needed for PGP/MIME email signing (send-email --sign) | gpg on PATH with your secret key in the keyring, e.g. apt-get install gnupg. | gpg.exe on PATH (Gpg4win), with your secret key imported. | `send-email` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
 | `hcloud-cli` | optional until up/push/run/wait/fetch/down are used | hcloud on PATH; HCLOUD_TOKEN supplied via the environment, never an hcloud context file. | hcloud.exe or hcloud on PATH; HCLOUD_TOKEN supplied via the environment. | `hetzner-research-compute` |
-| `kaggle-cli` | optional until push/status/wait/fetch/run are used | kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); the new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY. | kaggle.exe or kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); KAGGLE_API_TOKEN supplied via the environment (or %USERPROFILE%\.kaggle\access_token). | `kaggle-research-compute` |
+| `kaggle-cli` | optional until push/status/wait/fetch/run are used | The selected trusted Python 3.11+ must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; the managed driver invokes python -I -m kaggle and never searches PATH. The new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token), never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY. | A signed, admin-owned Python 3.11+ selected by AAS_KAGGLE_PYTHON must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; its digest and signer are pinned with the Kaggle-specific attestation variables. The driver never executes kaggle.exe from PATH. | `kaggle-research-compute` |
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
 | `libreoffice` | optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
@@ -211,8 +211,8 @@ Evidence inspected:
 | `feedparser` | `feedparser` | feedparser | `linux`, `windows` | `research-digest-wrapper`, `rss-news-digest` |
 | `google-api-python-client` | `googleapiclient` | google-api-python-client>=2.100.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
 | `google-auth` | `google.oauth2` | google-auth>=2.23.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
-| `kaggle` | `kaggle` | kaggle>=1.8.0 | `linux`, `windows` | `kaggle-research-compute` |
-| `kagglehub` | `kagglehub` | kagglehub>=0.4.1 | `linux`, `windows` | `kaggle-research-compute` |
+| `kaggle` | `kaggle` | kaggle>=2.2.4,<3; Python >=3.11 | `linux`, `windows` | `kaggle-research-compute` |
+| `kagglehub` | `kagglehub` | kagglehub>=1.0.2,<2 | `linux`, `windows` | `kaggle-research-compute` |
 | `kokoro` | `kokoro` | kokoro>=0.9.4 | `linux`, `windows` | `slides-to-video` |
 | `lean-explore` | `lean_explore` | lean-explore | `linux`, `windows` | `lean-explore-mcp` |
 | `local-getscipapers-helper` | `redacted` | optional local helper package with a maintainer-specific import name | `windows` | `zotero metadata fallback` |

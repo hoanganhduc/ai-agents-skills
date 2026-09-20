@@ -15,8 +15,8 @@ verbs (push, status, wait, fetch, run) submit real kernels and require the new K
 Auth uses Kaggle's current "API Tokens (Recommended)" single token, NOT the legacy
 KAGGLE_USERNAME + KAGGLE_KEY pair and NOT a kaggle.json. bootstrap validates/primes via
 kagglehub (kagglehub.whoami() proves the token is valid and yields the authenticated username
-used to address kernels/datasets); the kaggle CLI (>=1.8.0) then authenticates kernel
-push/status/output with the same token.
+used to address kernels/datasets); the Kaggle CLI module (>=2.2.4,<3) then authenticates
+kernel push/status/output with the same token under the selected Python 3.11+.
 
 Guardrails:
   * The Kaggle API token is read from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) and injected
@@ -37,15 +37,18 @@ commands with nothing submitted. ToS: the build and its tests make NO live Kaggl
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import importlib.util
 import json
 import os
 import re
-import shutil
+import stat
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from research_compute import kaggle_backend
@@ -56,6 +59,14 @@ KERNEL_WORKDIR = "/kaggle/working"
 # A kernel's cumulative resume surface fetched back here; each completed work unit lands as a
 # checkpoint file so a re-pushed kernel can skip it (resume).
 DEFAULT_CHECKPOINT_GLOB = "unit-*.json"
+MAX_FETCH_FILES = 10_000
+MAX_FETCH_BYTES = 1024 * 1024 * 1024
+MAX_BUNDLE_FILES = 256
+MAX_BUNDLE_BYTES = 16 * 1024 * 1024
+SAFE_OUTPUT_PATTERN = r"^out/(?:unit-[0-9]{4,8}\.json|result\.json)\Z"
+SAFE_OUTPUT_BASENAME_PATTERN = r"^(?:unit-[0-9]{4,8}\.json|result\.json)\Z"
+DENIED_UPLOAD_NAMES = frozenset({".env", "kaggle.json"})
+DENIED_UPLOAD_SUFFIXES = frozenset({".key", ".pem", ".p12", ".pfx"})
 
 
 class KaggleDriverError(RuntimeError):
@@ -145,7 +156,18 @@ def _run(argv: list[str], *, timeout: float = 120.0, needs_creds: bool = True,
 
 
 def run_kaggle(args: list[str], **kwargs: Any) -> dict[str, Any]:
-    return _run(["kaggle", *args], **kwargs)
+    return _run([sys.executable, "-I", "-m", "kaggle", *args], **kwargs)
+
+
+def kaggle_module_available() -> bool:
+    """Whether the selected interpreter contains the Kaggle CLI module.
+
+    The managed credential boundary deliberately does not search PATH: a user-writable
+    console-script shim must never receive the Kaggle token. The runtime wrapper selects and
+    attests the interpreter before this module starts.
+    """
+
+    return importlib.util.find_spec("kaggle") is not None
 
 
 # --- naming + manifest --------------------------------------------------------
@@ -217,6 +239,101 @@ def _checkpoint_glob(manifest: dict[str, Any]) -> str:
     return str(manifest.get("checkpoint_glob") or DEFAULT_CHECKPOINT_GLOB)
 
 
+def _upload_relpaths(manifest: dict[str, Any]) -> list[PurePosixPath]:
+    raw = manifest.get("upload_files")
+    if not isinstance(raw, list) or not raw:
+        raise KaggleDriverError("manifest.upload_files must be a non-empty explicit allowlist")
+    paths: list[PurePosixPath] = []
+    seen: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value:
+            raise KaggleDriverError("manifest.upload_files entries must be non-empty strings")
+        rel = PurePosixPath(value)
+        lower_name = rel.name.lower()
+        if (
+            rel.is_absolute()
+            or len(rel.parts) == 0
+            or any(part in {"", ".", ".."} for part in rel.parts)
+            or "\\" in value
+            or ":" in value
+            or rel.parts[0] == "out"
+            or "__pycache__" in rel.parts
+            or lower_name in DENIED_UPLOAD_NAMES
+            or PurePosixPath(lower_name).suffix in DENIED_UPLOAD_SUFFIXES
+            or any(marker in lower_name for marker in ("secret", "token", "credential"))
+        ):
+            raise KaggleDriverError(f"unsafe upload_files entry: {value!r}")
+        normalized = rel.as_posix()
+        if normalized in seen:
+            raise KaggleDriverError(f"duplicate upload_files entry: {value!r}")
+        seen.add(normalized)
+        paths.append(rel)
+    required = {"manifest.json", "run.sh"}
+    if not required.issubset(seen):
+        raise KaggleDriverError("manifest.upload_files must include manifest.json and run.sh")
+    if len(paths) > MAX_BUNDLE_FILES:
+        raise KaggleDriverError("job bundle exceeds the upload file-count limit")
+    return paths
+
+
+def _read_upload_file(job_dir: Path, rel: PurePosixPath) -> bytes:
+    cursor = job_dir
+    for part in rel.parts[:-1]:
+        cursor /= part
+        try:
+            directory_info = cursor.lstat()
+        except OSError as exc:
+            raise KaggleDriverError(f"upload directory is unavailable: {cursor.name}") from exc
+        directory_attributes = int(getattr(directory_info, "st_file_attributes", 0))
+        directory_reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+        if (
+            not stat.S_ISDIR(directory_info.st_mode)
+            or stat.S_ISLNK(directory_info.st_mode)
+            or bool(directory_attributes & directory_reparse)
+        ):
+            raise KaggleDriverError(f"upload path contains a reparse directory: {part}")
+    path = job_dir.joinpath(*rel.parts)
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise KaggleDriverError(f"upload file is unavailable: {rel.as_posix()}") from exc
+    attributes = int(getattr(before, "st_file_attributes", 0))
+    reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    if stat.S_ISLNK(before.st_mode) or bool(attributes & reparse):
+        raise KaggleDriverError(f"upload file is a reparse point: {rel.as_posix()}")
+    if not stat.S_ISREG(before.st_mode):
+        raise KaggleDriverError(f"upload entry is not a regular file: {rel.as_posix()}")
+    if int(getattr(before, "st_nlink", 1)) != 1:
+        raise KaggleDriverError(f"upload file has multiple hard links: {rel.as_posix()}")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        after = os.fstat(descriptor)
+        after_attributes = int(getattr(after, "st_file_attributes", 0))
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or bool(after_attributes & reparse)
+            or int(getattr(after, "st_nlink", 1)) != 1
+            or (int(before.st_dev), int(before.st_ino))
+            != (int(after.st_dev), int(after.st_ino))
+            or int(before.st_size) != int(after.st_size)
+        ):
+            raise KaggleDriverError(f"upload file changed during snapshot: {rel.as_posix()}")
+        chunks: list[bytes] = []
+        remaining = int(after.st_size)
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                raise KaggleDriverError(f"upload file ended early: {rel.as_posix()}")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def units_done(out_dir: Path, glob: str = DEFAULT_CHECKPOINT_GLOB) -> int:
     """Count distinct completed-unit checkpoints in the cumulative out/ tree (a set by file
     name, so a re-downloaded checkpoint is never double-counted).
@@ -242,6 +359,7 @@ def _thin_runner_embedded(
     chunk_idx: int,
     num_chunks: int,
     zip_b64: str,
+    bundle_digest: str,
 ) -> str:
     """Self-contained Python runner: Kaggle script kernels only ship the code_file.
 
@@ -252,10 +370,13 @@ def _thin_runner_embedded(
         "#!/usr/bin/env python3\n"
         f"# {MANAGED_BY} kernel runner (embed-zip): job={job_id} round={round_idx} "
         f"chunk={chunk_idx}/{num_chunks}\n"
-        "import base64, io, os, subprocess, sys, zipfile\n"
+        "import base64, hashlib, io, os, subprocess, sys, zipfile\n"
         f"os.chdir({KERNEL_WORKDIR!r})\n"
         f"BUNDLE_ZIP_B64 = {zip_b64!r}\n"
         "raw = base64.b64decode(BUNDLE_ZIP_B64)\n"
+        f"EXPECTED_BUNDLE_SHA256 = {bundle_digest!r}\n"
+        "if hashlib.sha256(raw).hexdigest() != EXPECTED_BUNDLE_SHA256:\n"
+        "    raise SystemExit('embedded bundle digest mismatch')\n"
         "if os.path.isdir('bundle'):\n"
         "    import shutil as _sh; _sh.rmtree('bundle')\n"
         "os.makedirs('bundle', exist_ok=True)\n"
@@ -269,7 +390,7 @@ def _thin_runner_embedded(
         "env['CORES'] = cores\n"
         "env['OUT'] = os.path.join(os.getcwd(), 'out')\n"
         "os.makedirs(env['OUT'], exist_ok=True)\n"
-        "rc = subprocess.call(['bash', 'bundle/run.sh'], env=env)\n"
+        "rc = subprocess.call(['bash', 'run.sh'], env=env, cwd='bundle')\n"
         # Copy unit checkpoints and engine JSON to /kaggle/working/out for fetch
         "import shutil, pathlib\n"
         "src = pathlib.Path('bundle/out')\n"
@@ -283,28 +404,44 @@ def _thin_runner_embedded(
     )
 
 
-def _zip_job_b64(job_dir: Path) -> str:
-    import base64
+def _zip_job_bytes(job_dir: Path) -> bytes:
     import io
     import zipfile
 
     buf = io.BytesIO()
-    job_dir = Path(job_dir).expanduser().resolve()
+    job_dir = Path(os.path.abspath(Path(job_dir).expanduser()))
+    root_info = job_dir.lstat()
+    root_attributes = int(getattr(root_info, "st_file_attributes", 0))
+    reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or stat.S_ISLNK(root_info.st_mode)
+        or bool(root_attributes & reparse)
+    ):
+        raise KaggleDriverError("job bundle root must be a regular directory, not a reparse point")
+    manifest = _read_manifest(job_dir)
+    total_bytes = 0
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(job_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            # Skip local results / caches
-            rel = path.relative_to(job_dir).as_posix()
-            if rel.startswith("out/") or "__pycache__" in rel or rel.endswith(".pyc"):
-                continue
-            zf.write(path, rel)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+        for rel in _upload_relpaths(manifest):
+            payload = _read_upload_file(job_dir, rel)
+            total_bytes += len(payload)
+            if total_bytes > MAX_BUNDLE_BYTES:
+                raise KaggleDriverError("job bundle exceeds the upload byte limit")
+            info = zipfile.ZipInfo(rel.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o600 << 16
+            zf.writestr(info, payload)
+    return buf.getvalue()
+
+
+def bundle_sha256(job_dir: str | Path) -> str:
+    return hashlib.sha256(_zip_job_bytes(Path(job_dir))).hexdigest()
 
 
 def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                      num_chunks: int, gpu: bool, checkpoints_dir: str | Path | None,
-                     dest_root: str | Path, username: str | None = None) -> Path:
+                     dest_root: str | Path, username: str | None = None,
+                     bundle_zip: bytes | None = None) -> Path:
     """Assemble a kernel working directory: embed-zip code_file + metadata.
 
     Kaggle script kernels only upload the code_file; nested bundle/ is not
@@ -312,16 +449,19 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
     """
     dest = Path(dest_root) / f"kernel-r{round_idx}-c{chunk_idx}"
     dest.mkdir(parents=True, exist_ok=True)
-    # Keep a local copy of the bundle for debugging/dry-run inspection.
-    bundle_dst = dest / "bundle"
-    if bundle_dst.exists():
-        shutil.rmtree(bundle_dst)
-    shutil.copytree(Path(job_dir).expanduser(), bundle_dst)
-
-    zip_b64 = _zip_job_b64(Path(job_dir))
+    bundle_zip = bytes(bundle_zip) if bundle_zip is not None else _zip_job_bytes(Path(job_dir))
+    bundle_digest = hashlib.sha256(bundle_zip).hexdigest()
+    zip_b64 = base64.b64encode(bundle_zip).decode("ascii")
     code_file = f"run-r{round_idx}-c{chunk_idx}.py"
     (dest / code_file).write_text(
-        _thin_runner_embedded(job_id, round_idx, chunk_idx, num_chunks, zip_b64),
+        _thin_runner_embedded(
+            job_id,
+            round_idx,
+            chunk_idx,
+            num_chunks,
+            zip_b64,
+            bundle_digest,
+        ),
         encoding="utf-8",
     )
 
@@ -389,7 +529,8 @@ def bootstrap(config: Any | None) -> dict[str, Any]:
     is valid and yields the authenticated username the kaggle CLI uses for kernel ops. The
     kagglehub validation goes through the mockable backend hook, so tests make no live call."""
     result: dict[str, Any] = {
-        "kaggle_cli_available": shutil.which("kaggle") is not None,
+        "kaggle_cli_available": kaggle_module_available(),
+        "kaggle_cli_mode": "python-module",
         "kagglehub_available": importlib.util.find_spec("kagglehub") is not None,
         "api_token_present": token_present(),
     }
@@ -402,7 +543,7 @@ def bootstrap(config: Any | None) -> dict[str, Any]:
         }
     else:
         result["kaggle_cli_version"] = {
-            "ok": False, "exit_code": None, "output": "kaggle CLI not found",
+            "ok": False, "exit_code": None, "output": "kaggle Python module not found",
         }
     if result["api_token_present"]:
         who = _whoami(config)
@@ -412,8 +553,10 @@ def bootstrap(config: Any | None) -> dict[str, Any]:
         result["account"] = {"usable": False, "username": None, "reason": "no_kaggle_api_token"}
     result["doctor"] = doctor(config) if config is not None else {"error": "config not found"}
     if not result["kaggle_cli_available"] or not result["kagglehub_available"]:
-        result["hint"] = ("install the Kaggle CLI + kagglehub: pip install 'kaggle>=1.8.0' "
-                          "'kagglehub>=0.4.1' (KAGGLE_API_TOKEN in the env, or ~/.kaggle/access_token)")
+        result["hint"] = ("install the Kaggle CLI + kagglehub into the selected trusted "
+                          "Python >=3.11: pip install 'kaggle>=2.2.4,<3' "
+                          "'kagglehub>=1.0.2,<2' (KAGGLE_API_TOKEN in the env, or "
+                          "~/.kaggle/access_token)")
     return result
 
 
@@ -439,6 +582,7 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     return {
         "backend": "kaggle",
         "job_id": manifest.get("job_id"),
+        "bundle_sha256": bundle_sha256(job_dir),
         "kind": probe["kind"],
         "total_units": _total_units(manifest),
         "est_rounds": probe["est_runs"],
@@ -470,10 +614,12 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
 
 def _push_kernel(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                  num_chunks: int, gpu: bool, checkpoints_dir: Path | None,
-                 work_root: Path, username: str | None = None) -> dict[str, Any]:
+                 work_root: Path, username: str | None = None,
+                 bundle_zip: bytes | None = None) -> dict[str, Any]:
     kdir = build_kernel_dir(job_id=job_id, job_dir=job_dir, round_idx=round_idx,
                             chunk_idx=chunk_idx, num_chunks=num_chunks, gpu=gpu,
-                            checkpoints_dir=checkpoints_dir, dest_root=work_root, username=username)
+                            checkpoints_dir=checkpoints_dir, dest_root=work_root,
+                            username=username, bundle_zip=bundle_zip)
     run_kaggle(["kernels", "push", "-p", str(kdir)], timeout=300.0)
     return {"kernel": kernel_ref(job_id, round_idx, chunk_idx, username=username), "dir": str(kdir),
             "gpu": gpu, "round": round_idx, "chunk": chunk_idx}
@@ -501,38 +647,247 @@ def _wait_kernel(kernel: str, *, timeout: float | None = None, interval: float =
     return {"kernel": kernel, "status": "timeout", "polls": int(max_polls)}
 
 
-def _fetch_kernel(kernel: str, *, dest: Path) -> dict[str, Any]:
-    dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    run_kaggle(["kernels", "output", kernel, "-p", str(dest)], timeout=600.0)
-    return {"kernel": kernel, "fetched_to": str(dest)}
+def _reparse_or_link(path: Path) -> bool:
+    info = path.lstat()
+    attributes = int(getattr(info, "st_file_attributes", 0))
+    reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return path.is_symlink() or bool(attributes & reparse)
+
+
+def _validate_fetched_tree(dest: Path, *, expected_log_name: str) -> dict[str, int]:
+    root = Path(dest).resolve(strict=True)
+    files = 0
+    total_bytes = 0
+    for current, directories, names in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        if current_path == root:
+            if set(directories) - {"out"} or set(names) - {expected_log_name}:
+                raise KaggleDriverError("fetched output root contains a non-allowlisted entry")
+        elif current_path == root / "out":
+            if directories:
+                raise KaggleDriverError("fetched output directory must be flat")
+        else:
+            raise KaggleDriverError("fetched output escapes the fixed out/ layout")
+        for name in [*directories, *names]:
+            path = current_path / name
+            if _reparse_or_link(path):
+                raise KaggleDriverError(f"fetched output contains a reparse point: {path.name}")
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root):
+                raise KaggleDriverError("fetched output escapes the destination")
+            info = path.stat(follow_symlinks=False)
+            if path.is_file():
+                if (
+                    current_path == root / "out"
+                    and re.fullmatch(SAFE_OUTPUT_BASENAME_PATTERN, name) is None
+                ):
+                    raise KaggleDriverError(f"fetched output name is not allowlisted: {name!r}")
+                if int(getattr(info, "st_nlink", 1)) != 1:
+                    raise KaggleDriverError(f"fetched output contains a hard-linked file: {path.name}")
+                files += 1
+                total_bytes += int(info.st_size)
+                if files > MAX_FETCH_FILES or total_bytes > MAX_FETCH_BYTES:
+                    raise KaggleDriverError("fetched output exceeds the safety limit")
+    return {"files": files, "bytes": total_bytes}
+
+
+def _prepare_fetch_destination(dest: Path, *, allow_existing: bool) -> Path:
+    dest = Path(dest).expanduser()
+    if dest.exists():
+        if _reparse_or_link(dest) or not dest.is_dir():
+            raise KaggleDriverError("fetch destination must be a regular directory")
+        if not allow_existing and any(dest.iterdir()):
+            raise KaggleDriverError("fetch destination must be empty")
+    else:
+        dest.mkdir(parents=True, exist_ok=False)
+    return dest
+
+
+def _fetch_kernel(kernel: str, *, dest: Path, allow_existing: bool = False) -> dict[str, Any]:
+    dest = _prepare_fetch_destination(Path(dest), allow_existing=allow_existing)
+    run_kaggle(
+        [
+            "kernels",
+            "output",
+            kernel,
+            "-p",
+            str(dest),
+            "--file-pattern",
+            SAFE_OUTPUT_PATTERN,
+        ],
+        timeout=600.0,
+    )
+    expected_log_name = kernel.rsplit("/", 1)[-1] + ".log"
+    validation = _validate_fetched_tree(dest, expected_log_name=expected_log_name)
+    return {"kernel": kernel, "fetched_to": str(dest), "validation": validation}
+
+
+def verify_fetched_output(job_dir: str | Path, dest: str | Path) -> dict[str, Any]:
+    job = Path(job_dir).expanduser().resolve()
+    output = Path(dest).expanduser().resolve() / "out"
+    if not output.is_dir():
+        raise KaggleDriverError("fetched output is missing the required out/ directory")
+    manifest = _read_manifest(job)
+    total = _total_units(manifest)
+    manifest_digest = hashlib.sha256(_read_upload_file(job, PurePosixPath("manifest.json"))).hexdigest()
+    expected_names = {f"unit-{index:04d}.json" for index in range(total)} | {"result.json"}
+    actual_names = {path.name for path in output.iterdir() if path.is_file()}
+    if actual_names != expected_names:
+        raise KaggleDriverError(
+            "fetched output does not contain the exact checkpoint/result set"
+        )
+    rows: list[dict[str, Any]] = []
+    for index in range(total):
+        path = output / f"unit-{index:04d}.json"
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise KaggleDriverError(f"checkpoint {path.name} is not valid JSON") from exc
+        if (
+            not isinstance(row, dict)
+            or row.get("status") != "PASS"
+            or row.get("unit") != index
+            or row.get("manifest_sha256") != manifest_digest
+        ):
+            raise KaggleDriverError(f"checkpoint {path.name} failed host verification")
+        rows.append(row)
+    try:
+        result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise KaggleDriverError("result.json is not valid JSON") from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "PASS"
+        or result.get("verified") is not True
+        or result.get("units") != total
+        or result.get("manifest_sha256") != manifest_digest
+    ):
+        raise KaggleDriverError("result.json failed host verification")
+    verify = manifest.get("verify")
+    if isinstance(verify, dict) and "expected_prime_count" in verify:
+        expected = int(verify["expected_prime_count"])
+        if result.get("prime_count") != expected or any(
+            row.get("prime_count") != expected for row in rows
+        ):
+            raise KaggleDriverError("prime-count result does not match manifest.verify")
+    return {
+        "verified": True,
+        "manifest_sha256": manifest_digest,
+        "units": total,
+        "result": result,
+    }
 
 
 # --- lifecycle verbs (submit real kernels) ------------------------------------
 
+def _submission_intent_path(
+    state_root: Path,
+    *,
+    job_id: str,
+    round_idx: int,
+    chunk_idx: int,
+) -> Path:
+    name = f"{kernel_slug(job_id, round_idx, chunk_idx)}.json"
+    return Path(state_root) / "kaggle-submissions" / name
+
+
+def _write_submission_intent(path: Path, payload: dict[str, Any], *, create: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if create:
+        try:
+            with path.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(body)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as exc:
+            raise KaggleDriverError(
+                f"submission intent already exists for {payload['kernel']}; "
+                "query status instead of pushing again"
+            ) from exc
+        return
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(body)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int = 0,
          num_chunks: int = 1, gpu: bool | None = None, checkpoints_dir: str | Path | None = None,
-         confirm: bool = False, dry_run: bool = False, work_root: str | Path | None = None) -> dict[str, Any]:
+         confirm: bool = False, dry_run: bool = False, work_root: str | Path | None = None,
+         state_root: str | Path | None = None,
+         expected_bundle_sha256: str | None = None,
+         expected_owner: str | None = None) -> dict[str, Any]:
     """Push a single kernel run (one chunk). Manual/debug granularity; `run` orchestrates the
     full fan-out + resume loop. `--dry-run` prints the planned `kaggle kernels push` with no
     submission."""
     manifest = _read_manifest(job_dir)
     job_id = str(manifest.get("job_id") or _new_job_id())
+    bundle_zip = _zip_job_bytes(Path(job_dir))
+    digest = hashlib.sha256(bundle_zip).hexdigest()
     gpu = bool(manifest.get("gpu")) if gpu is None else bool(gpu)
     ckpt = Path(checkpoints_dir).expanduser() if checkpoints_dir else None
     if dry_run:
-        return {"dry_run": True, "job_id": job_id, "kernel": kernel_ref(job_id, round_idx, chunk_idx),
+        return {"dry_run": True, "job_id": job_id,
+                "kernel": kernel_ref(job_id, round_idx, chunk_idx, username=expected_owner),
+                "bundle_sha256": digest,
                 "gpu": gpu, "enable_internet": False,
-                "command": ["kaggle", "kernels", "push", "-p", f"<kernel-dir r{round_idx} c{chunk_idx}>"]}
+                "command": [sys.executable, "-I", "-m", "kaggle", "kernels", "push", "-p",
+                            f"<kernel-dir r{round_idx} c{chunk_idx}>"]}
     if not token_present():
         raise KaggleDriverError("refusing to push: KAGGLE_API_TOKEN is not set")
     if not confirm:
         raise KaggleDriverError("refusing to push: explicit confirm is required")
-    username = _resolve_username(config, required=True)
+    if _total_units(manifest) != 1 or num_chunks != 1 or chunk_idx != 0:
+        raise KaggleDriverError(
+            "live push is limited to one-unit bundles until resumable multi-run recovery is hardened"
+        )
+    if not expected_bundle_sha256 or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_bundle_sha256):
+        raise KaggleDriverError("live push requires the reviewed --bundle-sha256 from dry-run")
+    if digest.lower() != expected_bundle_sha256.lower():
+        raise KaggleDriverError("job bundle changed after dry-run review")
+    if state_root is None:
+        raise KaggleDriverError("live push requires a durable submission-intent state root")
+    if not expected_owner or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,49}", expected_owner) is None:
+        raise KaggleDriverError("live push requires the reviewed --owner Kaggle username")
     root = Path(work_root).expanduser() if work_root else Path(tempfile.mkdtemp(prefix="aas-kaggle-"))
-    return _push_kernel(job_id=job_id, job_dir=job_dir, round_idx=round_idx, chunk_idx=chunk_idx,
-                        num_chunks=num_chunks, gpu=gpu, checkpoints_dir=ckpt, work_root=root,
-                        username=username)
+    kernel = kernel_ref(job_id, round_idx, chunk_idx, username=expected_owner)
+    intent_path = _submission_intent_path(
+        Path(state_root),
+        job_id=job_id,
+        round_idx=round_idx,
+        chunk_idx=chunk_idx,
+    )
+    intent = {
+        "schema": "ai-agents-skills.kaggle-submission-intent.v1",
+        "state": "prepared",
+        "kernel": kernel,
+        "bundle_sha256": digest,
+        "gpu": gpu,
+    }
+    _write_submission_intent(intent_path, intent, create=True)
+    username = _resolve_username(config, required=True)
+    if username.lower() != expected_owner.lower():
+        raise KaggleDriverError("authenticated Kaggle owner does not match reviewed --owner")
+    result = _push_kernel(
+        job_id=job_id,
+        job_dir=job_dir,
+        round_idx=round_idx,
+        chunk_idx=chunk_idx,
+        num_chunks=num_chunks,
+        gpu=gpu,
+        checkpoints_dir=ckpt,
+        work_root=root,
+        username=username,
+        bundle_zip=bundle_zip,
+    )
+    intent["state"] = "submitted"
+    _write_submission_intent(intent_path, intent, create=False)
+    result["bundle_sha256"] = digest
+    result["submission_intent"] = str(intent_path)
+    return result
 
 
 def status(*, kernel: str, config: Any) -> dict[str, Any]:
@@ -546,10 +901,13 @@ def wait(*, kernel: str, config: Any, timeout: float | None = None,
     return _wait_kernel(kernel, timeout=timeout, interval=interval)
 
 
-def fetch(*, kernel: str, config: Any, dest: str | Path | None = None) -> dict[str, Any]:
+def fetch(*, kernel: str, config: Any, job_dir: str | Path,
+          dest: str | Path | None = None) -> dict[str, Any]:
     """Download a kernel's output (checkpoints) with `kaggle kernels output`."""
     dest_dir = Path(dest).expanduser() if dest else Path.cwd() / "kaggle-results"
-    return _fetch_kernel(kernel, dest=dest_dir)
+    result = _fetch_kernel(kernel, dest=dest_dir)
+    result["verification"] = verify_fetched_output(job_dir, dest_dir)
+    return result
 
 
 def run(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = False,
@@ -590,68 +948,10 @@ def run(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = F
             "provisioned": False,
         }
 
-    if not token_present():
-        raise KaggleDriverError("refusing to run: KAGGLE_API_TOKEN is not set")
-    if not confirm:
-        raise KaggleDriverError("refusing to run: explicit confirm is required")
-    if not probe["adequate"]:
-        raise KaggleDriverError(f"job is inadequate for Kaggle: {probe['reason']}")
-    if not probe["available"]:
-        raise KaggleDriverError(f"Kaggle lane unavailable: {probe['reason']}")
-
-    # Validate/prime once via kagglehub: whoami() yields the owner used for every kernel/dataset
-    # ref this loop pushes.
-    username = _resolve_username(config, required=True)
-
-    gpu_reservation = None
-    if gpu:
-        # Fail-closed weekly GPU-hour gate + local ledger reservation before any push.
-        gpu_reservation = kaggle_backend.gpu_budget_gate(
-            job_id=job_id, estimate=estimate, config=config, state_root=Path(state_root))
-
-    out_dir = (Path(dest).expanduser() if dest else Path.cwd() / "kaggle-results" / job_id) / "out"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    work_root = Path(tempfile.mkdtemp(prefix=f"aas-kaggle-{job_id}-"))
-
-    rounds: list[dict[str, Any]] = []
-    dataset_created = False
-    for round_idx in range(cap_runs):
-        done = units_done(out_dir, glob)
-        remaining = total - done
-        if remaining <= 0:
-            break
-        n_kernels = min(fanout, remaining)
-        # Resume rounds (checkpoints already present) re-attach them as an input dataset first:
-        # create the checkpoint dataset on the first sync, version it thereafter.
-        checkpoint_sync = None
-        if done > 0:
-            checkpoint_sync = _sync_checkpoint_dataset(
-                job_id=job_id, checkpoints_dir=out_dir, first_time=not dataset_created,
-                confirm=True, dry_run=False, username=username)
-            dataset_created = True
-        pushed: list[dict[str, Any]] = []
-        for chunk_idx in range(n_kernels):
-            pushed.append(_push_kernel(job_id=job_id, job_dir=job_dir, round_idx=round_idx,
-                                       chunk_idx=chunk_idx, num_chunks=n_kernels, gpu=gpu,
-                                       checkpoints_dir=out_dir if done > 0 else None,
-                                       work_root=work_root, username=username))
-        waits = [_wait_kernel(k["kernel"]) for k in pushed]
-        for k in pushed:
-            _fetch_kernel(k["kernel"], dest=out_dir)
-        rounds.append({"round": round_idx, "kernels": [k["kernel"] for k in pushed],
-                       "waits": [w["status"] for w in waits],
-                       "checkpoint_sync": checkpoint_sync,
-                       "units_done_after": units_done(out_dir, glob)})
-
-    final_done = units_done(out_dir, glob)
-    status_str = "completed" if final_done >= total else "incomplete_max_runs"
-    return {
-        "job_id": job_id, "kind": "gpu" if gpu else "cpu", "status": status_str,
-        "total_units": total, "units_done": final_done, "rounds_used": len(rounds),
-        "kernels_total": sum(len(r["kernels"]) for r in rounds), "concurrency": fanout,
-        "max_runs": cap_runs, "out_dir": str(out_dir), "rounds": rounds,
-        "gpu_reservation": gpu_reservation, "cost": "free",
-    }
+    raise KaggleDriverError(
+        "live multi-run is disabled until crash-safe status-first recovery and "
+        "verified checkpoint merging are implemented; use one-unit push/status/wait/fetch"
+    )
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -680,6 +980,11 @@ def build_parser() -> argparse.ArgumentParser:
     push_p.add_argument("--checkpoints", default=None)
     push_p.add_argument("--confirm", action="store_true")
     push_p.add_argument("--dry-run", action="store_true")
+    push_p.add_argument(
+        "--bundle-sha256",
+        help="reviewed bundle digest emitted by preflight/dry-run; required for live push",
+    )
+    push_p.add_argument("--owner", help="reviewed authenticated Kaggle username")
 
     status_p = sub.add_parser("status", help="Kernel run state")
     status_p.add_argument("kernel")
@@ -690,9 +995,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch_p = sub.add_parser("fetch", help="Download a kernel's output (checkpoints)")
     fetch_p.add_argument("kernel")
+    fetch_p.add_argument("--job", required=True)
     fetch_p.add_argument("--dest", default=None)
 
-    run_p = sub.add_parser("run", help="Multi-run resume loop with concurrent fan-out until DONE")
+    run_p = sub.add_parser("run", help="Plan the bounded multi-run loop (live execution disabled)")
     run_p.add_argument("--job", required=True)
     run_p.add_argument("--confirm", action="store_true")
     run_p.add_argument("--dry-run", action="store_true")
@@ -730,13 +1036,16 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "push":
                 result = push(job_dir=args.job, config=config, round_idx=args.round,
                               chunk_idx=args.chunk, num_chunks=args.num_chunks, gpu=args.gpu,
-                              checkpoints_dir=args.checkpoints, confirm=args.confirm, dry_run=args.dry_run)
+                              checkpoints_dir=args.checkpoints, confirm=args.confirm,
+                              dry_run=args.dry_run, state_root=Path(state_root),
+                              expected_bundle_sha256=args.bundle_sha256,
+                              expected_owner=args.owner)
             elif args.command == "status":
                 result = status(kernel=args.kernel, config=config)
             elif args.command == "wait":
                 result = wait(kernel=args.kernel, config=config, timeout=args.timeout)
             elif args.command == "fetch":
-                result = fetch(kernel=args.kernel, config=config, dest=args.dest)
+                result = fetch(kernel=args.kernel, config=config, job_dir=args.job, dest=args.dest)
             elif args.command == "run":
                 result = run(job_dir=args.job, config=config, state_root=Path(state_root),
                              confirm=args.confirm, dry_run=args.dry_run, dest=args.dest,

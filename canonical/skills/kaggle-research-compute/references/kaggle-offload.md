@@ -14,9 +14,10 @@ because kernels auto-stop at the 12h session cap and cost nothing.
   `KAGGLE_USERNAME` + `KAGGLE_KEY` pair and not a `kaggle.json`. The driver injects the token
   into the `kaggle` subprocess env; it never writes a legacy `kaggle.json` into the repo or a
   kernel.
-- The `kaggle` CLI (>=1.8.0) and kagglehub (>=0.4.1) are installed and on `PATH`
-  (`pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'`). kagglehub validates the token
-  (`kagglehub.whoami()`) and the driver shells out to the `kaggle` CLI for kernel ops.
+- The selected trusted Python is 3.11+ and contains `kaggle>=2.2.4,<3` plus
+  `kagglehub>=1.0.2,<2`. The driver executes `python -I -m kaggle`; it never searches
+  `PATH` for a user-writable console-script shim. kagglehub validates the token
+  (`kagglehub.whoami()`) and the module runs kernel operations.
 - `[kaggle]` is enabled in `research-compute.toml` with the caps and the weekly GPU-hour cap,
   and `doctor` passes.
 - ToS: Kaggle compute is intended for its data-science / competition platform. Keep to modest,
@@ -41,8 +42,8 @@ One bundle runs unchanged on local, Kaggle, Modal, Hetzner, or GitHub Actions; o
 fan-out harness differs. On Kaggle each kernel runs the bundle's `run.sh` at the kernel's cores
 over one chunk's slice.
 
-- `manifest.json` -- `total_units` (the resumable work-unit count), core-hour estimate,
-  `parallelism`, `gpu`, `checkpoint_glob`, and `verify` controls.
+- `manifest.json` -- `total_units`, core-hour estimate, `parallelism`, `gpu`,
+  `checkpoint_glob`, `verify` controls, and an explicit `upload_files` allowlist.
 - `worker <chunk_idx> <num_chunks>` -- round-robin slice, per-unit checkpoint with flush and
   fsync, and skips units already present in `out/` (resume).
 - `run.sh` -- `CORES` fan-out via `xargs -P`, then merge; reads `CHUNK_IDX` / `NUM_CHUNKS`.
@@ -59,18 +60,21 @@ explicit confirm.
 - `bootstrap` -- check the `kaggle` CLI and kagglehub, confirm the API token is present, and validate/prime via kagglehub (`kagglehub.whoami()`); report `doctor`. Never pushes.
 - `doctor` -- offline readiness: lane enabled, API token present, `kaggle` + kagglehub installed, caps. No network call.
 - `preflight --job DIR [--json]` -- the plan the router consumes: kind (CPU/GPU), estimated resume rounds and kernel count, concurrency, the 12h session cap, the GPU-hour estimate vs the weekly cap, adequacy, and availability. No kernel.
-- `push --job DIR` -- push ONE kernel run (a chunk). Manual/debug granularity.
+- `push --job DIR --dry-run` -- validate/snapshot the allowlisted bundle and emit its SHA-256.
+- `push --job DIR --owner USER --bundle-sha256 HEX --confirm` -- write intent for the exact reviewed ref before any network call, verify `whoami()` matches `USER`, then push one reviewed one-unit kernel.
 - `status <ref>` -- kernel run state.
 - `wait <ref>` -- poll a kernel until it completes / errors or the wall cap hits.
-- `fetch <ref> --dest DIR` -- download a kernel's output (checkpoints).
-- `run --job DIR` -- the multi-run resume loop with concurrent fan-out (below).
+- `fetch <ref> --job DIR --dest DIR` -- download only flat allowlisted JSON outputs and verify them against the original manifest.
+- `run --job DIR --dry-run` -- report the multi-run shape. Live multi-run is currently fail-closed pending crash-safe recovery.
 
-Use `--dry-run` on `push` and `run` to print the exact planned `kaggle` commands with nothing
-submitted. This is the offline path exercised by the driver tests.
+Use `--dry-run` on `push` and `run` to print the plan with nothing submitted. A live push must
+repeat the reviewed bundle SHA-256; any changed bundle or existing submission intent is refused.
 
 ## The multi-run resume loop (`run`)
 
-The crux of this lane. Each ROUND:
+This is the intended multi-run design, currently available for planning only. Live execution
+remains disabled until status-first crash recovery and manifest-bound checkpoint merging are
+implemented. Each planned ROUND:
 
 1. Compute `remaining = total_units - units_done(out/)` from the checkpoints already fetched.
 2. Fan out `min(concurrency, remaining)` kernels (up to ~5), one per remaining chunk, each a

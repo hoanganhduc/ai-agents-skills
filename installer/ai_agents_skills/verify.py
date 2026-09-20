@@ -98,6 +98,7 @@ PARTIALLY_OWNED_ARTIFACT_TYPES = frozenset({
     "management-notice",
     "settings-hook-merge",
     "settings-compat-merge",
+    "settings-value-merge",
 })
 
 
@@ -222,6 +223,8 @@ def _verify_artifact(artifact: dict[str, Any], root: Path | None = None) -> dict
         verify_hook_merge_artifact(path, artifact, checks)
     if artifact.get("artifact_type") == "settings-compat-merge" and path.is_file():
         verify_compat_merge_artifact(path, artifact, checks)
+    if artifact.get("artifact_type") == "settings-value-merge" and path.is_file():
+        verify_json_setting_artifact(path, artifact, checks)
     if artifact.get("artifact_type") in {"template", "instruction-doc", "entrypoint-alias"} and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         # Only comment-bearing formats carry an inline managed-marker (see
@@ -360,8 +363,8 @@ def verify_compat_merge_artifact(path: Path, artifact: dict[str, Any], checks: l
         compatible_user_table = unmanaged_table_has_bool_values(
             text,
             str(artifact.get("managed_id")),
-            "compat.claude",
-            {"skills": False, "agents": False, "rules": False, "hooks": False},
+            str(artifact.get("compat_table") or "compat.claude"),
+            dict(artifact.get("compat_expected") or {"skills": False, "agents": False, "rules": False, "hooks": False}),
         )
         checks.append({"name": "compatible-user-table", "ok": compatible_user_table})
     checks.append({"name": "managed-block-present", "ok": span is not None or compatible_user_table})
@@ -371,6 +374,20 @@ def verify_compat_merge_artifact(path: Path, artifact: dict[str, Any], checks: l
             "name": "managed-block-match",
             "ok": block is not None and expected_body.strip() in block,
         })
+
+
+def verify_json_setting_artifact(path: Path, artifact: dict[str, Any], checks: list[dict[str, Any]]) -> None:
+    from .json_merge import json_path_value, load_json_object
+
+    try:
+        settings, _ = load_json_object(path)
+    except ValueError as exc:
+        checks.append({"name": "settings-parseable", "ok": False, "detail": str(exc)})
+        return
+    checks.append({"name": "settings-parseable", "ok": True})
+    exists, value = json_path_value(settings, list(artifact.get("setting_path") or []))
+    checks.append({"name": "managed-setting-present", "ok": exists})
+    checks.append({"name": "managed-setting-match", "ok": exists and value == artifact.get("setting_value")})
 
 
 def artifact_path_checks(

@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import io
 import json
 import math
 import os
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -61,7 +61,7 @@ class KaggleBudgetError(KaggleError):
 # Kaggle's current "API Tokens (Recommended)" auth is a SINGLE token (not the legacy
 # KAGGLE_USERNAME + KAGGLE_KEY pair and not a kaggle.json). It is read from the KAGGLE_API_TOKEN
 # environment variable, or from ~/.kaggle/access_token (the raw token) -- the same file the
-# kaggle CLI (>=1.8.0) and kagglehub (>=0.4.1) read natively. The config directory honors
+# Kaggle CLI module (>=2.2.4,<3) and kagglehub (>=1.0.2,<2) read natively. The config directory honors
 # KAGGLE_CONFIG_DIR, matching the kaggle CLI's own convention. We only ever pass the token via
 # the environment; it never travels on argv and is never logged.
 
@@ -117,10 +117,11 @@ def _default_kagglehub_validate(config: Any) -> dict[str, Any]:  # pragma: no co
     if not token_present():
         return {"usable": False, "username": None, "reason": "no_kaggle_api_token"}
     try:
-        # kagglehub logs a validation banner and binds its console handler to whatever
-        # sys.stdout is at import time. Callers reserve stdout for a single JSON envelope,
-        # so import and call it with stdout pointed at stderr.
-        with contextlib.redirect_stdout(sys.stderr):
+        # kagglehub logs a validation banner and binds its console handler at import
+        # time. Suppress both streams so a future token-bearing diagnostic cannot
+        # bypass the driver's redaction boundary.
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
             import kagglehub
 
             info = kagglehub.whoami()
@@ -407,7 +408,10 @@ def doctor(config: Any) -> dict[str, Any]:
     out: dict[str, Any] = {
         "kaggle_enabled": bool(getattr(config, "kaggle_enabled", False)),
         "api_token_present": token_present(),
-        "kaggle_cli_available": shutil.which("kaggle") is not None,
+        "kaggle_cli_available": importlib.util.find_spec("kaggle") is not None,
+        "kaggle_cli_mode": "python-module",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "python_supported": sys.version_info >= (3, 11),
         "kagglehub_available": importlib.util.find_spec("kagglehub") is not None,
         "kernel_cores": kernel_cores(config),
         "kernel_ram_gb": kernel_ram_gb(config),
@@ -417,5 +421,11 @@ def doctor(config: Any) -> dict[str, Any]:
         "weekly_gpu_hours_cap": float(getattr(config, "kaggle_weekly_gpu_hours_cap", 0.0) or 0.0),
         "network_probe": "skipped (doctor performs no network calls)",
     }
-    out["ready_offline"] = bool(out["kaggle_enabled"] and out["api_token_present"])
+    out["ready_offline"] = bool(
+        out["kaggle_enabled"]
+        and out["api_token_present"]
+        and out["kaggle_cli_available"]
+        and out["kagglehub_available"]
+        and out["python_supported"]
+    )
     return out

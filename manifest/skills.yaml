@@ -1337,10 +1337,13 @@
         "codex",
         "claude",
         "deepseek",
+        "codewhale",
+        "copilot",
         "opencode",
         "antigravity",
         "grok",
-        "kimi"
+        "kimi",
+        "chatgpt-local-coder"
       ],
       "required_dependencies": [
         "python-runtime"

@@ -22,6 +22,7 @@ sys.dont_write_bytecode = True  # never write __pycache__ into the canonical run
 import ast
 import base64
 import contextlib
+import hashlib
 import importlib
 import io
 import json
@@ -35,7 +36,7 @@ from pathlib import Path
 from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
-from tests import state_dacl_skip
+from tests import protect_windows_directory, state_dacl_skip
 
 WORKSPACE = RUNTIME_SOURCE_ROOT / "workspace"
 if str(WORKSPACE) not in sys.path:
@@ -137,6 +138,7 @@ def _with_liveness_defaults(resources: dict | None) -> dict:
 
 
 def _make_workspace(tmp: Path, resources: dict | None = None, *, config_toml: str = CONFIG_TOML) -> Path:
+    protect_windows_directory(tmp)
     ws = tmp / "ws"
     (ws / "config").mkdir(parents=True)
     (ws / "config" / "research-compute.toml").write_text(config_toml, encoding="utf-8")
@@ -691,7 +693,9 @@ class KaggleConfigAndProbeTests(unittest.TestCase):
         """The real (unmocked) validate path must leave stdout untouched: callers reserve stdout
         for a single JSON envelope, and kagglehub binds its console handler to whatever
         sys.stdout is at import time. A stub `kagglehub` on sys.path reproduces that binding
-        offline -- it captures sys.stdout in its module body and writes from whoami()."""
+        offline -- it captures sys.stdout in its module body and writes from whoami().
+        Both streams are suppressed so a future token-bearing diagnostic cannot bypass
+        the redaction boundary."""
         stub = (
             "import sys\n"
             "_BOUND = sys.stdout\n"
@@ -718,7 +722,7 @@ class KaggleConfigAndProbeTests(unittest.TestCase):
         self.assertTrue(result["usable"])
         self.assertEqual(result["username"], "stub-user")
         self.assertEqual(out.getvalue(), "")  # the JSON envelope stays parseable
-        self.assertIn("successfully validated", err.getvalue())  # the banner still surfaces
+        self.assertEqual(err.getvalue(), "")
 
     def test_gpu_budget_gate_fail_closed_over_cap_and_reserves(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -878,6 +882,8 @@ class KaggleLaneUnitTests(unittest.TestCase):
 def _make_bundle(tmp: Path, manifest: dict, *, with_run: bool = True) -> Path:
     bundle = tmp / "bundle"
     bundle.mkdir(parents=True, exist_ok=True)
+    manifest = dict(manifest)
+    manifest.setdefault("upload_files", ["manifest.json", "run.sh"])
     (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     if with_run:
         (bundle / "run.sh").write_text("echo run\n", encoding="utf-8")
@@ -892,10 +898,12 @@ class _FakeRunner:
     complete; `kernels output` writes `units_per_output` fresh unit checkpoints into the -p
     dest (so the resume loop makes real progress); `echo_token` proves output redaction."""
 
-    def __init__(self, *, units_per_output: int = 1, echo_token: bool = False):
+    def __init__(self, *, units_per_output: int = 1, echo_token: bool = False,
+                 manifest_sha256: str | None = None):
         self.calls: list[dict] = []
         self.units_per_output = units_per_output
         self.echo_token = echo_token
+        self.manifest_sha256 = manifest_sha256
         self._counter = 0
 
     def __call__(self, argv, *, env, timeout):
@@ -905,11 +913,28 @@ class _FakeRunner:
         if "status" in argv:
             return {"returncode": 0, "stdout": 'kernel has status "complete"', "stderr": ""}
         if "output" in argv:
-            dest = Path(argv[argv.index("-p") + 1])
+            dest = Path(argv[argv.index("-p") + 1]) / "out"
             dest.mkdir(parents=True, exist_ok=True)
             for _ in range(self.units_per_output):
+                unit = self._counter
                 self._counter += 1
-                (dest / f"unit-{self._counter:04d}.json").write_text("{}", encoding="utf-8")
+                (dest / f"unit-{unit:04d}.json").write_text(
+                    json.dumps({
+                        "status": "PASS",
+                        "unit": unit,
+                        "manifest_sha256": self.manifest_sha256,
+                    }),
+                    encoding="utf-8",
+                )
+            (dest / "result.json").write_text(
+                json.dumps({
+                    "status": "PASS",
+                    "verified": True,
+                    "units": self.units_per_output,
+                    "manifest_sha256": self.manifest_sha256,
+                }),
+                encoding="utf-8",
+            )
             return {"returncode": 0, "stdout": "ok", "stderr": ""}
         stdout = f"leaked {env.get('KAGGLE_API_TOKEN')} value" if self.echo_token else "ok"
         return {"returncode": 0, "stdout": stdout, "stderr": ""}
@@ -968,6 +993,10 @@ class KaggleDriverTests(unittest.TestCase):
         # Written as bytes: text mode would translate the newline on Windows and
         # the assertion below checks that the bundle carries the exact payload.
         (nested / "payload.txt").write_bytes(b"embedded-marker\n")
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["upload_files"].append("nested/payload.txt")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         transient = bundle / "out"
         transient.mkdir()
         (transient / "old-result.json").write_text("{}", encoding="utf-8")
@@ -1013,6 +1042,10 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertNotIn("__pycache__/ignored.pyc", names)
         self.assertIn("extractall('bundle')", code)
         self.assertIn("env['OUT']", code)
+        self.assertIn("cwd='bundle'", code)
+        self.assertTrue(metadata["is_private"])
+        self.assertFalse(metadata["enable_gpu"])
+        self.assertFalse(metadata["enable_internet"])
 
     def test_preflight_plans_without_pushing(self) -> None:
         runner = _FakeRunner()
@@ -1022,9 +1055,58 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertEqual(out["kind"], "cpu")
         self.assertEqual(out["budget_verdict"], "free_cpu")
         self.assertEqual(out["total_units"], 6)
+        self.assertRegex(out["bundle_sha256"], r"^[0-9a-f]{64}$")
         self.assertFalse(out["provisioned"])
         self.assertEqual(out["cost"], "free")
         self.assertEqual(runner.calls, [])  # planning pushes nothing
+
+    def test_bundle_requires_an_explicit_secret_safe_upload_allowlist(self) -> None:
+        bundle = self._bundle(total_units=1)
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        del manifest["upload_files"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "upload_files"):
+            kaggle_driver.bundle_sha256(bundle)
+
+        manifest["upload_files"] = ["manifest.json", "run.sh", ".env"]
+        (bundle / ".env").write_text("KAGGLE_API_TOKEN=must-not-upload\n", encoding="utf-8")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "unsafe upload_files"):
+            kaggle_driver.bundle_sha256(bundle)
+
+    def test_bundle_rejects_a_hardlinked_upload_file(self) -> None:
+        bundle = self._bundle(total_units=1)
+        payload = bundle / "payload.txt"
+        payload.write_text("safe payload\n", encoding="utf-8")
+        sibling = self.tmp / "payload-hardlink.txt"
+        os.link(payload, sibling)
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["upload_files"].append("payload.txt")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "multiple hard links"):
+            kaggle_driver.bundle_sha256(bundle)
+
+    def test_live_push_refuses_a_bundle_changed_after_review(self) -> None:
+        runner = _FakeRunner()
+        kaggle_driver.COMMAND_RUNNER = runner
+        self._creds()
+        bundle = self._bundle(total_units=1)
+        reviewed = kaggle_driver.bundle_sha256(bundle)
+        (bundle / "run.sh").write_text("echo changed\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "changed after dry-run"):
+            kaggle_driver.push(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                expected_bundle_sha256=reviewed,
+                expected_owner="tester",
+                confirm=True,
+            )
+        self.assertEqual(runner.calls, [])
 
     def test_run_dry_run_shows_fanout_and_loop_no_calls(self) -> None:
         runner = _FakeRunner()
@@ -1056,19 +1138,14 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertEqual(runner.calls, [])
 
     def test_run_multi_run_resume_loop_two_rounds(self) -> None:
-        """The resume crux (plan §8.7): a 6-unit job with a 5-kernel round finishes unit 6 in a
-        SECOND round, resuming from the round-1 checkpoints (a checkpoint dataset is created)."""
-        runner = _FakeRunner(units_per_output=1)  # 5 units after round 0, 6 after round 1
+        """Live multi-run stays fail-closed until status-first crash recovery is durable."""
+        runner = _FakeRunner(units_per_output=1)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=6), config=self.config,
-                                state_root=self.state, confirm=True, dest=self.tmp / "res")
-        self.assertEqual(out["status"], "completed")
-        self.assertEqual(out["rounds_used"], 2)
-        self.assertEqual(out["kernels_total"], 6)  # 5 in round 0 + 1 in round 1
-        self.assertEqual(out["units_done"], 6)
-        # Round 1 re-attached checkpoints via a checkpoint dataset (create then reference).
-        self.assertTrue(any("datasets create" in c["joined"] for c in runner.calls))
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "live multi-run is disabled"):
+            kaggle_driver.run(job_dir=self._bundle(total_units=6), config=self.config,
+                              state_root=self.state, confirm=True, dest=self.tmp / "res")
+        self.assertEqual(runner.calls, [])
 
     def test_run_concurrent_fanout_up_to_five(self) -> None:
         """The fan-out (plan §8): a 5-unit job pushes exactly 5 concurrent kernels in ONE round,
@@ -1076,23 +1153,19 @@ class KaggleDriverTests(unittest.TestCase):
         runner = _FakeRunner(units_per_output=1)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=5), config=self.config,
-                                state_root=self.state, confirm=True, dest=self.tmp / "res")
-        self.assertEqual(out["status"], "completed")
-        self.assertEqual(out["rounds_used"], 1)
-        push_calls = [c for c in runner.calls if "kernels push" in c["joined"]]
-        self.assertEqual(len(push_calls), 5)
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "live multi-run is disabled"):
+            kaggle_driver.run(job_dir=self._bundle(total_units=5), config=self.config,
+                              state_root=self.state, confirm=True, dest=self.tmp / "res")
+        self.assertEqual(runner.calls, [])
 
     def test_run_single_round_when_fits(self) -> None:
         runner = _FakeRunner(units_per_output=1)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=3), config=self.config,
-                                state_root=self.state, confirm=True, dest=self.tmp / "res")
-        self.assertEqual(out["rounds_used"], 1)
-        self.assertEqual(out["kernels_total"], 3)
-        # A single round needs no checkpoint dataset (no resume).
-        self.assertFalse(any("datasets" in c["joined"] for c in runner.calls))
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "live multi-run is disabled"):
+            kaggle_driver.run(job_dir=self._bundle(total_units=3), config=self.config,
+                              state_root=self.state, confirm=True, dest=self.tmp / "res")
+        self.assertEqual(runner.calls, [])
 
     def test_run_bounded_by_max_runs(self) -> None:
         """The loop is bounded: a large job that cannot finish within max_runs rounds stops and
@@ -1100,24 +1173,21 @@ class KaggleDriverTests(unittest.TestCase):
         runner = _FakeRunner(units_per_output=1)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=100), config=self.config,
-                                state_root=self.state, confirm=True, dest=self.tmp / "res",
-                                max_runs=2)
-        self.assertEqual(out["status"], "incomplete_max_runs")
-        self.assertEqual(out["rounds_used"], 2)
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "live multi-run is disabled"):
+            kaggle_driver.run(job_dir=self._bundle(total_units=100), config=self.config,
+                              state_root=self.state, confirm=True, dest=self.tmp / "res",
+                              max_runs=2)
+        self.assertEqual(runner.calls, [])
 
     def test_run_gpu_reserves_weekly_gpu_hours(self) -> None:
         runner = _FakeRunner(units_per_output=3)  # finish a 3-unit GPU job in one round
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=3, gpu=True, core_hours=4),
-                                config=self.config, state_root=self.state, confirm=True,
-                                dest=self.tmp / "res")
-        self.assertEqual(out["kind"], "gpu")
-        self.assertEqual(out["status"], "completed")
-        self.assertIsNotNone(out["gpu_reservation"])
-        self.assertTrue((self.state / "kaggle-gpu-usage.jsonl").exists())
-        self.assertGreater(kaggle_backend.gpu_hours_used_this_week(self.state), 0.0)
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "live multi-run is disabled"):
+            kaggle_driver.run(job_dir=self._bundle(total_units=3, gpu=True, core_hours=4),
+                              config=self.config, state_root=self.state, confirm=True,
+                              dest=self.tmp / "res")
+        self.assertFalse((self.state / "kaggle-gpu-usage.jsonl").exists())
 
     def test_run_gpu_refused_when_weekly_cap_exhausted(self) -> None:
         runner = _FakeRunner()
@@ -1131,16 +1201,49 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertFalse(any("kernels push" in c["joined"] for c in runner.calls))  # never pushed
 
     def test_run_token_redaction_and_env_only(self) -> None:
-        runner = _FakeRunner(units_per_output=3, echo_token=True)
+        runner = _FakeRunner(echo_token=True)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
-        out = kaggle_driver.run(job_dir=self._bundle(total_units=3), config=self.config,
-                                state_root=self.state, confirm=True, dest=self.tmp / "res")
+        bundle = self._bundle(total_units=1)
+        digest = kaggle_driver.bundle_sha256(bundle)
+        intent_path = self.state / "kaggle-submissions" / "ai-agents-skills-jobx-r0-c0.json"
+
+        def validate_after_intent(config):
+            self.assertTrue(intent_path.is_file())
+            return {"usable": True, "username": "tester", "reason": "test"}
+
+        kaggle_backend.KAGGLEHUB_VALIDATE = validate_after_intent
+        with mock.patch.object(
+            kaggle_driver,
+            "_zip_job_bytes",
+            wraps=kaggle_driver._zip_job_bytes,
+        ) as snapshot:
+            out = kaggle_driver.push(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                expected_bundle_sha256=digest,
+                expected_owner="tester",
+                confirm=True,
+            )
+        self.assertEqual(snapshot.call_count, 1)
         blob = json.dumps(out)
         self.assertNotIn(DRIVER_TOKEN, blob)  # token never surfaced
         # The API token travelled only in the env, never on argv.
         self.assertTrue(all(DRIVER_TOKEN not in c["joined"] for c in runner.calls))
         self.assertTrue(all(c["env_has_token"] for c in runner.calls))
+        intent = json.loads(Path(out["submission_intent"]).read_text(encoding="utf-8"))
+        self.assertEqual(intent["state"], "submitted")
+        self.assertEqual(intent["bundle_sha256"], digest)
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "query status"):
+            kaggle_driver.push(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                expected_bundle_sha256=digest,
+                expected_owner="tester",
+                confirm=True,
+            )
 
     def test_run_refuses_without_confirm(self) -> None:
         runner = _FakeRunner()
@@ -1151,15 +1254,85 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertEqual(runner.calls, [])
 
     def test_status_wait_fetch_offline(self) -> None:
-        runner = _FakeRunner()
+        bundle = self._bundle(total_units=1)
+        manifest_digest = hashlib.sha256(
+            (bundle / "manifest.json").read_bytes()
+        ).hexdigest()
+        runner = _FakeRunner(manifest_sha256=manifest_digest)
         kaggle_driver.COMMAND_RUNNER = runner
         self._creds()
         ref = "tester/aas-jobx-r0-c0"
         self.assertEqual(kaggle_driver.status(kernel=ref, config=self.config)["status"], "complete")
         self.assertEqual(kaggle_driver.wait(kernel=ref, config=self.config)["status"], "complete")
         dest = self.tmp / "out"
-        fetched = kaggle_driver.fetch(kernel=ref, config=self.config, dest=dest)
+        fetched = kaggle_driver.fetch(
+            kernel=ref, config=self.config, job_dir=bundle, dest=dest
+        )
         self.assertEqual(fetched["fetched_to"], str(dest))
+        self.assertTrue(fetched["verification"]["verified"])
+        output_call = next(call for call in runner.calls if "output" in call["argv"])
+        self.assertIn("--file-pattern", output_call["argv"])
+
+    def test_fetch_refuses_a_nonempty_destination(self) -> None:
+        runner = _FakeRunner()
+        kaggle_driver.COMMAND_RUNNER = runner
+        self._creds()
+        dest = self.tmp / "existing-output"
+        dest.mkdir()
+        (dest / "user-file.txt").write_text("preserve\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            kaggle_driver.KaggleDriverError,
+            "destination must be empty",
+        ):
+            kaggle_driver.fetch(
+                kernel="tester/aas-jobx-r0-c0",
+                config=self.config,
+                job_dir=self._bundle(total_units=1),
+                dest=dest,
+            )
+
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(
+            (dest / "user-file.txt").read_text(encoding="utf-8"),
+            "preserve\n",
+        )
+
+    def test_fetch_rejects_unverified_checkpoint_content(self) -> None:
+        bundle = self._bundle(total_units=1)
+        runner = _FakeRunner(manifest_sha256="0" * 64)
+        kaggle_driver.COMMAND_RUNNER = runner
+        self._creds()
+
+        with self.assertRaisesRegex(
+            kaggle_driver.KaggleDriverError,
+            "failed host verification",
+        ):
+            kaggle_driver.fetch(
+                kernel="tester/aas-jobx-r0-c0",
+                config=self.config,
+                job_dir=bundle,
+                dest=self.tmp / "unverified-output",
+            )
+
+    def test_run_kaggle_uses_the_selected_python_module_not_path(self) -> None:
+        runner = mock.Mock(return_value={
+            "returncode": 0,
+            "stdout": "Kaggle CLI 2.2.4\n",
+            "stderr": "",
+        })
+        kaggle_driver.COMMAND_RUNNER = runner
+
+        kaggle_driver.run_kaggle(
+            ["--version"],
+            timeout=30.0,
+            needs_creds=False,
+        )
+
+        self.assertEqual(
+            runner.call_args.args[0],
+            [sys.executable, "-I", "-m", "kaggle", "--version"],
+        )
 
     def test_doctor_offline_no_network(self) -> None:
         out = kaggle_driver.doctor(self.config)
@@ -1186,41 +1359,60 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertFalse(out["account"]["usable"])
         self.assertEqual(out["account"]["reason"], "no_kaggle_api_token")
 
-    @unittest.skipUnless(os.name == "posix", "fake Kaggle CLI uses a POSIX shell")
-    def test_bootstrap_executes_kaggle_cli_version(self) -> None:
-        cli_dir = self.tmp / "bin"
-        cli_dir.mkdir(mode=0o700)
-        cli = cli_dir / "kaggle"
-        cli.write_text('#!/bin/sh\n[ "$1" = --version ] || exit 9\nprintf "kaggle-version-marker\\n"\n',
-                       encoding="utf-8")
-        cli.chmod(0o700)
-        kaggle_driver.COMMAND_RUNNER = kaggle_driver._default_command_runner
-        with mock.patch.dict(os.environ, {"PATH": str(cli_dir)}):
+    def test_bootstrap_executes_kaggle_module_version(self) -> None:
+        kaggle_driver.COMMAND_RUNNER = mock.Mock(return_value={
+            "returncode": 0,
+            "stdout": "kaggle-version-marker\n",
+            "stderr": "",
+        })
+        with mock.patch.object(
+            kaggle_driver.importlib.util,
+            "find_spec",
+            side_effect=lambda name: object()
+            if name in {"kaggle", "kagglehub"}
+            else None,
+        ):
             out = kaggle_driver.bootstrap(self.config)
         self.assertEqual(out["kaggle_cli_version"], {
             "ok": True, "exit_code": 0, "output": "kaggle-version-marker",
         })
+        self.assertEqual(out["kaggle_cli_mode"], "python-module")
+        self.assertEqual(
+            kaggle_driver.COMMAND_RUNNER.call_args.args[0],
+            [sys.executable, "-I", "-m", "kaggle", "--version"],
+        )
         self.assertFalse(out["api_token_present"])
 
-    def test_bootstrap_reports_kaggle_cli_absent(self) -> None:
-        empty_path = self.tmp / "empty-bin"
-        empty_path.mkdir(mode=0o700)
-        with mock.patch.dict(os.environ, {"PATH": str(empty_path)}):
+    def test_bootstrap_reports_kaggle_module_absent(self) -> None:
+        with mock.patch.object(
+            kaggle_driver.importlib.util,
+            "find_spec",
+            side_effect=lambda name: object() if name == "kagglehub" else None,
+        ):
             out = kaggle_driver.bootstrap(self.config)
         self.assertEqual(out["kaggle_cli_version"], {
-            "ok": False, "exit_code": None, "output": "kaggle CLI not found",
+            "ok": False, "exit_code": None, "output": "kaggle Python module not found",
         })
+        self.assertEqual(out["kaggle_cli_mode"], "python-module")
 
-    def test_bootstrap_reports_unsuccessful_kaggle_cli_version(self) -> None:
-        with mock.patch.object(kaggle_driver.shutil, "which", return_value="kaggle"), \
-             mock.patch.object(kaggle_driver, "COMMAND_RUNNER", return_value={
+    def test_bootstrap_reports_unsuccessful_kaggle_module_version(self) -> None:
+        with mock.patch.object(
+            kaggle_driver.importlib.util,
+            "find_spec",
+            side_effect=lambda name: object()
+            if name in {"kaggle", "kagglehub"}
+            else None,
+        ), mock.patch.object(kaggle_driver, "COMMAND_RUNNER", return_value={
                  "returncode": 3, "stdout": "", "stderr": "version unavailable",
              }) as runner:
             out = kaggle_driver.bootstrap(self.config)
         self.assertEqual(out["kaggle_cli_version"], {
             "ok": False, "exit_code": 3, "output": "version unavailable",
         })
-        self.assertEqual(runner.call_args.args[0], ["kaggle", "--version"])
+        self.assertEqual(
+            runner.call_args.args[0],
+            [sys.executable, "-I", "-m", "kaggle", "--version"],
+        )
         self.assertEqual(runner.call_args.kwargs["timeout"], 30.0)
 
 

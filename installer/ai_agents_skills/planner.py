@@ -264,7 +264,8 @@ def build_plan(
     )
     if not writing_only_upgrade:
         actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
-    actions.extend(antigravity_legacy_plugin_actions(root, agents, actions, state))
+    if migrate:
+        actions.extend(antigravity_legacy_plugin_actions(root, agents, actions, state))
     actions.extend(
         # The same skill list the runtime install is planned from: the hook's only
         # job is to invoke a runtime script, so writing it for a skill whose files
@@ -284,6 +285,7 @@ def build_plan(
     )
     if not writing_only_upgrade:
         actions.extend(grok_native_config_actions(agents, actions))
+        actions.extend(target_isolation_config_actions(root, agents, actions, platform))
     actions.extend(
         build_runtime_actions(
             root=root,
@@ -582,6 +584,105 @@ GROK_COMPAT_CLAUDE_BODY = "\n".join(
         "hooks = false",
     ]
 )
+
+CODEWHALE_ISOLATION_MANAGED_ID = "codewhale-skill-isolation"
+CODEWHALE_ISOLATION_BODY = "\n".join(
+    [
+        "[skills]",
+        "scan_codewhale_only = true",
+    ]
+)
+
+
+def target_isolation_config_actions(
+    root: Path,
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    platform: str | None,
+) -> list[dict[str, Any]]:
+    """Plan target-owned skill isolation settings for active skill installs."""
+    from .json_merge import load_json_object, merge_json_value
+    from .toml_merge import (
+        has_unmanaged_table,
+        load_toml_text,
+        managed_block_issue,
+        merge_managed_block,
+        unmanaged_table_has_bool_values,
+    )
+
+    active_agents = {
+        str(action.get("agent"))
+        for action in actions
+        if action.get("artifact_type") == "skill-file" and skill_action_is_active(action)
+    }
+    planned: list[dict[str, Any]] = []
+    for agent in agents:
+        if agent.name not in active_agents:
+            continue
+        if agent.name == "codewhale":
+            config_path = agent.home / "config.toml"
+            action: dict[str, Any] = {
+                "kind": "toml-merge",
+                "agent": agent.name,
+                "skill": "repo-management",
+                "path": str(config_path),
+                "artifact_type": "settings-compat-merge",
+                "artifact_id": f"settings-compat:{CODEWHALE_ISOLATION_MANAGED_ID}",
+                "artifact_name": CODEWHALE_ISOLATION_MANAGED_ID,
+                "managed_id": CODEWHALE_ISOLATION_MANAGED_ID,
+                "body": CODEWHALE_ISOLATION_BODY,
+                "compat_table": "skills",
+                "compat_expected": {"scan_codewhale_only": True},
+                "classification": "managed",
+                "current_signature": artifact_signature(config_path),
+            }
+            existing, _ = load_toml_text(config_path)
+            issue = managed_block_issue(existing, CODEWHALE_ISOLATION_MANAGED_ID)
+            if issue == "malformed-or-duplicated":
+                action.update(operation="skip", classification="conflict", reason="existing managed CodeWhale isolation block is malformed or duplicated")
+            elif has_unmanaged_table(existing, CODEWHALE_ISOLATION_MANAGED_ID, "skills"):
+                if unmanaged_table_has_bool_values(
+                    existing,
+                    CODEWHALE_ISOLATION_MANAGED_ID,
+                    "skills",
+                    {"scan_codewhale_only": True},
+                ):
+                    action.update(operation="noop", compat_table_policy="user-authored-compatible", managed_body=CODEWHALE_ISOLATION_BODY)
+                else:
+                    action.update(operation="skip", classification="conflict", reason="existing user-authored [skills] table does not enable scan_codewhale_only")
+            else:
+                _, changed = merge_managed_block(existing, CODEWHALE_ISOLATION_MANAGED_ID, CODEWHALE_ISOLATION_BODY)
+                action["operation"] = "merge" if changed else "noop"
+            planned.append(action)
+        elif agent.name == "chatgpt-local-coder":
+            target_platform = current_platform(platform)
+            if target_platform == "windows":
+                config_path = root / "AppData" / "Roaming" / "chatgpt-local-coder" / "config.json"
+            elif target_platform == "macos":
+                config_path = root / "Library" / "Application Support" / "chatgpt-local-coder" / "config.json"
+            else:
+                config_path = root / ".config" / "chatgpt-local-coder" / "config.json"
+            action = {
+                "kind": "json-setting-merge",
+                "agent": agent.name,
+                "skill": "repo-management",
+                "path": str(config_path),
+                "artifact_type": "settings-value-merge",
+                "artifact_id": "settings-value:skills.scanHostOnly",
+                "artifact_name": "skills.scanHostOnly",
+                "setting_path": ["skills", "scanHostOnly"],
+                "setting_value": True,
+                "classification": "managed",
+                "current_signature": artifact_signature(config_path),
+            }
+            try:
+                current, _ = load_json_object(config_path)
+                _, changed, _, _, _ = merge_json_value(current, ["skills", "scanHostOnly"], True)
+                action["operation"] = "merge" if changed else "noop"
+            except ValueError as exc:
+                action.update(operation="skip", classification="conflict", reason=str(exc))
+            planned.append(action)
+    return planned
 
 
 def grok_native_config_actions(

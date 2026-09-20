@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -107,6 +108,70 @@ def sha256_tree(path: Path) -> str:
 
 
 STATE_DIR_MODE = 0o700
+
+
+def translate_path_for_root(root: Path, value: str) -> str:
+    """Translate the same Windows profile path between ``C:\\`` and WSL ``/mnt/c``.
+
+    The conversion is deliberately scoped to the selected root. Unrelated
+    absolute paths are left untouched rather than guessed.
+    """
+    root_text = str(root)
+    wsl_match = re.match(r"^/mnt/([A-Za-z])(?:/(.*))?$", root_text.replace("\\", "/"))
+    if wsl_match:
+        drive = wsl_match.group(1).upper()
+        suffix = (wsl_match.group(2) or "").replace("/", "\\")
+        windows_root = f"{drive}:\\{suffix}".rstrip("\\")
+        normalized_value = value.replace("/", "\\")
+        prefix = windows_root + "\\"
+        if normalized_value.casefold() == windows_root.casefold():
+            return root_text
+        if normalized_value.casefold().startswith(prefix.casefold()):
+            relative = normalized_value[len(prefix):].replace("\\", "/")
+            return str(root / Path(relative))
+        return value
+
+    windows_match = re.match(r"^([A-Za-z]):[\\/](.*)$", root_text)
+    value_wsl = value.replace("\\", "/")
+    if windows_match:
+        drive = windows_match.group(1).lower()
+        root_suffix = windows_match.group(2).replace("\\", "/").strip("/")
+        wsl_root = f"/mnt/{drive}/{root_suffix}".rstrip("/")
+        prefix = wsl_root + "/"
+        if value_wsl.casefold() == wsl_root.casefold():
+            return root_text
+        if value_wsl.casefold().startswith(prefix.casefold()):
+            relative = value_wsl[len(prefix):].replace("/", "\\")
+            return str(root / Path(relative))
+    return value
+
+
+def state_for_root(data: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Return a planning view whose managed paths use the caller's substrate."""
+    result = copy.deepcopy(data)
+
+    def translate_record(record: dict[str, Any]) -> None:
+        old_artifact = record.get("artifact") if isinstance(record.get("artifact"), str) else None
+        for field in ("artifact", "source_path", "backup", "runtime_root", "legacy_path"):
+            value = record.get(field)
+            if isinstance(value, str):
+                record[field] = translate_path_for_root(root, value)
+        uninstall = record.get("uninstall")
+        if isinstance(uninstall, dict) and isinstance(uninstall.get("backup"), str):
+            uninstall["backup"] = translate_path_for_root(root, uninstall["backup"])
+        previous = record.get("previous_state_artifact")
+        if isinstance(previous, dict):
+            translate_record(previous)
+        if old_artifact and isinstance(record.get("key"), str):
+            new_artifact = record.get("artifact")
+            if isinstance(new_artifact, str) and new_artifact != old_artifact:
+                record["key"] = record["key"].replace(old_artifact, new_artifact)
+
+    for collection in ("artifacts", "uninstall_records"):
+        for item in result.get(collection, []):
+            if isinstance(item, dict):
+                translate_record(item)
+    return result
 
 
 def state_dir(root: Path) -> Path:
@@ -239,7 +304,7 @@ def load_state(root: Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"installer state is not valid JSON: {path}") from exc
-    return validate_state(data, path=path)
+    return state_for_root(validate_state(data, path=path), root)
 
 
 def save_state(root: Path, data: dict[str, Any]) -> None:

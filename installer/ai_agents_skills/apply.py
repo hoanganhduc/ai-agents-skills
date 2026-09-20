@@ -12,7 +12,12 @@ from .capabilities import (
     normalized_path_within,
     resolved_path_within,
 )
-from .json_merge import extract_hook_entry, load_json_object, merge_hook_entry
+from .json_merge import (
+    extract_hook_entry,
+    load_json_object,
+    merge_hook_entry,
+    merge_json_value,
+)
 from .lifecycle import mark_created_instruction_file_groups
 from .managed_permissions import normalize_managed_parent_chain, restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
@@ -225,6 +230,8 @@ def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, A
             result = apply_managed_file_remove_action(root, run_id, action)
         elif action["kind"] == "json-merge":
             result = apply_json_merge_action(root, run_id, action)
+        elif action["kind"] == "json-setting-merge":
+            result = apply_json_setting_action(root, run_id, action)
         elif action["kind"] == "toml-merge":
             result = apply_toml_merge_action(root, run_id, action)
         else:
@@ -296,10 +303,10 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
             raise ValueError(f"refusing to apply through symlinked parent: {parent}")
         if not parent.is_dir():
             raise ValueError(f"refusing to apply through non-directory parent: {parent}")
-    if action["kind"] in {"file", "managed-block", "managed-file-remove", "json-merge", "toml-merge"}:
+    if action["kind"] in {"file", "managed-block", "managed-file-remove", "json-merge", "json-setting-merge", "toml-merge"}:
         if path.exists() and path.is_dir() and not path.is_symlink():
             raise ValueError(f"refusing to write managed file over directory: {path}")
-    if action["kind"] == "json-merge" and path.is_symlink():
+    if action["kind"] in {"json-merge", "json-setting-merge"} and path.is_symlink():
         raise ValueError(f"refusing to merge into symlinked settings file: {path}")
     if action["kind"] == "toml-merge" and path.is_symlink():
         raise ValueError(f"refusing to merge into symlinked config file: {path}")
@@ -441,6 +448,43 @@ def apply_json_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     # needs the entry itself to compare against; a whole-file hash would report
     # every ordinary user edit as drift.
     result["managed_entry"] = extract_hook_entry(merged, action["event"], action["managed_id"])
+    result["applied"] = True
+    result["backup"] = str(backup) if backup else None
+    result["installed_signature"] = artifact_signature(path)
+    return result
+
+
+def apply_json_setting_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    path = Path(action["path"])
+    result = base_result(run_id, action)
+    result["created_file"] = not path.exists()
+    result["previous_signature"] = artifact_signature(path)
+    if action.get("operation") in {"skip", "noop"}:
+        result["managed"] = action.get("operation") == "noop"
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        result["setting_path"] = action.get("setting_path")
+        result["setting_value"] = action.get("setting_value")
+        return result
+    before, _existed = load_json_object(path)
+    merged, changed, created, original_exists, original_value = merge_json_value(
+        before,
+        list(action["setting_path"]),
+        action["setting_value"],
+    )
+    result["managed"] = True
+    result["setting_path"] = list(action["setting_path"])
+    result["setting_value"] = action["setting_value"]
+    result["created_containers"] = created
+    result["original_setting_exists"] = original_exists
+    result["original_setting_value"] = original_value
+    if not changed:
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        return result
+    backup = backup_file(root, run_id, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["installed_signature"] = artifact_signature(path)
@@ -954,6 +998,10 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "managed_id",
         "managed_body",
         "compat_table_policy",
+        "compat_table",
+        "compat_expected",
+        "setting_path",
+        "setting_value",
         "retired_artifact",
         "blocked_consumers",
         "router_phase",
@@ -995,6 +1043,17 @@ def uninstall_origin(
         return {
             "action": "toml-block-remove",
             "managed_id": result.get("managed_id"),
+            "created_file": result.get("created_file"),
+            "backup": result.get("backup"),
+        }
+    if result.get("artifact_type") == "settings-value-merge" and result.get("applied"):
+        return {
+            "action": "json-setting-restore",
+            "setting_path": result.get("setting_path"),
+            "installed_value": result.get("setting_value"),
+            "original_exists": result.get("original_setting_exists"),
+            "original_value": result.get("original_setting_value"),
+            "created_containers": result.get("created_containers"),
             "created_file": result.get("created_file"),
             "backup": result.get("backup"),
         }

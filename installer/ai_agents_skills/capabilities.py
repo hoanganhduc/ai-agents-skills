@@ -20,6 +20,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "reference",
         "reason": "DeepSeek native symlinked SKILL.md loading has not been verified, so auto mode uses reference adapters.",
     },
+    "codewhale": {
+        "symlink_skill_file": False,
+        "default_mode": "copy",
+        "reason": "CodeWhale 0.9.12 owns directory-layout ~/.codewhale/skills/<skill>/SKILL.md files; copy mode keeps support files available to load_skill and avoids native Windows symlink requirements.",
+    },
     "copilot": {
         "symlink_skill_file": False,
         "default_mode": "reference",

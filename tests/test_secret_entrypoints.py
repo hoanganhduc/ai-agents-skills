@@ -2151,6 +2151,18 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         self.assertIn('"ai-agents-skills\\research-compute"', runner)
         self.assertIn("Test-AasProtectedAclChain $computeConfig $computeBoundary", runner)
 
+    def test_windows_runner_validate_only_binds_typed_empty_key_arrays(self) -> None:
+        runner = (RUNTIME_SOURCE / "runners" / "run_skill.ps1").read_text(
+            encoding="utf-8"
+        )
+        loader = (RUNTIME_SOURCE / "runners" / "load_secret_env.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("-AllowedKeys ([string[]]@())", runner)
+        self.assertIn("-ExportKeys ([string[]]@())", runner)
+        self.assertGreaterEqual(loader.count("[AllowEmptyCollection()]"), 2)
+
     @unittest.skipUnless(
         os.name == "posix",
         "native Windows secret loading requires the managed PowerShell authority engine",
@@ -2625,6 +2637,46 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             }
             self.assertIn(target, entries)
             self.assertEqual(entries[target]["platforms"], ["windows"])
+
+    def test_windows_kaggle_wrapper_uses_dedicated_python_attestation(self) -> None:
+        outer = (RUNTIME_SOURCE / "runners" / "run_skill.ps1").read_text(
+            encoding="utf-8"
+        )
+        wrapper = (
+            RUNTIME_SOURCE
+            / "skills"
+            / "kaggle-research-compute"
+            / "run_kaggle_research_compute.ps1"
+        ).read_text(encoding="utf-8")
+        names = {
+            "AAS_KAGGLE_PYTHON",
+            "AAS_KAGGLE_PYTHON_SHA256",
+            "AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT",
+        }
+
+        kaggle_metadata = outer.split(
+            'if ($normalizedLower -like "skills\\kaggle-research-compute\\*") {',
+            1,
+        )[1].split("}", 1)[0]
+        for name in names:
+            self.assertIn(f'"{name}"', kaggle_metadata)
+            self.assertIn(f"$env:{name}", wrapper)
+            self.assertIn(f"Remove-Item Env:{name}", wrapper)
+
+        self.assertIn(
+            "$env:AAS_RUNTIME_PYTHON = $env:AAS_KAGGLE_PYTHON",
+            wrapper,
+        )
+        self.assertIn(
+            "$env:AAS_WINDOWS_PYTHON_SHA256 = "
+            "$env:AAS_KAGGLE_PYTHON_SHA256",
+            wrapper,
+        )
+        self.assertIn(
+            "$env:AAS_WINDOWS_PYTHON_SIGNER_THUMBPRINT = "
+            "$env:AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT",
+            wrapper,
+        )
 
     def test_reaper_wrappers_are_manifested_per_platform(self) -> None:
         manifest = json.loads(

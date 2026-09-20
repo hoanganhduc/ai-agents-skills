@@ -20,6 +20,92 @@ MANAGED_BY_KEY = "_managedBy"
 MANAGED_ID_KEY = "_id"
 
 
+def json_path_value(settings: dict[str, Any], path: list[str]) -> tuple[bool, Any]:
+    """Return whether a dotted JSON path exists and its value."""
+    current: Any = settings
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return False, None
+        current = current[key]
+    return True, current
+
+
+def merge_json_value(
+    settings: dict[str, Any],
+    path: list[str],
+    value: Any,
+) -> tuple[dict[str, Any], bool, list[str], bool, Any]:
+    """Set one scalar path without replacing unrelated user configuration.
+
+    Returns ``(merged, changed, created_containers, original_exists,
+    original_value)``. Existing non-object intermediate values are conflicts.
+    """
+    if not path:
+        raise ValueError("managed JSON setting path must not be empty")
+    result = json.loads(json.dumps(settings))
+    original_exists, original_value = json_path_value(result, path)
+    current: dict[str, Any] = result
+    created: list[str] = []
+    traversed: list[str] = []
+    for key in path[:-1]:
+        traversed.append(key)
+        child = current.get(key)
+        if child is None:
+            child = {}
+            current[key] = child
+            created.append(".".join(traversed))
+        if not isinstance(child, dict):
+            raise ValueError(f"settings field `{'.'.join(traversed)}` must be an object when present")
+        current = child
+    changed = not original_exists or original_value != value
+    if changed:
+        current[path[-1]] = value
+    return result, changed, created, original_exists, original_value
+
+
+def restore_json_value(
+    settings: dict[str, Any],
+    path: list[str],
+    *,
+    installed_value: Any,
+    original_exists: bool,
+    original_value: Any,
+    created_containers: list[str] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Restore one managed scalar if the installed value is still present."""
+    exists, current_value = json_path_value(settings, path)
+    if not exists:
+        return json.loads(json.dumps(settings)), False
+    if current_value != installed_value:
+        raise ValueError(f"managed JSON setting `{'.'.join(path)}` changed since install")
+    result = json.loads(json.dumps(settings))
+    parent: dict[str, Any] = result
+    for key in path[:-1]:
+        child = parent.get(key)
+        if not isinstance(child, dict):
+            raise ValueError(f"settings field `{key}` changed since install")
+        parent = child
+    if original_exists:
+        parent[path[-1]] = original_value
+    else:
+        parent.pop(path[-1], None)
+        created = set(created_containers or [])
+        for depth in range(len(path) - 1, 0, -1):
+            container_path = path[:depth]
+            if ".".join(container_path) not in created:
+                continue
+            ancestor: dict[str, Any] = result
+            for key in container_path[:-1]:
+                child = ancestor.get(key)
+                if not isinstance(child, dict):
+                    break
+                ancestor = child
+            child = ancestor.get(container_path[-1])
+            if isinstance(child, dict) and not child:
+                del ancestor[container_path[-1]]
+    return result, True
+
+
 def load_json_object(path: Path) -> tuple[dict[str, Any], bool]:
     """Read a JSON object from ``path`` as ``(data, existed)``.
 

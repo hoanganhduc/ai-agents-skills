@@ -161,8 +161,8 @@
     "kaggle-cli": {
       "display_name": "Kaggle CLI",
       "requirement": "optional until push/status/wait/fetch/run are used",
-      "linux": "kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); the new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY.",
-      "windows": "kaggle.exe or kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); KAGGLE_API_TOKEN supplied via the environment (or %USERPROFILE%\\.kaggle\\access_token).",
+      "linux": "The selected trusted Python 3.11+ must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; the managed driver invokes python -I -m kaggle and never searches PATH. The new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token), never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY.",
+      "windows": "A signed, admin-owned Python 3.11+ selected by AAS_KAGGLE_PYTHON must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; its digest and signer are pinned with the Kaggle-specific attestation variables. The driver never executes kaggle.exe from PATH.",
       "used_by": ["kaggle-research-compute"]
     },
     "gpu-inspection-tools": {
@@ -413,18 +413,18 @@
       "source": "Modal research-compute docs and Modal app imports."
     },
     "kaggle": {
-      "requirement": "kaggle>=1.8.0",
+      "requirement": "kaggle>=2.2.4,<3; Python >=3.11",
       "import_name": "kaggle",
       "platforms": ["linux", "windows"],
       "used_by": ["kaggle-research-compute"],
-      "source": "Kaggle CLI (>=1.8.0) kernel push/status/output; authenticates with the new KAGGLE_API_TOKEN (or ~/.kaggle/access_token)."
+      "source": "Kaggle CLI module (>=2.2.4,<3) kernel push/status/output under the selected Python >=3.11; authenticates with the new KAGGLE_API_TOKEN (or ~/.kaggle/access_token)."
     },
     "kagglehub": {
-      "requirement": "kagglehub>=0.4.1",
+      "requirement": "kagglehub>=1.0.2,<2",
       "import_name": "kagglehub",
       "platforms": ["linux", "windows"],
       "used_by": ["kaggle-research-compute"],
-      "source": "kagglehub (>=0.4.1) validates the new Kaggle API token via kagglehub.whoami() and yields the authenticated username."
+      "source": "kagglehub (>=1.0.2,<2) validates the new Kaggle API token via kagglehub.whoami() and yields the authenticated username."
     },
     "lean-explore": {
       "requirement": "lean-explore",

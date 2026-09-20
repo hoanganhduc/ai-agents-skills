@@ -227,8 +227,8 @@
       "capabilities": ["hetzner"]
     },
     "kaggle-cli": {
-      "description": "Kaggle CLI (>=1.8.0) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=0.4.1) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json.",
-      "version_constraint": ">=1.8.0",
+      "description": "Kaggle CLI (>=2.2.4,<3) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=1.0.2,<2) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json.",
+      "version_constraint": ">=2.2.4,<3",
       "candidates": {
         "linux": ["kaggle"],
         "windows": ["kaggle.exe", "kaggle"]
@@ -432,6 +432,21 @@
         "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
       ]
     },
+    "kaggle": {
+      "linux": [
+        "~/.agents_skills_venv/bin/python",
+        "python-runtime",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "./.venv/bin/python"
+      ],
+      "windows": [
+        "%PROGRAMFILES%\\Python313\\python.exe",
+        "%PROGRAMFILES%\\Python312\\python.exe",
+        "C:\\Python313\\python.exe",
+        "C:\\Python312\\python.exe"
+      ]
+    },
     "manim": {
       "linux": [
         "~/.local/share/manim-math-animation-venv/bin/python",
@@ -531,6 +546,19 @@
         "%APPDATA%\\Python\\Python3*\\site-packages"
       ]
     },
+    "kaggle": {
+      "linux": [
+        "~/.agents_skills_venv/lib/python*/site-packages",
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages"
+      ],
+      "windows": [
+        "%PROGRAMFILES%\\Python313\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python312\\Lib\\site-packages",
+        "C:\\Python313\\Lib\\site-packages",
+        "C:\\Python312\\Lib\\site-packages"
+      ]
+    },
     "agent": {
       "linux": [
         "~/.agents_skills_venv/lib/python*/site-packages",
@@ -628,8 +656,8 @@
     "google-auth-python-package": {"type": "python", "module": "google.oauth2"},
     "ebooklib-python-package": {"type": "python", "module": "ebooklib"},
     "modal-python-package": {"type": "python", "module": "modal", "candidate_set": "agent"},
-    "kaggle-python-package": {"type": "python", "module": "kaggle", "candidate_set": "agent"},
-    "kagglehub-python-package": {"type": "python", "module": "kagglehub", "candidate_set": "agent"},
+    "kaggle-python-package": {"type": "python", "module": "kaggle", "candidate_set": "kaggle", "authoritative_first_existing": true},
+    "kagglehub-python-package": {"type": "python", "module": "kagglehub", "candidate_set": "kaggle", "authoritative_first_existing": true},
     "lean-explore-python-package": {"type": "python", "module": "lean_explore", "candidate_set": "agent"},
     "torch-python-package": {"type": "python", "module": "torch", "candidate_set": "docling"},
     "torchvision-python-package": {"type": "python", "module": "torchvision", "candidate_set": "docling"},
