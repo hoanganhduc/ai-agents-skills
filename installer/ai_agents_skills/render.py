@@ -162,8 +162,9 @@ def render_reference_skill_md(
     agent: str,
     source_path: Path,
     antigravity_dirs: tuple[str, str] | None = None,
+    home_root: Path | None = None,
 ) -> str:
-    display_source = display_path_for_agent(source_path)
+    display_source = display_path_for_agent(source_path, home_root=home_root)
     description = str(spec["description"])
     short_description = str(spec.get("short_description", description))
     safety_note = ""
@@ -208,10 +209,10 @@ def render_reference_skill_md(
     return content
 
 
-def display_path_for_agent(path: Path) -> str:
+def display_path_for_agent(path: Path, *, home_root: Path | None = None) -> str:
     resolved = path.resolve()
     try:
-        return "~/" + resolved.relative_to(Path.home().resolve()).as_posix()
+        return "~/" + resolved.relative_to((home_root or Path.home()).resolve()).as_posix()
     except ValueError:
         return resolved.as_posix()
 
