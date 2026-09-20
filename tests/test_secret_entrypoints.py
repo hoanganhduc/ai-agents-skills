@@ -1895,7 +1895,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
             )
 
-    def test_kaggle_doctor_resolves_canonical_access_token_without_cross_lane_secrets(self) -> None:
+    def test_kaggle_doctor_resolves_guarded_access_token_without_cross_lane_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             workspace = root / "runtime" / "workspace"
@@ -1922,14 +1922,20 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             token_path.parent.mkdir(parents=True)
             token_path.write_text("offline-canonical-kaggle-token\n", encoding="utf-8")
             token_path.chmod(0o600)
+            shutil.copy2(
+                RUNTIME_SOURCE / "runners" / "load_secret_env.py",
+                workspace.parent / "load_secret_env.py",
+            )
+            compute_secrets = self._private_file(
+                root, "compute.env", "KAGGLE_API_TOKEN=offline-projected-kaggle-token\n"
+            )
             env = {
                 "HOME": str(home),
                 "PATH": "/usr/bin:/bin",
-                # This doctor has no compute authority pointer or ambient
-                # compute credentials. Its configurable interpreter needs the
-                # TOML dependency installed for the test environment. Separate
-                # credential-bearing wrapper tests still pin system Python.
-                "AAS_RUNTIME_PYTHON": sys.executable,
+                # The guarded compute projection requires the attested system
+                # interpreter, including the CI-provisioned TOML dependency.
+                "AAS_RUNTIME_PYTHON": _SYSTEM_PYTHON,
+                "AAS_COMPUTE_SECRETS_FILE": str(compute_secrets),
                 "OPENCLAW_WORKSPACE": str(workspace),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "AAS_PROVIDER_SECRETS_FILE": "/provider-pointer-must-not-cross",
@@ -1958,12 +1964,33 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             surfaced = completed.stdout + completed.stderr
             for canary in (
                 "offline-canonical-kaggle-token",
+                "offline-projected-kaggle-token",
                 "provider-pointer-must-not-cross",
                 "remote-pointer-must-not-cross",
                 "provider-token-must-not-cross",
                 "zulip-token-must-not-cross",
             ):
                 self.assertNotIn(canary, surfaced)
+
+            # The legacy token file alone must not confer compute authority.
+            env.pop("AAS_COMPUTE_SECRETS_FILE")
+            env["AAS_RUNTIME_PYTHON"] = sys.executable
+            without_projection = subprocess.run(
+                ["/bin/bash", str(wrapper), "--config", str(config), "doctor"],
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+            self.assertEqual(without_projection.returncode, 0, without_projection.stderr)
+            self.assertFalse(json.loads(without_projection.stdout)["api_token_present"])
+            self.assertNotIn(
+                "offline-canonical-kaggle-token",
+                without_projection.stdout + without_projection.stderr,
+            )
 
     def test_entrypoints_reject_unsafe_compute_files_before_child_without_leak(self) -> None:
         cases = (

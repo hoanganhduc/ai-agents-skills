@@ -71,6 +71,7 @@ class DiscoveryTests(unittest.TestCase):
             "default": 0,
             "agent": 0,
             "docling": 1,
+            "kaggle": 0,
             "manim": 1,
             "vnu-eoffice": 1,
             "course": None,

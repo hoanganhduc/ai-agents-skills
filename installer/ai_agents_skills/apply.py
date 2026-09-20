@@ -483,11 +483,14 @@ def apply_json_setting_action(root: Path, run_id: str, action: dict[str, Any]) -
         result["installed_signature"] = artifact_signature(path)
         return result
     backup = backup_file(root, run_id, path)
+    created_parent_dirs = missing_parent_dirs(root, path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["installed_signature"] = artifact_signature(path)
+    if created_parent_dirs:
+        result["created_parent_dirs"] = [item.as_posix() for item in created_parent_dirs]
     return result
 
 
