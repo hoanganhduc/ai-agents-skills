@@ -60,39 +60,24 @@ class KaggleBudgetError(KaggleError):
 #
 # Kaggle's current "API Tokens (Recommended)" auth is a SINGLE token (not the legacy
 # KAGGLE_USERNAME + KAGGLE_KEY pair and not a kaggle.json). It is read from the KAGGLE_API_TOKEN
-# environment variable, or from ~/.kaggle/access_token (the raw token) -- the same file the
-# Kaggle CLI module (>=2.2.4,<3) and kagglehub (>=1.0.2,<2) read natively. The config directory honors
-# KAGGLE_CONFIG_DIR, matching the kaggle CLI's own convention. We only ever pass the token via
-# the environment; it never travels on argv and is never logged.
+# environment variable. Managed launchers project that value from a guarded secret file before
+# Python starts. Raw ~/.kaggle/access_token fallback is intentionally not read here because a
+# pathname-only read cannot prove owner/DACL/reparse identity. The token never travels on argv
+# and is never logged.
 
 TOKEN_ENV = "KAGGLE_API_TOKEN"
 
 
-def access_token_path() -> Path:
-    """Path to the raw-token file the kaggle CLI / kagglehub read (~/.kaggle/access_token),
-    honoring KAGGLE_CONFIG_DIR like the kaggle CLI does."""
-    base = os.environ.get("KAGGLE_CONFIG_DIR") or "~/.kaggle"
-    return Path(base).expanduser() / "access_token"
-
-
 def read_token() -> str | None:
-    """The Kaggle API token, resolved env-first (KAGGLE_API_TOKEN) then ~/.kaggle/access_token.
-    Returns the raw value only for in-process redaction; it is never logged or placed on argv."""
+    """Return only the guarded environment projection of the Kaggle API token."""
     env_token = os.environ.get(TOKEN_ENV)
     if env_token and env_token.strip():
         return env_token.strip()
-    path = access_token_path()
-    try:
-        if path.is_file():
-            text = path.read_text(encoding="utf-8").strip()
-            return text or None
-    except OSError:  # pragma: no cover - an unreadable token file is treated as absent
-        return None
     return None
 
 
 def token_present() -> bool:
-    """Whether the new Kaggle API token is available (KAGGLE_API_TOKEN or ~/.kaggle/access_token).
+    """Whether the guarded KAGGLE_API_TOKEN environment projection is available.
     Presence only -- the value is never read for logging, argv, or persistence. The legacy
     KAGGLE_USERNAME + KAGGLE_KEY / kaggle.json auth is not consulted."""
     return read_token() is not None
@@ -111,7 +96,7 @@ def token_present() -> bool:
 
 def _default_kagglehub_validate(config: Any) -> dict[str, Any]:  # pragma: no cover - real kagglehub/network path, never exercised in tests
     """Validate the API token via kagglehub.whoami(), which returns the authenticated username.
-    kagglehub reads the token itself from KAGGLE_API_TOKEN or ~/.kaggle/access_token, so the
+    kagglehub reads the token itself from KAGGLE_API_TOKEN, so the
     token never travels on argv and is never logged. Any failure => unusable (fall through).
     ToS: this is a read-only auth check, made only at plan/bootstrap time."""
     if not token_present():

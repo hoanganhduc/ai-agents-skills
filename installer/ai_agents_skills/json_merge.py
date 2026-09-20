@@ -49,11 +49,12 @@ def merge_json_value(
     traversed: list[str] = []
     for key in path[:-1]:
         traversed.append(key)
-        child = current.get(key)
-        if child is None:
+        if key not in current:
             child = {}
             current[key] = child
             created.append(".".join(traversed))
+        else:
+            child = current[key]
         if not isinstance(child, dict):
             raise ValueError(f"settings field `{'.'.join(traversed)}` must be an object when present")
         current = child

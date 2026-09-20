@@ -9,8 +9,8 @@ their checkpoints, and re-pushes the remaining work with the checkpoints re-atta
 job is DONE (bounded by max_runs).
 
 Planning verbs (bootstrap, doctor, preflight) are free and never push a kernel. Lifecycle
-verbs (push, status, wait, fetch, run) submit real kernels and require the new Kaggle API token
-(KAGGLE_API_TOKEN, or ~/.kaggle/access_token) plus an explicit confirm.
+verbs (push, status, wait, fetch, run) submit real kernels and require a guarded
+KAGGLE_API_TOKEN environment projection plus an explicit confirm.
 
 Auth uses Kaggle's current "API Tokens (Recommended)" single token, NOT the legacy
 KAGGLE_USERNAME + KAGGLE_KEY pair and NOT a kaggle.json. bootstrap validates/primes via
@@ -19,7 +19,7 @@ used to address kernels/datasets); the Kaggle CLI module (>=2.2.4,<3) then authe
 kernel push/status/output with the same token under the selected Python 3.11+.
 
 Guardrails:
-  * The Kaggle API token is read from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) and injected
+  * The Kaggle API token is read from KAGGLE_API_TOKEN and injected
     into the `kaggle` subprocess env, NEVER on argv (/proc/<pid>/cmdline is world-readable),
     NEVER logged, NEVER written to a legacy kaggle.json. A redaction filter covers all surfaced
     output.
@@ -75,8 +75,9 @@ class KaggleDriverError(RuntimeError):
 
 # --- API token + redaction (env-first, never argv, never logged) --------------
 #
-# The new Kaggle API token is read from KAGGLE_API_TOKEN or ~/.kaggle/access_token (never the
-# legacy KAGGLE_USERNAME + KAGGLE_KEY pair, never a kaggle.json). Resolution + presence live in
+# The new Kaggle API token is read from the guarded KAGGLE_API_TOKEN environment projection
+# (never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair, a pathname-read token file, or a
+# kaggle.json). Resolution + presence live in
 # kaggle_backend so the routing probe and this driver agree. The authenticated username needed
 # to address kernels/datasets (owner/slug) comes from kagglehub.whoami() at run time, not an env
 # var.
@@ -140,7 +141,7 @@ COMMAND_RUNNER: Callable[..., dict[str, Any]] = _default_command_runner
 def _run(argv: list[str], *, timeout: float = 120.0, needs_creds: bool = True,
          check: bool = True) -> dict[str, Any]:
     """Run an external command through COMMAND_RUNNER. The API token travels only via the
-    environment (KAGGLE_API_TOKEN in os.environ, or the kaggle CLI reads ~/.kaggle/access_token);
+    environment (KAGGLE_API_TOKEN in os.environ);
     argv never carries it, so argv is safe to surface. Output is redacted before it is returned."""
     if needs_creds and not token_present():
         raise KaggleDriverError("KAGGLE_API_TOKEN is not set; refusing to run a Kaggle command")
@@ -518,7 +519,7 @@ def doctor(config: Any) -> dict[str, Any]:
     """Offline readiness snapshot. Reuses the backend doctor and adds a driver note."""
     out = dict(kaggle_backend.doctor(config))
     out["driver"] = "kaggle_driver"
-    out["confirm_gate"] = "lifecycle verbs require KAGGLE_API_TOKEN (or ~/.kaggle/access_token) and --confirm"
+    out["confirm_gate"] = "lifecycle verbs require guarded KAGGLE_API_TOKEN and --confirm"
     out["reaper"] = "none needed (kernels auto-stop at the 12h session cap and cost nothing)"
     return out
 
@@ -555,8 +556,8 @@ def bootstrap(config: Any | None) -> dict[str, Any]:
     if not result["kaggle_cli_available"] or not result["kagglehub_available"]:
         result["hint"] = ("install the Kaggle CLI + kagglehub into the selected trusted "
                           "Python >=3.11: pip install 'kaggle>=2.2.4,<3' "
-                          "'kagglehub>=1.0.2,<2' (KAGGLE_API_TOKEN in the env, or "
-                          "~/.kaggle/access_token)")
+                          "'kagglehub>=1.0.2,<2', then project KAGGLE_API_TOKEN "
+                          "through the guarded runtime secret launcher")
     return result
 
 
@@ -852,7 +853,6 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         raise KaggleDriverError("live push requires a durable submission-intent state root")
     if not expected_owner or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,49}", expected_owner) is None:
         raise KaggleDriverError("live push requires the reviewed --owner Kaggle username")
-    root = Path(work_root).expanduser() if work_root else Path(tempfile.mkdtemp(prefix="aas-kaggle-"))
     kernel = kernel_ref(job_id, round_idx, chunk_idx, username=expected_owner)
     intent_path = _submission_intent_path(
         Path(state_root),
@@ -860,6 +860,29 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         round_idx=round_idx,
         chunk_idx=chunk_idx,
     )
+    if intent_path.exists():
+        raise KaggleDriverError(
+            f"submission intent already exists for {kernel}; query status instead of pushing again"
+        )
+    if gpu:
+        raise KaggleDriverError(
+            "live GPU push is disabled until the weekly reservation gate is atomic across processes"
+        )
+    username = _resolve_username(config, required=True)
+    if username.lower() != expected_owner.lower():
+        raise KaggleDriverError("authenticated Kaggle owner does not match reviewed --owner")
+    estimate = estimate_from_manifest(manifest)
+    probe = kaggle_backend.probe(
+        estimate,
+        config=config,
+        resources={"liveness": {"kaggle": {"usable": True, "reason": "validated-owner"}}},
+        state_root=Path(state_root),
+    )
+    if not probe.get("adequate"):
+        raise KaggleDriverError(f"job is inadequate for Kaggle: {probe.get('reason', 'unknown')}")
+    if not probe.get("available"):
+        raise KaggleDriverError(f"Kaggle lane unavailable: {probe.get('reason', 'unknown')}")
+    root = Path(work_root).expanduser() if work_root else Path(tempfile.mkdtemp(prefix="aas-kaggle-"))
     intent = {
         "schema": "ai-agents-skills.kaggle-submission-intent.v1",
         "state": "prepared",
@@ -868,9 +891,6 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         "gpu": gpu,
     }
     _write_submission_intent(intent_path, intent, create=True)
-    username = _resolve_username(config, required=True)
-    if username.lower() != expected_owner.lower():
-        raise KaggleDriverError("authenticated Kaggle owner does not match reviewed --owner")
     result = _push_kernel(
         job_id=job_id,
         job_dir=job_dir,

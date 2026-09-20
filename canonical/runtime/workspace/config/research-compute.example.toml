@@ -159,8 +159,8 @@ eur_per_hour = 1.3678
 # read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there
 # is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple
 # kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the
-# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or
-# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a
+# new single Kaggle API token supplied via the guarded KAGGLE_API_TOKEN environment projection
+# -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair, a pathname-read access_token, or a
 # kaggle.json. kagglehub (>=1.0.2,<2) validates the token and the Kaggle CLI module
 # (>=2.2.4,<3) runs under the selected trusted Python 3.11+ via `python -I -m kaggle`.
 # Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`

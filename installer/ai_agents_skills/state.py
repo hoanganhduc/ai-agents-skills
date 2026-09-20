@@ -162,6 +162,21 @@ def state_for_root(data: dict[str, Any], root: Path) -> dict[str, Any]:
         previous = record.get("previous_state_artifact")
         if isinstance(previous, dict):
             translate_record(previous)
+        for field in ("permission_origin", "normalized_parent_modes"):
+            entries = record.get(field)
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                        entry["path"] = translate_path_for_root(root, entry["path"])
+        normalized_file = record.get("normalized_file_mode")
+        if isinstance(normalized_file, dict) and isinstance(normalized_file.get("path"), str):
+            normalized_file["path"] = translate_path_for_root(root, normalized_file["path"])
+        created_parents = record.get("created_parent_dirs")
+        if isinstance(created_parents, list):
+            record["created_parent_dirs"] = [
+                translate_path_for_root(root, value) if isinstance(value, str) else value
+                for value in created_parents
+            ]
         if old_artifact and isinstance(record.get("key"), str):
             new_artifact = record.get("artifact")
             if isinstance(new_artifact, str) and new_artifact != old_artifact:
