@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest import mock
 
 from installer.ai_agents_skills.agents import detect_agents, target_for
@@ -51,14 +51,17 @@ class KaggleWindowsTargetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".codewhale").mkdir()
-            (root / ".chatgpt-local-coder").mkdir()
             clc_config = root / "AppData" / "Roaming" / "chatgpt-local-coder" / "config.json"
             clc_config.parent.mkdir(parents=True)
             clc_config.write_text(json.dumps({"workspaceRoots": ["C:/work"]}) + "\n", encoding="utf-8")
             codewhale_config = root / ".codewhale" / "config.toml"
             codewhale_config.write_text("[providers.deepseek]\nmodel = \"demo\"\n", encoding="utf-8")
 
-            agents = detect_agents(root, ["codewhale", "chatgpt-local-coder"])
+            agents = detect_agents(
+                root,
+                ["codewhale", "chatgpt-local-coder"],
+                platform="windows",
+            )
             plan = build_plan(
                 root,
                 load_manifests(),
@@ -191,6 +194,53 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                 {"workspaceRoots": ["C:/work"], "later": "kept"},
             )
 
+    def test_partial_setting_update_rollback_restores_previous_region(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Path(tmp) / "settings.json"
+            settings.write_text(
+                json.dumps(
+                    {
+                        "later": "kept",
+                        "hooks": {
+                            "Stop": [
+                                {
+                                    "_managedBy": "ai-agents-skills",
+                                    "_id": "demo-hook",
+                                    "command": "new-hook",
+                                }
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            item = {
+                "artifact": str(settings),
+                "artifact_type": "settings-hook-merge",
+                "event": "Stop",
+                "managed_id": "demo-hook",
+                "uninstall": {
+                    "action": "merge-remove",
+                    "event": "Stop",
+                    "managed_id": "demo-hook",
+                    "created_containers": {"hooks": False, "event": False},
+                    "created_file": False,
+                },
+                "previous_state_artifact": {
+                    "event": "Stop",
+                    "managed_id": "demo-hook",
+                    "managed_entry": {
+                        "_managedBy": "ai-agents-skills",
+                        "_id": "demo-hook",
+                        "command": "old-hook",
+                    },
+                },
+            }
+            rollback_artifact(item, Path(tmp))
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            self.assertEqual(data["later"], "kept")
+            self.assertEqual(data["hooks"]["Stop"][0]["command"], "old-hook")
+
     def test_windows_state_paths_translate_to_wsl_root_without_duplicate_identity(self) -> None:
         state = {
             "schema_version": 1,
@@ -233,7 +283,7 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             "runs": [],
             "uninstall_records": [],
         }
-        translated = state_for_root(state, Path(r"C:\Users\demo"))
+        translated = state_for_root(state, PureWindowsPath(r"C:\Users\demo"))  # type: ignore[arg-type]
         item = translated["artifacts"][0]
         self.assertEqual(
             item["artifact"],
@@ -264,7 +314,7 @@ class KaggleWindowsTargetTests(unittest.TestCase):
                 "installer.ai_agents_skills.lifecycle.run_record_path",
                 return_value=run_record,
             ):
-                actions = load_run_actions(Path(r"C:\Users\demo"), state, run_id)
+                actions = load_run_actions(PureWindowsPath(r"C:\Users\demo"), state, run_id)  # type: ignore[arg-type]
             self.assertEqual(
                 actions[0]["artifact"],
                 r"C:\Users\demo\.codex\skills\kaggle-research-compute\SKILL.md",

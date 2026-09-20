@@ -12,6 +12,8 @@ from .json_merge import (
     extract_hook_entry,
     json_path_value,
     load_json_object,
+    merge_hook_entry,
+    merge_json_value,
     remove_hook_entry,
     restore_json_value,
 )
@@ -779,12 +781,15 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     # backup is evidence/recovery material, not the normal rollback mechanism.
     if item.get("artifact_type") == "settings-hook-merge":
         _apply_merge_remove(item)
+        _restore_previous_partial_setting(item)
         return
     if item.get("artifact_type") == "settings-compat-merge":
         _apply_toml_block_remove(item)
+        _restore_previous_partial_setting(item)
         return
     if item.get("artifact_type") == "settings-value-merge":
         _apply_json_setting_restore(item)
+        _restore_previous_partial_setting(item)
         return
     backup = item.get("backup")
     installed_signature = item.get("installed_signature")
@@ -805,6 +810,53 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     # leaving a Stop hook pointing at a script this same rollback deleted, or a
     # compat block still disabling the target's own surfaces.
     remove_artifact(item, root)
+
+
+def _restore_previous_partial_setting(item: dict[str, Any]) -> None:
+    """Reinstall the previous managed region when rolling back an update."""
+    previous = item.get("previous_state_artifact")
+    if not isinstance(previous, dict):
+        return
+    path = Path(item["artifact"])
+    artifact_type = item.get("artifact_type")
+    if artifact_type == "settings-hook-merge":
+        entry = previous.get("managed_entry")
+        event = previous.get("event")
+        managed_id = previous.get("managed_id")
+        if not isinstance(entry, dict) or not isinstance(event, str) or not isinstance(managed_id, str):
+            return
+        current, _ = load_json_object(path)
+        merged, changed, _ = merge_hook_entry(current, event, entry, managed_id)
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
+        return
+    if artifact_type == "settings-compat-merge":
+        from .toml_merge import load_toml_text, merge_managed_block
+
+        body = previous.get("managed_body")
+        managed_id = previous.get("managed_id")
+        if not isinstance(body, str) or not isinstance(managed_id, str):
+            return
+        current, _ = load_toml_text(path)
+        merged, changed = merge_managed_block(current, managed_id, body)
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(path, merged)
+        return
+    if artifact_type == "settings-value-merge":
+        setting_path = previous.get("setting_path")
+        if not isinstance(setting_path, list) or not all(isinstance(key, str) for key in setting_path):
+            return
+        current, _ = load_json_object(path)
+        merged, changed, _, _, _ = merge_json_value(
+            current,
+            setting_path,
+            previous.get("setting_value"),
+        )
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
 
 
 def restore_backup(backup_path: Path, path: Path) -> None:
