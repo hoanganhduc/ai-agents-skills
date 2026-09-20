@@ -106,7 +106,7 @@ def build_plan(
     skipped_agents.extend(blocked_agents)
     detected_agent_names = {agent.name for agent in agents}
     skipped_agent_names = {item["agent"] for item in skipped_agents}
-    for status in agent_home_statuses(root, requested_agents):
+    for status in agent_home_statuses(root, requested_agents, platform=platform):
         if status["agent"] not in detected_agent_names and status["agent"] not in skipped_agent_names:
             skipped_agents.append({"agent": status["agent"], "reason": status["reason"]})
             skipped_agent_names.add(str(status["agent"]))
@@ -153,11 +153,22 @@ def build_plan(
                 source_path,
             )
             content = skill_content_for_mode(
-                skill, spec, agent.name, action_install_mode, source_path, antigravity_note_dirs(root, agent)
+                skill,
+                spec,
+                agent.name,
+                action_install_mode,
+                source_path,
+                antigravity_note_dirs(root, agent),
+                root,
             )
             fallback_content = (
                 render_reference_skill_md(
-                    skill, spec, agent.name, source_path, antigravity_note_dirs(root, agent)
+                    skill,
+                    spec,
+                    agent.name,
+                    source_path,
+                    antigravity_note_dirs(root, agent),
+                    home_root=root,
                 )
                 if action_install_mode == "symlink" and source_path.exists()
                 else None
@@ -1658,9 +1669,17 @@ def skill_content_for_mode(
     install_mode: str,
     source_path: Path,
     antigravity_dirs: tuple[str, str] | None = None,
+    home_root: Path | None = None,
 ) -> str:
     if install_mode == "reference" and source_path.exists():
-        return render_reference_skill_md(skill, spec, agent, source_path, antigravity_dirs)
+        return render_reference_skill_md(
+            skill,
+            spec,
+            agent,
+            source_path,
+            antigravity_dirs,
+            home_root=home_root,
+        )
     return render_skill_md(skill, spec, agent, antigravity_dirs)
 
 
