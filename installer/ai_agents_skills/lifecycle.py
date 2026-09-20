@@ -774,6 +774,18 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         else:
             remove_managed_block_precise(item)
         return
+    # Settings files are only partially owned. Roll back the managed region or
+    # scalar so unrelated edits made after install survive; the whole-file
+    # backup is evidence/recovery material, not the normal rollback mechanism.
+    if item.get("artifact_type") == "settings-hook-merge":
+        _apply_merge_remove(item)
+        return
+    if item.get("artifact_type") == "settings-compat-merge":
+        _apply_toml_block_remove(item)
+        return
+    if item.get("artifact_type") == "settings-value-merge":
+        _apply_json_setting_restore(item)
+        return
     backup = item.get("backup")
     installed_signature = item.get("installed_signature")
     current_signature = artifact_signature(path)
@@ -792,15 +804,6 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     # having done nothing while the caller counted the artifact as restored,
     # leaving a Stop hook pointing at a script this same rollback deleted, or a
     # compat block still disabling the target's own surfaces.
-    if item.get("artifact_type") == "settings-hook-merge":
-        _apply_merge_remove(item)
-        return
-    if item.get("artifact_type") == "settings-compat-merge":
-        _apply_toml_block_remove(item)
-        return
-    if item.get("artifact_type") == "settings-value-merge":
-        _apply_json_setting_restore(item)
-        return
     remove_artifact(item, root)
 
 
@@ -966,6 +969,17 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
         if openclaw_block is not None:
             raise ValueError(openclaw_block)
         if item.get("uninstall", {}).get("action") == "unmanage-only":
+            continue
+        if item.get("artifact_type") in {
+            "settings-hook-merge",
+            "settings-compat-merge",
+            "settings-value-merge",
+        }:
+            planned = plan_uninstall_action(item, root)
+            if planned.get("operation") in {"skip-conflict", "forget-missing"}:
+                raise ValueError(
+                    f"refusing rollback because managed settings region changed or is missing: {path}"
+                )
             continue
         backup = item.get("backup")
         if backup and not path_within(state_dir(root) / "backups", Path(backup)):

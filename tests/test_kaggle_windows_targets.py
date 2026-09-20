@@ -13,6 +13,7 @@ from installer.ai_agents_skills.lifecycle import (
     apply_uninstall_action,
     load_run_actions,
     plan_uninstall_action,
+    rollback_artifact,
 )
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
@@ -119,6 +120,12 @@ class KaggleWindowsTargetTests(unittest.TestCase):
         self.assertTrue(restored_changed)
         self.assertEqual(restored, source)
 
+    def test_json_setting_merge_refuses_existing_null_container(self) -> None:
+        source = {"skills": None, "keep": 1}
+        with self.assertRaisesRegex(ValueError, "skills.*must be an object"):
+            merge_json_value(source, ["skills", "scanHostOnly"], True)
+        self.assertEqual(source, {"skills": None, "keep": 1})
+
     def test_json_setting_action_uninstalls_only_its_owned_value(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -152,6 +159,37 @@ class KaggleWindowsTargetTests(unittest.TestCase):
             self.assertTrue(result["completed"])
             final = json.loads(config.read_text(encoding="utf-8"))
             self.assertEqual(final, {"workspaceRoots": ["C:/work"], "unrelated": "kept"})
+
+    def test_json_setting_rollback_preserves_later_unrelated_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "AppData" / "Roaming" / "chatgpt-local-coder" / "config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"workspaceRoots": ["C:/work"]}) + "\n", encoding="utf-8")
+            action = {
+                "kind": "json-setting-merge",
+                "agent": "chatgpt-local-coder",
+                "skill": "repo-management",
+                "path": str(config),
+                "artifact_type": "settings-value-merge",
+                "artifact_id": "settings-value:skills.scanHostOnly",
+                "artifact_name": "skills.scanHostOnly",
+                "setting_path": ["skills", "scanHostOnly"],
+                "setting_value": True,
+                "classification": "managed",
+                "operation": "merge",
+                "current_signature": artifact_signature(config),
+            }
+            installed = apply_json_setting_action(root, "test-run", action)
+            installed["uninstall"] = uninstall_origin(installed, None)
+            data = json.loads(config.read_text(encoding="utf-8"))
+            data["later"] = "kept"
+            config.write_text(json.dumps(data) + "\n", encoding="utf-8")
+            rollback_artifact(installed, root)
+            self.assertEqual(
+                json.loads(config.read_text(encoding="utf-8")),
+                {"workspaceRoots": ["C:/work"], "later": "kept"},
+            )
 
     def test_windows_state_paths_translate_to_wsl_root_without_duplicate_identity(self) -> None:
         state = {

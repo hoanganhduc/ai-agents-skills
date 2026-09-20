@@ -122,7 +122,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 ## Operational notes
 
 - The broker is the decision boundary. Push kernels on Kaggle only when the router chose this lane.
-- Auth is the new single Kaggle API token, read from `KAGGLE_API_TOKEN` (or `~/.kaggle/access_token`) at runtime (env-first, never argv, never logged) — NOT the legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair. `bootstrap` validates/primes via kagglehub (`kagglehub.whoami()` proves the token and yields the username the kaggle CLI uses for kernel ops). Do not write a `kaggle.json` into the repo or a kernel; a redaction filter covers surfaced output.
+- Auth is the new single Kaggle API token, projected as `KAGGLE_API_TOKEN` by the guarded runtime launcher (never argv, never logged) — NOT a pathname-read `access_token` and not the legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair. `bootstrap` validates/primes via kagglehub (`kagglehub.whoami()` proves the token and yields the username the kaggle CLI uses for kernel ops). Do not write a `kaggle.json` into the repo or a kernel; a redaction filter covers surfaced output.
 - When `AAS_COMPUTE_SECRETS_FILE` names the shared protected compute authority,
   the managed wrapper validates its full schema but projects only
   `KAGGLE_API_TOKEN` and `KAGGLE_CONFIG_DIR`; Hetzner values and the pointer are
@@ -131,7 +131,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 - The multi-run design remains documented and dry-runnable, but live multi-run is deliberately disabled until ambiguous submissions recover status-first and every resumed checkpoint is manifest-bound.
 - `manifest.upload_files` is a required explicit allowlist. Reparse points, hardlinks, secret-like filenames, oversized bundles, and files changed during descriptor-bound snapshotting are rejected.
 - No reaper, no dead-man's-switch, no teardown: kernels auto-stop at the 12h session cap and cost nothing, so this lane is materially lower-risk than a paid rented-server lane. There is no cost gate — Kaggle is free.
-- `doctor` and `preflight` work without a token and without a kernel. `push`, `status`, `wait`, `fetch`, and `run` need the host to be Kaggle-ready: the selected trusted Python must be 3.11+ with `kaggle>=2.2.4,<3` and `kagglehub>=1.0.2,<2`, and `KAGGLE_API_TOKEN` or `~/.kaggle/access_token` must be present.
+- `doctor` and `preflight` work without a token and without a kernel. Live one-unit CPU `push`, plus `status`, `wait`, and `fetch`, need the host to be Kaggle-ready: the selected trusted Python must be 3.11+ with `kaggle>=2.2.4,<3` and `kagglehub>=1.0.2,<2`, and the guarded `KAGGLE_API_TOKEN` environment projection must be present. Live GPU push and multi-run remain disabled.
 - On native Windows, use `AAS_KAGGLE_PYTHON` for the absolute Kaggle-only interpreter path and pin it with `AAS_KAGGLE_PYTHON_SHA256` plus `AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT`. The wrapper maps these values process-locally into the managed Python attestation contract; it does not change the default Python for other skills.
 - The driver invokes `python -I -m kaggle` and never falls back to `kaggle.exe` or another executable discovered on `PATH`.
 - One-time per machine, run `bootstrap`: it checks the `kaggle` CLI and kagglehub, confirms the API token is present, and validates/primes via kagglehub (`kagglehub.whoami()`), then reports `doctor`. It never pushes a kernel.

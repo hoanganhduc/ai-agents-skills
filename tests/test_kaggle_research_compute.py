@@ -648,9 +648,8 @@ class KaggleConfigAndProbeTests(unittest.TestCase):
             self.assertFalse(probe["available"])  # no API token
             self.assertIn("no_kaggle_api_token", probe["reason"])
 
-    def test_token_present_env_and_access_token_file(self) -> None:
-        """token_present() resolves the new token env-first (KAGGLE_API_TOKEN), then falls back to
-        ~/.kaggle/access_token (honoring KAGGLE_CONFIG_DIR). The legacy username+key is ignored."""
+    def test_token_present_requires_guarded_environment_projection(self) -> None:
+        """The runtime never pathname-reads access_token; launchers must project the token."""
         with tempfile.TemporaryDirectory() as tmp:
             cfg_dir = Path(tmp) / "kaggle-cfg"; cfg_dir.mkdir()
             prev = os.environ.get("KAGGLE_CONFIG_DIR")
@@ -659,10 +658,10 @@ class KaggleConfigAndProbeTests(unittest.TestCase):
             try:
                 self.assertFalse(kaggle_backend.token_present())  # neither env nor file
                 (cfg_dir / "access_token").write_text("file-token-value\n", encoding="utf-8")
-                self.assertTrue(kaggle_backend.token_present())  # file fallback
-                self.assertEqual(kaggle_backend.read_token(), "file-token-value")
+                self.assertFalse(kaggle_backend.token_present())
+                self.assertIsNone(kaggle_backend.read_token())
                 os.environ["KAGGLE_API_TOKEN"] = "env-token-value"
-                self.assertEqual(kaggle_backend.read_token(), "env-token-value")  # env wins
+                self.assertEqual(kaggle_backend.read_token(), "env-token-value")
                 # Legacy username+key alone must NOT count as present.
                 os.environ.pop("KAGGLE_API_TOKEN", None)
                 (cfg_dir / "access_token").unlink()
@@ -1208,11 +1207,11 @@ class KaggleDriverTests(unittest.TestCase):
         digest = kaggle_driver.bundle_sha256(bundle)
         intent_path = self.state / "kaggle-submissions" / "ai-agents-skills-jobx-r0-c0.json"
 
-        def validate_after_intent(config):
-            self.assertTrue(intent_path.is_file())
+        def validate_before_intent(config):
+            self.assertFalse(intent_path.exists())
             return {"usable": True, "username": "tester", "reason": "test"}
 
-        kaggle_backend.KAGGLEHUB_VALIDATE = validate_after_intent
+        kaggle_backend.KAGGLEHUB_VALIDATE = validate_before_intent
         with mock.patch.object(
             kaggle_driver,
             "_zip_job_bytes",
@@ -1244,6 +1243,38 @@ class KaggleDriverTests(unittest.TestCase):
                 expected_owner="tester",
                 confirm=True,
             )
+
+    def test_live_push_refuses_disabled_lane_and_gpu_before_intent(self) -> None:
+        runner = _FakeRunner()
+        kaggle_driver.COMMAND_RUNNER = runner
+        self._creds()
+        bundle = self._bundle(total_units=1)
+        digest = kaggle_driver.bundle_sha256(bundle)
+        self.config.kaggle_enabled = False
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "lane unavailable"):
+            kaggle_driver.push(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                expected_bundle_sha256=digest,
+                expected_owner="tester",
+                confirm=True,
+            )
+        self.assertFalse((self.state / "kaggle-submissions").exists())
+        self.config.kaggle_enabled = True
+        gpu_bundle = self._bundle(total_units=1, gpu=True)
+        gpu_digest = kaggle_driver.bundle_sha256(gpu_bundle)
+        with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "GPU push is disabled"):
+            kaggle_driver.push(
+                job_dir=gpu_bundle,
+                config=self.config,
+                state_root=self.state,
+                expected_bundle_sha256=gpu_digest,
+                expected_owner="tester",
+                confirm=True,
+            )
+        self.assertFalse((self.state / "kaggle-submissions").exists())
+        self.assertEqual(runner.calls, [])
 
     def test_run_refuses_without_confirm(self) -> None:
         runner = _FakeRunner()

@@ -97,7 +97,7 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20Grok%20%7C%20Kimi%20%7C%20OpenClaw-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20CodeWhale%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20Grok%20%7C%20Kimi%20%7C%20OpenClaw-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
@@ -109,7 +109,7 @@ def readme_text(manifests: dict[str, Any]) -> str:
 > see the [introductory blog post](https://hoanganhduc.github.io/misc/coding-system-rebuild/).
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted
+CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted
 OpenClaw fake-root targets.
 
 ## System Summary
@@ -120,8 +120,8 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, and
-Kimi Code can each load local skills. OpenClaw participates as a default
+Codex, Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI,
+Grok, and Kimi Code can each load local skills. OpenClaw participates as a default
 fake-root-only target for normal installer flows, with a separate reviewed v2
 skill-file path for real-system skill writes, an evidence-gated runtime-install
 path (the `openclaw-runtime-*` commands plus the host `openclaw-broker`) for

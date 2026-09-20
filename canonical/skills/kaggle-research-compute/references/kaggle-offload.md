@@ -10,7 +10,7 @@ because kernels auto-stop at the 12h session cap and cost nothing.
 ## Preconditions
 
 - A Kaggle account with the new single Kaggle API token set in the environment outside this
-  repo as `KAGGLE_API_TOKEN` (or written to `~/.kaggle/access_token`) — NOT the legacy
+  repo as a guarded `KAGGLE_API_TOKEN` environment projection — NOT a pathname-read token file or the legacy
   `KAGGLE_USERNAME` + `KAGGLE_KEY` pair and not a `kaggle.json`. The driver injects the token
   into the `kaggle` subprocess env; it never writes a legacy `kaggle.json` into the repo or a
   kernel.
@@ -54,7 +54,7 @@ over one chunk's slice.
 ## Driver contract (`kaggle_driver.py`)
 
 Planning verbs are free and never push a kernel. Lifecycle verbs submit real kernels and
-require the new Kaggle API token (`KAGGLE_API_TOKEN`, or `~/.kaggle/access_token`) plus an
+require the guarded `KAGGLE_API_TOKEN` environment projection plus an
 explicit confirm.
 
 - `bootstrap` -- check the `kaggle` CLI and kagglehub, confirm the API token is present, and validate/prime via kagglehub (`kagglehub.whoami()`); report `doctor`. Never pushes.
@@ -102,8 +102,8 @@ core-h (5 kernels x 4 cores x 12h) or for a single chunk that needs more than 12
 
 ## Guardrails
 
-- **API token** -- the new single Kaggle API token from `KAGGLE_API_TOKEN` (or
-  `~/.kaggle/access_token`), injected into the `kaggle` subprocess env, never on argv
+- **API token** -- the new single Kaggle API token from the guarded
+  `KAGGLE_API_TOKEN` environment projection, injected into the `kaggle` subprocess env, never on argv
   (`/proc/<pid>/cmdline` is world-readable), never logged, never written to a legacy
   `kaggle.json` or a kernel. The legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair is not used;
   kagglehub validates the token and yields the username, which the kaggle CLI uses for kernel
