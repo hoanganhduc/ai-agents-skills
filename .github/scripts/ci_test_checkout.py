@@ -59,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
                 "python": sys.executable,
                 "command": command,
             }), flush=True)
-            return subprocess.run(command, cwd=checkout, env=env, check=False).returncode
+            code = subprocess.run(command, cwd=checkout, env=env, check=False).returncode
+            return code if code >= 0 else 128 - code
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"CI test checkout failed: {exc}", file=sys.stderr)
         return 1

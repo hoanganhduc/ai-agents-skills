@@ -67,6 +67,20 @@ class CiCheckoutTests(unittest.TestCase):
                 env = child.call_args.kwargs["env"]
                 self.assertEqual(env["AAS_PYTHON"], sys.executable)
                 self.assertEqual(env.get("HOME"), os.environ.get("HOME"))
+                git.side_effect = ["", "a" * 40, "", "", "a" * 40]
+                child.return_value = subprocess.CompletedProcess(command, -15)
+                self.assertEqual(CI_CHECKOUT.main(["--", *command]), 143)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX CI launcher")
+    def test_dirty_source_refuses_before_creating_a_checkout(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), mock.patch.object(
+            CI_CHECKOUT.tempfile, "TemporaryDirectory"
+        ) as temporary, mock.patch.object(
+            CI_CHECKOUT, "git_output", side_effect=subprocess.CalledProcessError(1, ["git", "diff"])
+        ), mock.patch.object(CI_CHECKOUT.subprocess, "run") as child:
+            self.assertEqual(CI_CHECKOUT.main(["--", "make", "test"]), 1)
+            temporary.assert_not_called()
+            child.assert_not_called()
 
     @unittest.skipUnless(os.name == "posix", "POSIX CI launcher")
     def test_sha_mismatch_prevents_test_execution(self) -> None:
