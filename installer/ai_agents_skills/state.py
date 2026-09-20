@@ -142,7 +142,8 @@ def translate_path_for_root(root: Path, value: str) -> str:
             return root_text
         if value_wsl.casefold().startswith(prefix.casefold()):
             relative = value_wsl[len(prefix):].replace("/", "\\")
-            return str(root / Path(relative))
+            native_root = root_text.replace("/", "\\").rstrip("\\")
+            return native_root + ("\\" + relative if relative else "")
     return value
 
 

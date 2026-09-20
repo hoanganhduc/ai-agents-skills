@@ -1121,7 +1121,12 @@ def list_artifacts(manifests: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def skipped_agent_names(root: Path, requested_agents: list[str] | None, agents: list[Any]) -> list[str]:
+def skipped_agent_names(
+    root: Path,
+    requested_agents: list[str] | None,
+    agents: list[Any],
+    platform: str | None = None,
+) -> list[str]:
     """Return the agents an install would not serve, by name.
 
     Detecting an agent home is a weaker question than being able to install into
@@ -1136,21 +1141,21 @@ def skipped_agent_names(root: Path, requested_agents: list[str] | None, agents: 
     candidates = requested_agents if requested_agents is not None else all_agent_names()
     return [
         str(status["agent"])
-        for status in agent_home_statuses(root, candidates)
+        for status in agent_home_statuses(root, candidates, platform=platform)
         if status["agent"] not in served
     ]
 
 
 def resolve_agent_targets(args: argparse.Namespace) -> tuple[list[str] | None, list[Any]]:
     requested_agents = split_csv(args.agents) if args.agents else None
-    agents = detect_agents(args.root, requested_agents)
+    agents = detect_agents(args.root, requested_agents, platform=args.platform)
     if not getattr(args, "require_all_requested_agents", False):
         return requested_agents, agents
     if not requested_agents:
         raise ValueError("--require-all-requested-agents requires --agent or --agents")
     unavailable = [
         status
-        for status in agent_home_statuses(args.root, requested_agents)
+        for status in agent_home_statuses(args.root, requested_agents, platform=args.platform)
         if not status["eligible"]
     ]
     # Having a home is a weaker condition than being installable into it: a
@@ -1197,7 +1202,7 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents, args.platform),
         "tools": tool_results,
     }
     return output(result, args)
@@ -1342,7 +1347,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents, args.platform),
         "ignored_dependencies": sorted(ignored),
         "skipped_dependencies": sorted(skipped),
         "dependencies": results,
@@ -1639,7 +1644,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "selected_skills": selected,
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents, args.platform),
         "managed_state": {
             "artifact_count": len(state.get("artifacts", [])),
             "run_count": len(state.get("runs", [])),

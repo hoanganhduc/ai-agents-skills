@@ -407,7 +407,10 @@ def contained_xdg_config_home(root: Path) -> Path:
     return root / ".config"
 
 
-def chatgpt_local_coder_detection_evidence(root: Path) -> dict[str, str] | None:
+def chatgpt_local_coder_detection_evidence(
+    root: Path,
+    platform: str | None = None,
+) -> dict[str, str] | None:
     """Detect the host independently from its optional installer artifact home.
 
     ChatGPT Local Coder 1.0.0 resolves runtime config under APPDATA on Windows,
@@ -419,9 +422,12 @@ def chatgpt_local_coder_detection_evidence(root: Path) -> dict[str, str] | None:
     configured = os.environ.get("CLC_CONFIG_DIR")
     if configured:
         candidates.append(Path(configured).expanduser())
-    if os.name == "nt":
+    target_platform = platform or (
+        "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    )
+    if target_platform == "windows":
         candidates.append(root / "AppData" / "Roaming" / "chatgpt-local-coder")
-    elif sys.platform == "darwin":
+    elif target_platform == "macos":
         candidates.append(root / "Library" / "Application Support" / "chatgpt-local-coder")
     else:
         candidates.append(root / ".config" / "chatgpt-local-coder")
@@ -449,25 +455,40 @@ def chatgpt_local_coder_detection_evidence(root: Path) -> dict[str, str] | None:
     return None
 
 
-def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[AgentTarget]:
+def detect_agents(
+    root: Path,
+    requested: Iterable[str] | None = None,
+    *,
+    platform: str | None = None,
+) -> list[AgentTarget]:
     candidates = list(requested) if requested else DEFAULT_AGENT_NAMES
     targets: list[AgentTarget] = []
     for agent in candidates:
         target = target_for(root, agent)
-        if agent_home_is_eligible(root, target):
+        if agent_home_is_eligible(root, target, platform=platform):
             targets.append(target)
     return targets
 
 
-def agent_home_statuses(root: Path, requested: Iterable[str] | None = None) -> list[dict[str, Any]]:
+def agent_home_statuses(
+    root: Path,
+    requested: Iterable[str] | None = None,
+    *,
+    platform: str | None = None,
+) -> list[dict[str, Any]]:
     candidates = list(requested) if requested else DEFAULT_AGENT_NAMES
-    return [agent_home_status(root, target_for(root, agent)) for agent in candidates]
+    return [agent_home_status(root, target_for(root, agent), platform=platform) for agent in candidates]
 
 
-def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
+def agent_home_status(
+    root: Path,
+    target: AgentTarget,
+    *,
+    platform: str | None = None,
+) -> dict[str, Any]:
     runtime_evidence: dict[str, str] | None = None
     if target.name == "chatgpt-local-coder" and looks_like_real_system_root(root):
-        runtime_evidence = chatgpt_local_coder_detection_evidence(root)
+        runtime_evidence = chatgpt_local_coder_detection_evidence(root, platform)
         if runtime_evidence is None:
             return {
                 "agent": target.name,
@@ -476,7 +497,7 @@ def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
             }
     if not target.home.exists() and not target.home.is_symlink():
         if target.name == "chatgpt-local-coder":
-            evidence = chatgpt_local_coder_detection_evidence(root)
+            evidence = chatgpt_local_coder_detection_evidence(root, platform)
             if evidence is not None:
                 return {
                     "agent": target.name,
@@ -526,8 +547,13 @@ def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
     return {"agent": target.name, "eligible": True, "reason": "agent home detected"}
 
 
-def agent_home_is_eligible(root: Path, target: AgentTarget) -> bool:
-    return bool(agent_home_status(root, target)["eligible"])
+def agent_home_is_eligible(
+    root: Path,
+    target: AgentTarget,
+    *,
+    platform: str | None = None,
+) -> bool:
+    return bool(agent_home_status(root, target, platform=platform)["eligible"])
 
 
 def all_agent_names() -> list[str]:
