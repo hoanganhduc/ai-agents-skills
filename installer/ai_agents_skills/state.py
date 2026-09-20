@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -83,7 +84,14 @@ def normalize_signature(signature: dict[str, Any] | None) -> dict[str, Any] | No
         return None
     normalized = dict(signature)
     if normalized.get("kind") == "symlink" and "target" in normalized:
-        normalized["target"] = str(normalized["target"])
+        target = str(normalized["target"])
+        if target.startswith("\\\\?\\UNC\\"):
+            target = "\\\\" + target[8:]
+        elif target.startswith("\\\\?\\"):
+            target = target[4:]
+        if re.match(r"^[A-Za-z]:[\\/]", target) or target.startswith("\\\\"):
+            target = ntpath.normcase(ntpath.normpath(target))
+        normalized["target"] = target
     return normalized
 
 
@@ -160,6 +168,14 @@ def state_for_root(data: dict[str, Any], root: Path) -> dict[str, Any]:
         uninstall = record.get("uninstall")
         if isinstance(uninstall, dict) and isinstance(uninstall.get("backup"), str):
             uninstall["backup"] = translate_path_for_root(root, uninstall["backup"])
+        if isinstance(uninstall, dict):
+            original_signature = uninstall.get("original_signature")
+            if isinstance(original_signature, dict) and isinstance(original_signature.get("target"), str):
+                original_signature["target"] = translate_path_for_root(root, original_signature["target"])
+        for field in ("installed_signature", "previous_signature", "current_signature"):
+            signature = record.get(field)
+            if isinstance(signature, dict) and isinstance(signature.get("target"), str):
+                signature["target"] = translate_path_for_root(root, signature["target"])
         previous = record.get("previous_state_artifact")
         if isinstance(previous, dict):
             translate_record(previous)
