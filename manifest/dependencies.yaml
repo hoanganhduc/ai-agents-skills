@@ -227,7 +227,7 @@
       "capabilities": ["hetzner"]
     },
     "kaggle-cli": {
-      "description": "Kaggle CLI (>=2.2.4,<3) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=1.0.2,<2) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json.",
+      "description": "Kaggle CLI (>=2.2.4,<3) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=1.0.2,<2) validates the API token. Auth is the guarded KAGGLE_API_TOKEN environment projection, never a pathname-read token file, the legacy KAGGLE_USERNAME + KAGGLE_KEY pair, or a kaggle.json.",
       "version_constraint": ">=2.2.4,<3",
       "candidates": {
         "linux": ["kaggle"],

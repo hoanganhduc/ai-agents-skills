@@ -100,9 +100,9 @@ class BrokerConfig:
     # Kaggle Kernels lane (disabled by default; configured under [kaggle]). CPU is free and
     # quota-free; GPU is gated by a self-imposed weekly GPU-hour cap (local ledger). Kernels
     # auto-stop at the session cap and cost nothing, so there is no cost gate and no reaper.
-    # The credential is the new single Kaggle API token, supplied via the KAGGLE_API_TOKEN
-    # environment variable (or ~/.kaggle/access_token) -- never the legacy KAGGLE_USERNAME +
-    # KAGGLE_KEY pair, and never stored in this TOML.
+    # The credential is the new single Kaggle API token, supplied via the guarded
+    # KAGGLE_API_TOKEN environment projection -- never a pathname-read token file, the legacy
+    # KAGGLE_USERNAME + KAGGLE_KEY pair, or this TOML.
     kaggle_enabled: bool = False
     kaggle_weekly_gpu_hours_cap: float = 18.0
     kaggle_max_runs: int = 5
