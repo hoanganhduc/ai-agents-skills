@@ -161,7 +161,7 @@
     "kaggle-cli": {
       "display_name": "Kaggle CLI",
       "requirement": "optional until push/status/wait/fetch/run are used",
-      "linux": "The selected trusted Python 3.11+ must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; the managed driver invokes python -I -m kaggle and never searches PATH. The new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token), never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY.",
+      "linux": "The selected trusted Python 3.11+ must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; the managed driver invokes python -I -m kaggle and never searches PATH. The new Kaggle API token is supplied through the guarded KAGGLE_API_TOKEN environment projection, never a pathname-read token file, legacy kaggle.json, or KAGGLE_USERNAME + KAGGLE_KEY.",
       "windows": "A signed, admin-owned Python 3.11+ selected by AAS_KAGGLE_PYTHON must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; its digest and signer are pinned with the Kaggle-specific attestation variables. The driver never executes kaggle.exe from PATH.",
       "used_by": ["kaggle-research-compute"]
     },
@@ -417,7 +417,7 @@
       "import_name": "kaggle",
       "platforms": ["linux", "windows"],
       "used_by": ["kaggle-research-compute"],
-      "source": "Kaggle CLI module (>=2.2.4,<3) kernel push/status/output under the selected Python >=3.11; authenticates with the new KAGGLE_API_TOKEN (or ~/.kaggle/access_token)."
+      "source": "Kaggle CLI module (>=2.2.4,<3) kernel push/status/output under the selected Python >=3.11; authenticates with the guarded KAGGLE_API_TOKEN environment projection."
     },
     "kagglehub": {
       "requirement": "kagglehub>=1.0.2,<2",
@@ -553,7 +553,7 @@
       "used_by": ["hetzner-research-compute"]
     },
     "kaggle": {
-      "description": "The new single Kaggle API token is configured outside this repo and read from the KAGGLE_API_TOKEN environment variable (or ~/.kaggle/access_token) at runtime; kagglehub validates it and the kaggle CLI authenticates kernel ops with it. It is never written to argv, logs, a legacy kaggle.json, or a kernel, and the legacy KAGGLE_USERNAME + KAGGLE_KEY pair is not used. ToS: use for modest, legitimate research workloads only.",
+      "description": "The new single Kaggle API token is configured outside this repo and projected through the guarded KAGGLE_API_TOKEN environment variable at runtime; kagglehub validates it and the kaggle CLI authenticates kernel ops with it. It is never pathname-read, written to argv, logs, a legacy kaggle.json, or a kernel, and the legacy KAGGLE_USERNAME + KAGGLE_KEY pair is not used. ToS: use for modest, legitimate research workloads only.",
       "used_by": ["kaggle-research-compute"]
     },
     "google-drive": {
