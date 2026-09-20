@@ -161,8 +161,9 @@ eur_per_hour = 1.3678
 # kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the
 # new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or
 # ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a
-# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs
-# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`
+# kaggle.json. kagglehub (>=1.0.2,<2) validates the token and the Kaggle CLI module
+# (>=2.2.4,<3) runs under the selected trusted Python 3.11+ via `python -I -m kaggle`.
+# Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`
 # passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle
 # terms permit this use before the first live run (the build makes no live Kaggle calls).
 # ---------------------------------------------------------------------------

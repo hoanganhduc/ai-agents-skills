@@ -29,6 +29,26 @@ if (-not $PythonRunner) {
     exit 127
 }
 
+$KagglePython = [string]$env:AAS_KAGGLE_PYTHON
+$KagglePythonSha256 = [string]$env:AAS_KAGGLE_PYTHON_SHA256
+$KagglePythonSigner = [string]$env:AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT
+if ($KagglePython) {
+    if (-not [System.IO.Path]::IsPathRooted($KagglePython)) {
+        [Console]::Error.WriteLine("AAS_KAGGLE_PYTHON must name an absolute path.")
+        exit 127
+    }
+    $env:AAS_RUNTIME_PYTHON = $env:AAS_KAGGLE_PYTHON
+}
+if ($KagglePythonSha256) {
+    $env:AAS_WINDOWS_PYTHON_SHA256 = $env:AAS_KAGGLE_PYTHON_SHA256
+}
+if ($KagglePythonSigner) {
+    $env:AAS_WINDOWS_PYTHON_SIGNER_THUMBPRINT = $env:AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT
+}
+Remove-Item Env:AAS_KAGGLE_PYTHON -ErrorAction SilentlyContinue
+Remove-Item Env:AAS_KAGGLE_PYTHON_SHA256 -ErrorAction SilentlyContinue
+Remove-Item Env:AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT -ErrorAction SilentlyContinue
+
 $CredentialBearingLaunch = [bool](
     $env:AAS_COMPUTE_SECRETS_FILE -or
     $env:KAGGLE_API_TOKEN -or

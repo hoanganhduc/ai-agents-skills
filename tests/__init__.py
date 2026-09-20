@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -121,3 +122,40 @@ def state_dacl_skip() -> Callable[[Any], Any]:
         bool(refusal),
         f"runner temp state dirs trip the strict windows_acl gate: {refusal!r}",
     )
+
+
+def protect_windows_directory(path: Path) -> None:
+    """Apply an owner-only inheritable DACL to a native-Windows test root."""
+
+    if os.name != "nt":
+        return
+    env = os.environ.copy()
+    env["TEST_AAS_PRIVATE_DIRECTORY"] = str(path)
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$identity=[System.Security.Principal.WindowsIdentity]::GetCurrent();"
+            "$acl=[System.Security.AccessControl.DirectorySecurity]::new();"
+            "$acl.SetOwner($identity.User);"
+            "$acl.SetAccessRuleProtection($true,$false);"
+            "$rule=[System.Security.AccessControl.FileSystemAccessRule]::new("
+            "$identity.User,[System.Security.AccessControl.FileSystemRights]::FullControl,"
+            "[System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',"
+            "[System.Security.AccessControl.PropagationFlags]::None,"
+            "[System.Security.AccessControl.AccessControlType]::Allow);"
+            "[void]$acl.AddAccessRule($rule);"
+            "[System.IO.DirectoryInfo]::new($env:TEST_AAS_PRIVATE_DIRECTORY).SetAccessControl($acl)",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr)

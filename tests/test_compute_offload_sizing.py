@@ -314,6 +314,7 @@ class KagglePreflightHardwareTests(unittest.TestCase):
             "cores": 4,
             "memory_mb": 8192,
             "total_units": 5,
+            "upload_files": ["manifest.json", "run.sh"],
         }), encoding="utf-8")
         (job_dir / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         return job_dir

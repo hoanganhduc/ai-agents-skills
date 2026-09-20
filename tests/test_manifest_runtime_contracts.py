@@ -47,7 +47,7 @@ EXPECTED_PYTHON_BLOCKS = {
     "research-digest-wrapper": (["feedparser", "requests"], "default"),
     "lean-explore-mcp": (["lean_explore"], "opt-in"),
     "modal-research-compute": (["modal"], "default"),
-    "kaggle-research-compute": (["kagglehub"], "default"),
+    "kaggle-research-compute": (["kaggle", "kagglehub"], "default"),
     "hetzner-research-compute": ([], "default"),
 }
 
@@ -98,6 +98,15 @@ def imported_names(source: Path) -> set[str]:
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             names.add(node.module)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "find_spec"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            names.add(node.args[0].value)
     return names
 
 

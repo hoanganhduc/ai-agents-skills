@@ -71,8 +71,8 @@ so the estimate matches the kernels the run loop will actually launch.
 1. If local resources matter, run `get-available-resources` and let the broker apply the self-preservation veto.
 2. Build a portable job bundle (`manifest.json` with `total_units`, `worker`, `run.sh`, `merge`, writable `out/`) — the same bundle runs unchanged on any lane; each completed work unit leaves a checkpoint in `out/` so a re-pushed kernel resumes.
 3. Run `preflight` (free, no kernel) to get the Kaggle plan: kind (CPU/GPU), estimated resume rounds and kernel count, concurrency, the 12h session cap, the GPU-hour estimate vs the weekly cap, adequacy, and availability.
-4. If the plan fits, `run` executes the multi-run resume loop: it fans out up to ~5 concurrent kernels per round, polls them, fetches checkpoints, and re-pushes the remaining work with the checkpoints re-attached until the job is DONE (bounded by `max_runs`).
-5. For manual control, `push` one kernel (a chunk), `status`/`wait` to poll it, and `fetch` to download its output.
+4. Live submission is currently limited to one-unit CPU/GPU bundles through the manual `push` -> `status`/`wait` -> `fetch` path. Record and review the bundle SHA-256 from dry-run before push.
+5. `run --dry-run` still reports the bounded multi-run shape, but live multi-run fails closed until crash-safe status-first recovery and verified checkpoint merging are implemented.
 6. No teardown: kernels auto-stop at the 12h session cap and cost nothing, so there is no reaper and nothing to destroy.
 
 ## Runtime commands
@@ -89,18 +89,19 @@ run() { "$launcher" skills/kaggle-research-compute/run_kaggle_research_compute.s
 run bootstrap                          # one-time: check kaggle CLI + kagglehub + API token, validate via kagglehub, run doctor
 run doctor                             # lane + credentials + kaggle CLI + configured caps (offline)
 run preflight --job /path/to/jobdir --json     # the plan the router consumes (no kernel)
-run run     --job /path/to/jobdir --confirm    # multi-run resume loop with concurrent fan-out until DONE
-run push    --job /path/to/jobdir --confirm    # push one kernel run (a chunk), for manual control
+run run     --job /path/to/jobdir --dry-run    # plan only; live multi-run currently fails closed
+run push    --job /path/to/jobdir --dry-run    # emits the reviewed bundle_sha256
+run push    --job /path/to/jobdir --owner USER --bundle-sha256 HEX --confirm  # one-unit live push
 run status  <user/kernel-slug>
 run wait    <user/kernel-slug>
-run fetch   <user/kernel-slug> --dest /path/to/output
+run fetch   <user/kernel-slug> --job /path/to/jobdir --dest /path/to/output
 ```
 
-Planning verbs (`bootstrap`, `doctor`, `preflight`) are free and never push a kernel.
-Lifecycle verbs (`push`, `status`, `wait`, `fetch`, `run`) submit real kernels and require the
-new Kaggle API token (`KAGGLE_API_TOKEN`, or `~/.kaggle/access_token`) plus an explicit
-`--confirm`. Use `--dry-run` on `push` and `run` to print the exact planned `kaggle` commands
-with nothing submitted.
+Planning verbs (`bootstrap`, `doctor`, `preflight`, and `run --dry-run`) never push a kernel.
+Only `push` submits; it requires the API token, explicit `--confirm`, a one-unit bundle, and
+the reviewed `--bundle-sha256` emitted by preflight/dry-run. `status`, `wait`, and `fetch` act
+only on that recorded kernel reference. Fetch requires the original job bundle and accepts
+only flat checkpoint/result JSON names before host-side manifest-bound verification.
 
 On targets that install a local skill wrapper, that wrapper should forward to the same
 runtime command target.
@@ -127,9 +128,12 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
   `KAGGLE_API_TOKEN` and `KAGGLE_CONFIG_DIR`; Hetzner values and the pointer are
   removed before the Kaggle child starts.
 - Caps live under `[kaggle]` in `research-compute.toml`: `weekly_gpu_hours_cap`, `max_runs`, `concurrency`, `session_hours`, and the free-tier `kernel_cores` / `kernel_ram_gb`. CPU work is free and quota-free; GPU work passes a fail-closed weekly GPU-hour gate that reserves the estimate in a local usage ledger before the first push, so concurrent GPU submits cannot collectively blow the weekly cap.
-- The 12h session cap is the reason for the multi-run resume loop. A job that needs more wall time spans multiple kernel runs: push a chunk-batch across up to ~5 concurrent kernels, download checkpoints, and re-push the remaining chunks with the checkpoints re-attached (as a Kaggle Dataset input) until DONE. `max_runs` bounds the loop.
+- The multi-run design remains documented and dry-runnable, but live multi-run is deliberately disabled until ambiguous submissions recover status-first and every resumed checkpoint is manifest-bound.
+- `manifest.upload_files` is a required explicit allowlist. Reparse points, hardlinks, secret-like filenames, oversized bundles, and files changed during descriptor-bound snapshotting are rejected.
 - No reaper, no dead-man's-switch, no teardown: kernels auto-stop at the 12h session cap and cost nothing, so this lane is materially lower-risk than a paid rented-server lane. There is no cost gate — Kaggle is free.
-- `doctor` and `preflight` work without a token and without a kernel. `push`, `status`, `wait`, `fetch`, and `run` need the host to be Kaggle-ready (the `kaggle` CLI >=1.8.0 and kagglehub >=0.4.1 installed and `KAGGLE_API_TOKEN` set, or `~/.kaggle/access_token` present).
+- `doctor` and `preflight` work without a token and without a kernel. `push`, `status`, `wait`, `fetch`, and `run` need the host to be Kaggle-ready: the selected trusted Python must be 3.11+ with `kaggle>=2.2.4,<3` and `kagglehub>=1.0.2,<2`, and `KAGGLE_API_TOKEN` or `~/.kaggle/access_token` must be present.
+- On native Windows, use `AAS_KAGGLE_PYTHON` for the absolute Kaggle-only interpreter path and pin it with `AAS_KAGGLE_PYTHON_SHA256` plus `AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT`. The wrapper maps these values process-locally into the managed Python attestation contract; it does not change the default Python for other skills.
+- The driver invokes `python -I -m kaggle` and never falls back to `kaggle.exe` or another executable discovered on `PATH`.
 - One-time per machine, run `bootstrap`: it checks the `kaggle` CLI and kagglehub, confirms the API token is present, and validates/primes via kagglehub (`kagglehub.whoami()`), then reports `doctor`. It never pushes a kernel.
 - ToS: Kaggle compute is intended for its data-science / competition platform. Keep to modest, legitimate research workloads and verify the current Kaggle terms permit this use before the first live run. The build and its tests make no live Kaggle calls.
 

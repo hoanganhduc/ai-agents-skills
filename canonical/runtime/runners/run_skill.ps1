@@ -317,6 +317,13 @@ if ($credentialContract) {
             "AAS_HETZNER_SSH_KEYGEN_BIN"
         )) { [void]$credentialMetadataNames.Add($name) }
     }
+    if ($normalizedLower -like "skills\kaggle-research-compute\*") {
+        foreach ($name in @(
+            "AAS_KAGGLE_PYTHON",
+            "AAS_KAGGLE_PYTHON_SHA256",
+            "AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT"
+        )) { [void]$credentialMetadataNames.Add($name) }
+    }
     if ($normalizedLower -like "skills\autonomous-research-loop-runtime\*") {
         foreach ($name in @(
             "AAS_REMOTE_STRICT_NOTIFY_CHANNEL", "AAS_FORCE_LOOP_POLICY_FILE",
@@ -434,6 +441,7 @@ function Test-AasProtectedAclChain(
             # access to an existing descendant, and any grant that does reach this
             # file by inheritance is materialised into its own DACL, checked here.
             if ($depth -le 1 -or -not [string]::IsNullOrEmpty($boundary)) {
+                $deniedMasks = @{}
                 foreach ($rule in $acl.GetAccessRules(
                     $true,
                     $true,
@@ -448,11 +456,33 @@ function Test-AasProtectedAclChain(
                     ) {
                         continue
                     }
+                    $sid = $rule.IdentityReference.Value
+                    [uint32]$rightsMask = [uint32](
+                        [int64]$rule.FileSystemRights -band [int64]0x00000000FFFFFFFF
+                    )
+                    if (
+                        $rule.AccessControlType -eq
+                            [System.Security.AccessControl.AccessControlType]::Deny
+                    ) {
+                        [uint32]$priorDenied = 0
+                        if ($deniedMasks.ContainsKey($sid)) {
+                            $priorDenied = [uint32]$deniedMasks[$sid]
+                        }
+                        $deniedMasks[$sid] = [uint32]($priorDenied -bor $rightsMask)
+                        continue
+                    }
+                    [uint32]$deniedMask = 0
+                    if ($deniedMasks.ContainsKey($sid)) {
+                        $deniedMask = [uint32]$deniedMasks[$sid]
+                    }
+                    [uint32]$effectiveMutation = [uint32](
+                        $rightsMask -band $mutationMask -band (-bnot $deniedMask)
+                    )
                     if (
                         $rule.AccessControlType -eq
                             [System.Security.AccessControl.AccessControlType]::Allow -and
-                        -not $trusted.Contains($rule.IdentityReference.Value) -and
-                        (([int64]$rule.FileSystemRights -band [int64]$mutationMask) -ne 0)
+                        -not $trusted.Contains($sid) -and
+                        $effectiveMutation -ne 0
                     ) {
                         return $false
                     }
@@ -681,8 +711,8 @@ try {
             )
             Import-AasSecretEnvFile `
                 -PointerEnv $pointerName `
-                -AllowedKeys @() `
-                -ExportKeys @() `
+                -AllowedKeys ([string[]]@()) `
+                -ExportKeys ([string[]]@()) `
                 -RetainPointer `
                 -ValidateOnly
         }

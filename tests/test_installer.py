@@ -3747,7 +3747,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw", "chatgpt-local-coder")
+            create_agent_homes(root, "codex", "claude", "deepseek", "codewhale", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw", "chatgpt-local-coder")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -3766,6 +3766,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "codex": "copy",
                     "claude": "symlink",
                     "deepseek": "reference",
+                    "codewhale": "copy",
                     "copilot": "reference",
                     "opencode": "copy",
                     "antigravity": "copy",

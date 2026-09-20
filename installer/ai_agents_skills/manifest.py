@@ -439,8 +439,9 @@ RUNTIME_POINTER_AUTHORITIES = frozenset({
 # Agent homes a live check must never pin, one per install target in manifest/target-state.yaml.
 # The contract is shared by every target, so a literal `~/.openclaw/...` gates all of them on one
 # agent's configuration; `{workspace}` expands per runtime root and is the portable form.
-LIVE_CHECK_AGENT_HOMES = (".openclaw", ".codex", ".claude", ".deepseek", ".copilot", ".gemini",
-                          ".grok", ".kimi-code", ".aider", ".chatgpt-local-coder", ".config/opencode")
+LIVE_CHECK_AGENT_HOMES = (".openclaw", ".codex", ".claude", ".deepseek", ".codewhale",
+                          ".copilot", ".gemini", ".grok", ".kimi-code", ".aider",
+                          ".chatgpt-local-coder", ".config/opencode")
 RUNTIME_LIVE_MUTATING_VERBS = {
     "zotero": frozenset({"add", "update", "trash", "delete", "send", "purge"}),
     "calibre": frozenset({"add", "update", "add-tag", "remove-tag", "remove", "sync", "clean", "convert"}),

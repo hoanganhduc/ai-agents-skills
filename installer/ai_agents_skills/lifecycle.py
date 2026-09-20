@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
-from .json_merge import extract_hook_entry, load_json_object, remove_hook_entry
+from .json_merge import (
+    extract_hook_entry,
+    json_path_value,
+    load_json_object,
+    remove_hook_entry,
+    restore_json_value,
+)
 from .managed_permissions import restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .render import replace_or_append_block
@@ -18,6 +24,7 @@ from .state import (
     run_record_path,
     save_state,
     signatures_match,
+    state_for_root,
     state_dir,
     upsert_artifact,
     validate_run_id,
@@ -345,7 +352,11 @@ def load_run_actions(root: Path, state: dict[str, Any], run_id: str) -> list[dic
         raise ValueError(f"invalid run record: {path}")
     if payload.get("run_id") not in {None, run_id}:
         raise ValueError(f"run record id mismatch: {path}")
-    return payload["actions"]
+    translated = state_for_root(
+        {"artifacts": payload["actions"], "runs": [], "uninstall_records": []},
+        root,
+    )
+    return translated["artifacts"]
 
 
 def lifecycle_record_schema_issue(item: Any) -> str | None:
@@ -435,6 +446,24 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
                 action["operation"] = "forget-missing"
             else:
                 action["operation"] = "toml-block-remove"
+    elif origin_action == "json-setting-restore":
+        if not path.exists():
+            action["operation"] = "forget-missing"
+        else:
+            try:
+                current, _ = load_json_object(path)
+            except ValueError:
+                action["operation"] = "skip-conflict"
+                action["reason"] = "settings file is not valid JSON"
+                return action
+            exists, value = json_path_value(current, list(origin.get("setting_path") or []))
+            if not exists:
+                action["operation"] = "forget-missing"
+            elif value != origin.get("installed_value"):
+                action["operation"] = "skip-conflict"
+                action["reason"] = "managed setting changed since install"
+            else:
+                action["operation"] = "json-setting-restore"
     elif origin_action == "forget-missing":
         action["operation"] = "forget-missing"
     else:
@@ -531,6 +560,10 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
         _apply_toml_block_remove(action)
         result["completed"] = True
         return result
+    if operation == "json-setting-restore":
+        _apply_json_setting_restore(action)
+        result["completed"] = True
+        return result
     raise ValueError(f"unknown uninstall operation: {operation}")
 
 
@@ -608,6 +641,28 @@ def _apply_toml_block_remove(action: dict[str, Any]) -> None:
         remove_file(path)
         return
     write_text_atomic(path, merged)
+
+
+def _apply_json_setting_restore(action: dict[str, Any]) -> None:
+    path = Path(action["artifact"])
+    origin = action.get("uninstall", {})
+    if not path.exists():
+        return
+    current, _ = load_json_object(path)
+    merged, changed = restore_json_value(
+        current,
+        list(origin.get("setting_path") or []),
+        installed_value=origin.get("installed_value"),
+        original_exists=bool(origin.get("original_exists")),
+        original_value=origin.get("original_value"),
+        created_containers=list(origin.get("created_containers") or []),
+    )
+    if not changed:
+        return
+    if merged == {} and origin.get("created_file"):
+        path.unlink()
+        return
+    write_text_atomic(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:
@@ -742,6 +797,9 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         return
     if item.get("artifact_type") == "settings-compat-merge":
         _apply_toml_block_remove(item)
+        return
+    if item.get("artifact_type") == "settings-value-merge":
+        _apply_json_setting_restore(item)
         return
     remove_artifact(item, root)
 

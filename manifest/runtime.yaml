@@ -5467,6 +5467,7 @@
           "workspace/research_compute/requirements-kaggle.txt"
         ],
         "modules": [
+          "kaggle",
           "kagglehub"
         ],
         "provision": "default"

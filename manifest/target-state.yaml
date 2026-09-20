@@ -78,14 +78,24 @@
       "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "auth-structural"]
     },
     "deepseek": {
-      "aliases": ["codewhale"],
+      "aliases": [],
       "home": ".deepseek",
-      "cli_candidates": ["codewhale", "deepseek-tui"],
+      "cli_candidates": ["deepseek-tui"],
       "version_argv": ["--version"],
       "runtime_requirements": ["python-runtime", "git-cli"],
       "credential_authorities": [
         {"kind": "file", "path": ".deepseek/config.toml", "restore_policy": "authority"},
-        {"kind": "directory", "path": ".deepseek/secrets", "restore_policy": "authority"},
+        {"kind": "directory", "path": ".deepseek/secrets", "restore_policy": "authority"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-structural"]
+    },
+    "codewhale": {
+      "aliases": ["codewhale-tui"],
+      "home": ".codewhale",
+      "cli_candidates": ["codewhale", "codewhale-tui"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli"],
+      "credential_authorities": [
         {"kind": "file", "path": ".codewhale/config.toml", "restore_policy": "authority"},
         {"kind": "directory", "path": ".codewhale/secrets", "restore_policy": "authority"}
       ],

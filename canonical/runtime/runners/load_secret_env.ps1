@@ -160,8 +160,10 @@ function Import-AasSecretEnvFile {
         [string]$PointerEnv,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$AllowedKeys,
 
+        [AllowEmptyCollection()]
         [string[]]$ExportKeys = @(),
 
         [switch]$ExportSubset,

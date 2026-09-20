@@ -22,6 +22,7 @@ MECHANISMS = {
     "runtime-copy",
     "instruction-block",
     "json-merge",
+    "json-setting-merge",
     "toml-merge",
     "unsupported",
 }
@@ -32,6 +33,8 @@ CLAIM_BASES = {
     "runtime-manifest",
     "fake-root-only",
     "official-docs",
+    "official-source-v0.9.12",
+    "official-source-1.0.0",
     "installer-convention",
 }
 
@@ -532,6 +535,33 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "Tool shims copy to ~/.kimi-code/tools/ as inert support storage referenced by skill relative paths.",
     ),
     TargetSurface(
+        "codewhale",
+        "skill-file",
+        "supported",
+        "copy",
+        "CodeWhale-owned directory-layout SKILL.md with copied support files",
+        "official-source-v0.9.12",
+        "Auto mode writes ~/.codewhale/skills/<skill>/SKILL.md; CodeWhale 0.9.12 classifies this as its writable global skill root.",
+    ),
+    TargetSurface(
+        "codewhale",
+        "runtime-file",
+        "supported",
+        "runtime-copy",
+        "root-scoped managed runtime helpers",
+        "runtime-manifest",
+        "Runtime files use the neutral shared ai-agents-skills runtime root, not the CodeWhale skill directory.",
+    ),
+    TargetSurface(
+        "codewhale",
+        "config-compat",
+        "supported",
+        "toml-merge",
+        "managed [skills] isolation block in ~/.codewhale/config.toml",
+        "official-source-v0.9.12",
+        "The managed setting enables scan_codewhale_only so compatible Claude/OpenCode/legacy DeepSeek roots cannot shadow CodeWhale-owned skills.",
+    ),
+    TargetSurface(
         "chatgpt-local-coder",
         "skill-file",
         "supported",
@@ -539,6 +569,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "host directory-layout SKILL.md with copied support files",
         "official-docs",
         "Auto mode writes ~/.chatgpt-local-coder/skills/<skill>/SKILL.md with the full canonical body; the host discovers that directory as a skill root and copy mode keeps the install self-contained on native Windows, where symlink creation is privilege-gated.",
+    ),
+    TargetSurface(
+        "chatgpt-local-coder",
+        "config-compat",
+        "supported",
+        "json-setting-merge",
+        "managed skills.scanHostOnly value in the platform config.json",
+        "official-source-1.0.0",
+        "The installer enables the host-only discovery mode while preserving unrelated user configuration and imported security settings.",
     ),
     TargetSurface(
         "chatgpt-local-coder",

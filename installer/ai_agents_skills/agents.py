@@ -15,6 +15,7 @@ DEFAULT_AGENT_NAMES = [
     "codex",
     "claude",
     "deepseek",
+    "codewhale",
     "copilot",
     "opencode",
     "antigravity",
@@ -33,6 +34,7 @@ ADAPTER_AGENT_NAMES = {
     "kimi",
     "openclaw",
     "chatgpt-local-coder",
+    "codewhale",
 }
 
 
@@ -117,6 +119,23 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "command": root / ".deepseek" / "commands",
                 "tool-shim": root / ".deepseek" / "tools",
             },
+        )
+    if agent == "codewhale":
+        home = root / ".codewhale"
+        return AgentTarget(
+            name="codewhale",
+            home=home,
+            skills_dir=home / "skills",
+            instructions_file=home / "AGENTS.md",
+            optional_skills_dirs=(root / ".agents" / "skills",),
+            artifact_dirs={
+                "agent-persona": home / "agents",
+                "template": home / "templates",
+                "instruction-doc": home / "instructions",
+                "tool-shim": home / "tools",
+            },
+            skill_file_layout="directory",
+            instruction_blocks_enabled=False,
         )
     if agent == "copilot":
         return AgentTarget(
