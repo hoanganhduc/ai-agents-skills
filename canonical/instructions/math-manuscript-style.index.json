@@ -3,7 +3,7 @@
   "overlay_version": "2026-09-14",
   "overlay_ref": "canonical/instructions/math-manuscript-style.md",
   "base_policy_ref": "canonical/instructions/writing-style-settings.md",
-  "content_hash": "sha256:22aafe3d0cb4f2e5f9f9fd8a2887fbdbc840bd0fc98886b86858579779e76fe9",
+  "content_hash": "sha256:bb3a77c51b9e9e38da61b3ca11ac145f5d0e32245923841828862243d2d84f12",
   "requirements": [
     {
       "id": "WS-MATH-0001",

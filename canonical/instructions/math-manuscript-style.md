@@ -662,6 +662,10 @@ established, enumerate them explicitly with `\begin{enumerate}[(1)]` or an
 equivalent labelled form. A reader can then cite part (2) rather than "the
 second half of Theorem 3".
 
+With the `enumerate` package, the optional argument of `\begin{enumerate}` is a
+literal label template: `[(1)]` or `[(a)]` prints parenthesised labels such as
+(1) or (a), whereas `[a]` prints bare letters. Do not drop the parentheses.
+
 Then give the proof the same structure, with the same labels, so each part of
 the proof visibly answers one part of the statement.
 
@@ -690,6 +694,10 @@ Prove an if-and-only-if statement as two labelled directions, `($\Rightarrow$)`
 and `($\Leftarrow$)`, as items of one list, whenever the two implications are
 argued separately. The labels say which implication a paragraph settles without
 the reader reconstructing it from the opening line.
+Give these labels as optional item labels, `\item[($\Rightarrow$)]` and
+`\item[($\Leftarrow$)]`, not as body text after a bullet, such as
+`\item ($\Rightarrow$) ...`. Unlike the case headings below, they are short
+enough to fit the label box.
 
 List the cases of a case analysis with `itemize` when the cases are parallel,
 and put the case heading in the item body rather than in the optional label.
