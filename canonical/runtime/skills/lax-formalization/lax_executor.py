@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import hashlib
 import io
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
 import re
 import selectors
+import signal
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from typing import Any
@@ -246,6 +250,7 @@ def export_source(root: Path, destination: Path) -> dict[str, str]:
 
 
 def phase(cfg: dict[str, Any], mode: str, job: Path, mounts: list[tuple[Path, str, bool]], *, timeout: int = 1200) -> dict[str, Any]:
+    _raise_verification_termination()
     output = job / f"result-{mode}"; output.mkdir()
     name = f"aas-lax-{uuid.uuid4().hex}"
     common = [(Path(cfg["package_root"]), "/lax-package", False), (HERE, "/adapter", False),
@@ -257,12 +262,15 @@ def phase(cfg: dict[str, Any], mode: str, job: Path, mounts: list[tuple[Path, st
     args += ["node", "--disable-sigusr1", "/adapter/container_entry.mjs", mode]
     log = output / "transcript.log"
     with log.open("xb") as stream:
-        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        started = time.monotonic()
-        selector = selectors.DefaultSelector(); selector.register(p.stdout, selectors.EVENT_READ)
+        p = None; selector = None
         received = 0; next_probe = 0.0; outcome = None
         try:
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            started = time.monotonic()
+            selector = selectors.DefaultSelector(); selector.register(p.stdout, selectors.EVENT_READ)
+            _raise_verification_termination()
             while outcome is None:
+                _raise_verification_termination()
                 for key, _ in selector.select(0.1):
                     chunk = os.read(key.fd, 65536)
                     if chunk:
@@ -278,6 +286,7 @@ def phase(cfg: dict[str, Any], mode: str, job: Path, mounts: list[tuple[Path, st
                         if len(probe.stdout) > 1024: raise ValueError("invalid executor completion packet")
                         outcome = json.loads(probe.stdout)
                     next_probe = now + 0.5
+            _raise_verification_termination()
             stopped = run(["docker", "exec", name, "node", "--disable-sigusr1", "/adapter/stop_children.mjs"])
             if stopped.strip() != b"descendants-stopped": raise ValueError("descendant teardown not confirmed")
             collect = output / "collected"; collect.mkdir()
@@ -292,13 +301,21 @@ def phase(cfg: dict[str, Any], mode: str, job: Path, mounts: list[tuple[Path, st
                 collect_container(name, "/work/job/capture/.", capture, max_bytes=2 * 1024**3)
         finally:
             # Removing the container terminates every descendant, even after the
-            # entrypoint exited. Never accept artifacts until inspect confirms it.
-            subprocess.run(["docker", "rm", "--force", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-            if p.poll() is None: p.kill(); p.wait(timeout=10)
-            selector.close()
-            if p.stdout: p.stdout.close()
-        if subprocess.run(["docker", "inspect", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-            raise ValueError("container teardown could not be confirmed")
+            # entrypoint exited. Confirm removal even on exceptional exits.
+            try:
+                try:
+                    subprocess.run(["docker", "rm", "--force", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                finally:
+                    if p is not None:
+                        if p.poll() is None: p.kill(); p.wait(timeout=10)
+                        if p.stdout: p.stdout.close()
+                    if selector is not None: selector.close()
+            finally:
+                probe = subprocess.run(["docker", "ps", "--all", "--quiet", "--filter", f"name=^/{name}$"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+                if probe.returncode != 0 or probe.stdout.strip():
+                    raise ValueError("container teardown could not be confirmed")
+    _raise_verification_termination()
     if not isinstance(outcome, dict) or outcome.get("mode") != mode or outcome.get("exit") != 0:
         raise ValueError(f"{mode} failed; see {log.name} in phase evidence")
     return {"mode": mode, "exit": outcome["exit"], "teardown_confirmed": True,
@@ -362,7 +379,46 @@ def admit_capture(capture: Path, inventory: dict[str, Any], source: Path) -> Non
                 raise ValueError("captured authored input differs from frozen source")
 
 
+_termination_state: ContextVar[dict[str, int | None] | None] = ContextVar("lax_termination", default=None)
+
+
+def _raise_verification_termination():
+    state = _termination_state.get()
+    if state is not None and state["signal"] is not None:
+        raise SystemExit(128 + state["signal"])
+
+
+@contextmanager
+def verification_termination_guard():
+    """Deliver main-thread termination only at safe supervisor checkpoints."""
+    if _termination_state.get() is not None or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    state = {"signal": None}
+    token = _termination_state.set(state)
+    previous = {}
+    def terminate(signum, frame):
+        if state["signal"] is None:
+            state["signal"] = signum
+    try:
+        for name in ["SIGTERM", "SIGHUP", "SIGINT"]:
+            signum = getattr(signal, name, None)
+            if signum is not None:
+                previous[signum] = signal.signal(signum, terminate)
+        yield
+        _raise_verification_termination()
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        _termination_state.reset(token)
+
+
 def verify(request_path: Path, out: Path, *, dependency: bool = False, _active: set[str] | None = None) -> dict[str, Any]:
+    with verification_termination_guard():
+        return _verify(request_path, out, dependency=dependency, _active=_active)
+
+
+def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active: set[str] | None = None) -> dict[str, Any]:
     out = out.resolve()
     req = validate_request(request_path)
     req_hash = hashlib.sha256(regular_bytes(request_path)).hexdigest()
@@ -494,6 +550,7 @@ def verify(request_path: Path, out: Path, *, dependency: bool = False, _active: 
         "capture": seal, "phases": phases, "coverage": report["coverage"], "verified_proofs": proofs,
         "dependency_digests": {k: verification_binding(v) for k,v in dependency_reports.items()},
         "limitations": ["kernel/toolchain and pinned mathlib are declared background trust", "no external comparator was run", "no remote publication was tested"]}
+    _raise_verification_termination()
     write_json(out / "verification.json", result)
     return result
 

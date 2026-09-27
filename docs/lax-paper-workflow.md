@@ -34,7 +34,8 @@ Retrieve a missing paper through the normal library-first workflow.
 Use three disjoint areas: read-only research source; owner-only controller
 records/private staging; and the new public repository. Staging is not inside
 the controller record directory. Private notes, inventories and baseline logs
-never enter the public tree. `audit-only` stops with analysis, without export,
+never enter the public tree. Do not initialize Git at the parent job directory
+containing those records. `audit-only` stops with analysis, without export,
 build, repository creation or readiness claims.
 
 ## J0–J3: inspect, reuse and select
@@ -143,13 +144,22 @@ existing work blindly. Set actual targets and complete software metadata. Keep
 paper authorship distinct from formalizer credit; no DOI is needed at this stage.
 
 Private staging may be edited; original research source may not. Staging has no
-inherited source history. Before public commit, make a second explicit approved
+inherited source history. A pilot needing commit-bound verification can have its
+own ordinary private Git repository inside staging. Its evidence covers that
+commit and scope only. Before public commit, make a second explicit approved
 selection from the staged candidate into the **new public directory**, including
 the scaffold, chosen workflows, metadata and sanitized source. Then initialize
 ordinary Git with the reviewed author and public origin. Linked worktrees and
 alternate object stores are not qualified by the current executor.
 
 ## J7: privacy and TeX
+
+Distinguish the authoritative reference PDF, a PDF distributed as documentation,
+and Lax's interactive paper surface. In Lax 0.1.48 the last is optional and is
+built from annotated LaTeX; placing an existing PDF in Git does not create it.
+The reference PDF may remain in the private controller area while only clean
+LaTeX enters the public repository. Follow the user's selected mode. The skill's
+workflow reference covers licensed reproductions and preview checks.
 
 Strip nonpublic author comments in the staged copy, never in original source.
 The bounded sanitizer supports ordinary category codes, `%` comments, `\verb`,
@@ -171,6 +181,14 @@ warn and skip a paper build. That does not pass this job's paper requirement.
 Use a separately qualified TeX sandbox with only public source/dependencies and
 write its `paper-build-review.v1` record. If unavailable, keep that check blocked;
 do not silently switch the user's selected paper mode.
+
+For an interactive paper, use the upstream marker rewrite and validation rather
+than fabricating PDF coordinates or editing `build-output.json`. Check the actual
+as-printed viewer, marker placement, and click/hover behavior for the selected
+scope. Local `lax build` 0.1.48 does not derive the reflowed view by default;
+report which surface was tested. Serve only selected generated output on
+localhost, use a credential-free browser profile, and block external requests
+during private preview (the stock pages can request the public comments service).
 
 Review the whole history intended for publication, including authors/messages
 and tags. If private content was accidentally committed but never published,

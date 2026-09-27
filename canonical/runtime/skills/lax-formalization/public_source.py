@@ -148,12 +148,12 @@ def git_classes(root: Path) -> dict[str, str]:
     if not (root / ".git/config").is_file(): return {}
     from lax_executor import git_command, command_environment
     from git_safety import admit_git_config
-    env = command_environment(); admit_git_config(root, env)
+    env = command_environment(); admit_git_config(root, env, allow_ssh_origin=True)
     result = {}
     for label, args in [("tracked", ["--cached"]), ("untracked", ["--others", "--exclude-standard"]),
                         ("ignored", ["--others", "--ignored", "--exclude-standard"])]:
         with tempfile.TemporaryFile() as output:
-            subprocess.run(git_command("-C", str(root), "ls-files", "-z", *args), env=env,
+            subprocess.run(git_command("ls-files", "-z", *args), cwd=root, env=env,
                            stdout=output, stderr=subprocess.DEVNULL, check=True, timeout=30)
             if output.tell() > 16 * 1024**2: raise ValueError("git-inventory-limit")
             output.seek(0)

@@ -14,6 +14,8 @@ artifact update, use the `lax-paper-workflow` runbook. It produces a **new**
 publication repository from read-only research source, with explicit file
 selection and privacy/correspondence gates. See
 [workflow helpers](references/workflow.md) for the executable interfaces.
+Read that reference's paper-presentation section when the user wants a published
+PDF reproduced or the interactive paper-to-formalization view.
 
 1. Agree the claim scope, definitions and relevant transitive dependencies.
    Locate the source paper through the usual library-first workflow when needed.

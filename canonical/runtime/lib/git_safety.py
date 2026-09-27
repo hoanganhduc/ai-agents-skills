@@ -6,7 +6,8 @@ import stat
 import subprocess
 
 
-def admit_git_config(root: Path, env: dict[str, str], *, allow_init: bool = False) -> None:
+def admit_git_config(root: Path, env: dict[str, str], *, allow_init: bool = False,
+                     allow_ssh_origin: bool = False) -> None:
     gitdir = root / ".git"
     if not gitdir.exists():
         if allow_init: return
@@ -30,6 +31,11 @@ def admit_git_config(root: Path, env: dict[str, str], *, allow_init: bool = Fals
             continue
         if key == "remote.origin.url" and re.fullmatch(r"https://(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org)/[A-Za-z0-9_.\-/]+", value):
             continue
+        if key == "remote.origin.url" and allow_ssh_origin and re.fullmatch(
+                r"(?:git@(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org):|"
+                r"ssh://git@(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org)/)"
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
+            continue  # Read-only source inventory only; no fetch or publication.
         if (key, value) == ("gc.auto", "0"):
             continue  # Pinned actions/checkout disables automatic Git GC.
         if (key, value) in {("remote.origin.promisor", "true"), ("remote.origin.partialclonefilter", "blob:none")}:

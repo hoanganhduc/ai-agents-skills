@@ -26,6 +26,16 @@ read-only image, bounded temporary space, CPU/memory/PID limits and explicit
 read-only trusted inputs. Candidate and checking phases have disjoint writable
 outputs. Teardown is confirmed before admitting captured artifacts.
 
+Main-thread verification records TERM/HUP/INT and delivers termination at safe
+supervisor checkpoints, after bounded calls return. Process acquisition and
+cleanup cannot be interrupted by those handlers; removal requires a successful
+daemon query with no matching container. A daemon error is not proof of removal.
+An interrupted run without a final receipt is not accepted evidence. Hard kill,
+host failure and signal handling for threaded API callers remain outside that
+guard; inspect only the job's identified containers before retrying, never stop
+unrelated containers. Preserve the failed run and restart into a fresh evidence
+directory with the same reviewed inputs.
+
 The config is an operator input, not part of a proof request. Do not put it in an
 agent-generated candidate tree. An executor unavailable on this machine is a
 blocked check, not permission to execute retrieved Lean directly on the host.

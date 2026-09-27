@@ -140,5 +140,38 @@ class PublicSourceTests(unittest.TestCase):
         self.assertEqual(result["required_files"], ["Base.lean", "Support.lean", "Useful.lean"])
         self.assertEqual(result["external_imports"], ["Mathlib"])
 
+    def test_ssh_origin_inventory_is_read_only_and_does_not_relax_publication(self):
+        from git_safety import admit_git_config
+        from lax_executor import command_environment
+        ssh_user = "git" + "@"
+        for index, origin in enumerate([ssh_user + "github.com:example/source.git",
+                                        "ssh://" + ssh_user + "gitlab.com/example/source.git"]):
+            with self.subTest(origin=origin):
+                source = self.root / f"ssh-source-{index}"; source.mkdir()
+                subprocess.run(["git", "init", "-q", str(source)], check=True)
+                subprocess.run(["git", "-C", str(source), "remote", "add", "origin", origin], check=True)
+                (source / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+                subprocess.run(["git", "-C", str(source), "add", "A.lean"], check=True)
+                before = (source / ".git/config").read_bytes()
+                files = public.inspect_source(source)["files"]
+                self.assertEqual(next(f["git_status"] for f in files if f["path"] == "A.lean"), "tracked")
+                self.assertEqual((source / ".git/config").read_bytes(), before)
+                with self.assertRaises(ValueError):
+                    admit_git_config(source, command_environment())
+                subprocess.run(["git", "-C", str(source), "config", "core.sshCommand", "touch forbidden"], check=True)
+                with self.assertRaises(ValueError): public.inspect_source(source)
+                self.assertFalse((source / "forbidden").exists())
+
+    def test_inventory_refuses_credentialed_or_command_origins(self):
+        source = self.root / "unsafe-origin"; source.mkdir()
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        credentialed = "ssh://git:" + "fixture-password" + "@github.com/example/source"
+        ssh_user = "git" + "@"
+        for origin in [credentialed, "ext::touch forbidden",
+                       "ssh://" + ssh_user + "github.com:2222/example/source", ssh_user + "untrusted.invalid:example/source"]:
+            with self.subTest(origin=origin):
+                subprocess.run(["git", "-C", str(source), "config", "remote.origin.url", origin], check=True)
+                with self.assertRaises(ValueError): public.inspect_source(source)
+
 
 if __name__ == "__main__": unittest.main()
