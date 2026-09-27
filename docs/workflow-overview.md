@@ -4,10 +4,11 @@ This repository is designed for an experimental personal multi-agent research
 workstation, with an emphasis on combinatorics and graph theory workflows. It
 is not guaranteed to work as desired in every environment. Codex, Claude, and
 DeepSeek each keep their own local configuration directory, but the reusable
-research instructions live here as canonical skill bodies. The installer links
-those skill bodies into whichever agents are present by default, can write thin
-reference adapters when symlinks are not suitable, and leaves absent agents
-alone.
+research instructions live here as canonical skill bodies. The default `auto`
+install mode follows each agent's policy: Codex uses copies, Claude uses
+symlinks, and DeepSeek uses reference adapters. Other target policies and
+explicit overrides are described in [Installation](installation.md). Absent
+agents are left alone.
 
 The system has three layers:
 
@@ -61,6 +62,11 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+- **Paper formalization:** search pinned Mathlib, then independently verify
+  relevant Lax results before reuse. Keep source and evidence per paper, use
+  CI for machine checks, and prepare Zenodo as a secondary archive. Follow
+  [Lax Formalization And Zenodo Archival](lax-formalization.md); publication
+  requires a separate request after local verification.
 - **Reusable workflow improvement:** `self-improving-agent` records local
   `.learnings/` entries, then proposes repo-first changes across `canonical/`,
   `manifest/`, generated docs, runtime helpers, and tests with explicit

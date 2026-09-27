@@ -33,6 +33,7 @@ def generated_doc_texts(manifests: dict[str, Any]) -> dict[str, str]:
         "artifacts.md": artifacts_text(manifests),
         "profiles.md": profiles_text(manifests),
         "dependencies.md": dependencies_text(manifests),
+        "lax-formalization.md": lax_formalization_text(),
         "workflow-overview.md": workflow_overview_text(),
         "multi-agent-examples.md": multi_agent_examples_text(),
         "system-profile.md": system_profile_text(),
@@ -209,6 +210,12 @@ behavior but lighter platform-specific guidance.
   eOffice application packages (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
+- [docs/lax-formalization.md](docs/lax-formalization.md): per-paper Lean/Lax
+  setup, independent verification, CI, secondary Zenodo archives, and migration.
+- [docs/lean-formalization-benchmarks.md](docs/lean-formalization-benchmarks.md):
+  dated Lean benchmark survey and the separate bounded Lax workflow test.
+- [docs/restore-target-contract.md](docs/restore-target-contract.md): restore
+  target contract and evidence requirements.
 - [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research
   tools connect during real workflows.
 - [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
@@ -246,11 +253,13 @@ Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
 and the manifests for generated pages, then run `make docs`; CI checks that
 generated docs are current. Generated docs are `README.md`, each page emitted
 by `generated_doc_texts()` under `docs/`, and the mirrored copies under
-`docs/source/`. `docs/source/index.md`, `docs/source/overview.md`,
-`docs/source/submission-venue-selector-plan.md`, and
-`docs/source/course-management.md` are maintained manually;
-`docs/submission-venue-selector-plan.md` and `docs/course-management.md`
-are the top-level manual copies of those pages.
+`docs/source/`. The source-only `docs/source/index.md` and
+`docs/source/overview.md` are maintained manually. Manual pages with matching
+copies under both `docs/` and `docs/source/` are
+`submission-venue-selector-plan.md`, `course-management.md`,
+`external-dependencies.md`, `restore-target-contract.md`, and
+`lean-formalization-benchmarks.md`; keep each pair in sync. `docs-check` checks
+generated text consistency, not the factual correctness of the instructions.
 
 ## Acknowledgements
 
@@ -317,9 +326,11 @@ Windows:
 ./make.ps1 plan --profile research-core
 ./make.ps1 plan --no-skills --artifact-profile workflow-templates
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
-./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ```
+
+Lifecycle tests perform real writes inside fake roots and are blocked on native
+Windows too. Run Windows-shaped lifecycle tests from Linux/WSL; see
+[Windows](docs/windows.md). This checks path/layout behavior, not native mutation.
 
 For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
 `install` before any lifecycle matrix. `lifecycle-test` and
@@ -680,6 +691,16 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
     lines.extend(docling_runtime_notes())
     lines.extend(slides_to_video_runtime_notes())
     lines.extend(manim_math_animation_runtime_notes())
+    lines.extend([
+        "", "## Lax Verification And Zenodo Archives", "",
+        "Offline Lax doctor/search and Zenodo validation do not need Docker or",
+        "service credentials. Source packaging also needs Git; restore extracts files.",
+        "Real Lax verification needs the separately provisioned, pinned executor",
+        "on non-root Linux/WSL, Docker, Lean/mathlib, and the strict-gate runtime.",
+        "The generic optional-tool precheck does not certify that executor.",
+        "See [Lax Formalization And Zenodo Archival](lax-formalization.md) for",
+        "the supported versions, resource limits, setup, and command examples.",
+    ])
     lines.extend(
         [
             "",
@@ -2353,6 +2374,217 @@ Related pages: [OpenClaw Integration Plan](openclaw-integration-plan.md),
 """
 
 
+def lax_formalization_text() -> str:
+    return r"""# Lax Formalization And Zenodo Archival
+
+Keep a separate Git repository for each paper's formalization. Search pinned
+Mathlib first, then look for reusable Lax declarations. Independently rebuild
+the selected Lax results, close their actual proof dependencies, and review
+whether the formal statements match the paper. Registration alone is not proof
+evidence. Zenodo is the secondary archive; no personal Lean library is required.
+
+## Install The Workflow
+
+From the ai-agents-skills checkout, preview the focused template installation:
+
+```bash
+make plan ARGS="--no-skills --artifact template:lax-paper-artifact --with-deps --runtime-profile auto"
+make install ARGS="--no-skills --artifact template:lax-paper-artifact --with-deps --runtime-profile auto --dry-run"
+```
+
+This selects `lax-formalization`, `lean-strict-verification-gate` and
+`zenodo-artifact`, including runtime helpers. Selecting only the Lax skill with
+runtime profile `auto` also includes the strict-gate runtime dependency. The
+`formal-research` skill profile provides the broader Lean workflow. Follow
+[Installation](installation.md) to apply a reviewed plan; installing these
+files does not provision Docker, download Lean, or publish anything.
+
+Commands below run from the ai-agents-skills checkout unless otherwise stated.
+Installed copies use the same verbs through their platform's `run_skill` wrapper;
+see the runtime roots in [Installation](installation.md).
+
+## Prerequisites And Qualified Scope
+
+| Operation | Requirements and limits |
+|---|---|
+| Helper `doctor`, local catalog `search`, bundle `validate` / `restore`, publication plans | Python 3.10+; local inputs; no Docker or service credentials. Search does not fetch a catalog. |
+| Source bundle `prepare` | Python and Git; clean committed source plus matching verification evidence. |
+| Local authoring setup | Git and the pinned Lax CLI; the official setup guide currently requires Node 20+ and about 10 GB free disk. |
+| Independent `verify` / `verify-dependency` | A provisioned executor on non-root Linux/WSL, Docker access, pinned Lax/Lean/mathlib, a local database with required objects, reviewed concepts, and the strict-gate runtime. |
+
+The implemented executor profile is **Lax 0.1.48**, **Lean v4.33.0**, and
+Mathlib commit `db584cd6d46c92f209a44c0f1c829460d327499d`. It uses pinned
+Node 22 container images, supports AMD64/ARM64 image selection, and was qualified
+locally on ARM64 Linux. Native Windows/macOS offline commands do not establish
+native Lean execution support. Environment upgrades require requalification.
+
+Verification containers are limited to two CPUs and 6 GiB memory. The executor
+requires at least 5 GiB free space at the output location, in addition to the
+toolchain, warm Mathlib store and image storage. That threshold is a preflight
+check, not a guarantee that any paper will fit. Measure resources before setup.
+The generic installer precheck does not qualify the executor.
+
+The upstream [`lax doctor`](https://laxarchive.org/contributing.html) downloads
+the Lean toolchain, prebuilt Mathlib and archive database. In contrast, the
+following helper is offline and only reports readiness:
+
+```bash
+python3 -B canonical/runtime/skills/lax-formalization/lax_formalization.py doctor
+python3 -B canonical/runtime/skills/zenodo-artifact/zenodo_artifact.py doctor
+```
+
+After intentionally preparing the supported CLI and warm store, preview executor
+setup, review it, then apply it as a separate local setup step:
+
+```bash
+python3 -B canonical/runtime/skills/lax-formalization/provision_executor.py
+python3 -B canonical/runtime/skills/lax-formalization/provision_executor.py --apply
+```
+
+Setup builds a local image/inspector and writes operator configuration. Do not
+store that configuration in candidate source. Detailed setup and input-admission
+rules are in `canonical/skills/lax-formalization/references/executor.md`.
+
+## Author And Independently Verify
+
+1. Record the paper claims, definitions, assumptions and target inventory. Search
+   the pinned Mathlib source before extending it. An unsuccessful text search
+   is not a complete absence proof.
+2. Search a locally provisioned, pinned Lax database. Treat each hit as an
+   unverified candidate; check source provenance and environment compatibility.
+3. In the paper's Git repository, use `lax init submission --env v4.33.0`.
+   Keep the generated package layout and pins. Read `lax print spec` and
+   `lax print instructions` from the selected CLI; do not run `lake update`.
+4. Review and freeze the concept package outside the candidate repository before
+   proof work. Review retrieved source before allowing execution through the
+   controlled executor. Keep verification requests outside candidate source too.
+5. Commit a clean candidate and independently verify it and all required Lax
+   dependencies. Inspect machine checks, obligation closure and semantic review
+   separately; a machine pass alone does not establish correspondence to a paper.
+
+```bash
+python3 -B canonical/runtime/skills/lax-formalization/lax_formalization.py search \
+  --query "your concept" --database /path/to/pinned/lax-database \
+  --environment v4.33.0
+python3 -B canonical/runtime/skills/lax-formalization/lax_formalization.py verify \
+  --request /path/to/operator/request.json --out /path/to/new-evidence
+```
+
+The request schema, target IDs, dependency request map and hash-bound semantic
+review are documented in
+`canonical/skills/lax-formalization/references/verification.md`. Use
+`verify-dependency` with the same request/output flags for selected archive
+dependencies. Missing dependency checks remain missing evidence, even for
+registered results. A local ordinary Git checkout is required; linked worktrees
+and unqualified hooks/filters/configuration are refused.
+
+## Keep GitHub Actions And Prepare The Paper Repository
+
+Copy and review the files in
+`canonical/runtime/skills/lax-formalization/paper-template/` without overwriting
+existing project files blindly. Keep `.github/workflows/`, `scripts/`,
+`CITATION.cff` and `.zenodo.json` at the repository root, outside the submission's
+`concepts/` and `proofs/`. Existing CI can remain; adapt it to the pinned
+environment and keep publication triggers separate from verification.
+
+Fill `.lax-targets.json` with the submission path, supported environment and
+nonempty real target IDs. Complete title, version, license and creator metadata.
+Use the supplied JSON-compatible YAML CFF form for the helper's consistency
+checks; full CFF schema validation is separate.
+
+The workflow checks out a reviewed, published full ai-agents-skills commit from
+the repository variable `AAS_SKILLS_REV`. Verify that the chosen revision
+contains the runtime, and keep the reviewed action SHAs pinned. It runs the
+trusted verifier from that checkout; it does not execute the candidate's
+`scripts/verify.py` as the trusted verifier. Exercise the same entrypoint locally
+with an already provisioned executor:
+
+```bash
+python3 -B canonical/runtime/skills/lax-formalization/ci_verify.py \
+  --project /path/to/paper-repo --state-dir /path/to/new-ci-state \
+  --database /path/to/pinned/lax-database
+```
+
+For archive dependencies, provision their reviewed sources and pass an
+outside-project mapping through `--dependency-requests /path/to/dependencies.json`.
+The default standalone workflow refuses missing dependency requests; adapt its
+trusted setup before relying on such a run. CI always leaves semantic review
+pending. Record the paper workflow's actual hosted run and checked commit;
+ai-agents-skills CI and local Lean/Docker tests do not establish that hosted run.
+
+## Use The Same Source For A Secondary Zenodo Archive
+
+A Lax-layout repository can also supply a Zenodo source archive. Lax identifies
+the submitted source by repository, commit and folder; archival metadata and CI
+can accompany that source. This shared-layout conclusion does not guarantee
+acceptance by either service. See the [Lax guide](https://laxarchive.org/contributing.html)
+and [Zenodo software metadata guide](https://help.zenodo.org/docs/github/describe-software/zenodo-json/).
+
+Prepare the explicit bundle from a clean revision and its trusted supervisor
+report. The output directory must be new and outside the source tree:
+
+```bash
+python3 -B canonical/runtime/skills/zenodo-artifact/zenodo_artifact.py prepare \
+  --project /path/to/paper-repo \
+  --evidence /path/to/new-evidence/verification.json \
+  --metadata /path/to/paper-repo/.zenodo.json --out /path/to/new-bundle
+python3 -B canonical/runtime/skills/zenodo-artifact/zenodo_artifact.py validate \
+  --dir /path/to/new-bundle
+python3 -B canonical/runtime/skills/zenodo-artifact/zenodo_artifact.py restore \
+  --bundle /path/to/new-bundle --out /path/to/new-restored-repo
+```
+
+Inspect `source.zip`, metadata, checksums, evidence and `REPRODUCE.md`. This is a
+source-and-evidence bundle, not a fully offline toolchain distribution. Restore
+extracts source files without Git history and does not rerun proof verification.
+Before re-verification, follow `REPRODUCE.md` to initialize a separate synthetic
+Git context, keeping its commit distinct from the original source identity.
+Checksums do not authenticate a candidate-authored report or certify mathematics.
+Preparation requires passed machine checks and closed dependencies; pending
+semantic review remains explicitly pending.
+
+Zenodo's GitHub integration uses `.zenodo.json` when both metadata formats exist,
+so keep it consistent with `CITATION.cff`.
+[Zenodo metadata precedence](https://help.zenodo.org/docs/github/describe-software/zenodo-json/).
+Once enabled, [GitHub integration](https://help.zenodo.org/docs/github/enable-repository/)
+automatically archives new releases. Run verification before creating a release;
+release-event checks cannot serve as the pre-publication gate. Preserve evidence
+explicitly rather than assuming CI artifacts are included in the archive.
+
+These helpers do not log in, submit/register Lax, upload to Zenodo, reserve a DOI
+or create releases. Complete local work first. A separate request must authorize
+the intended remote operation and exact source/files. Publication plans remain
+proposals; see `canonical/skills/lax-formalization/references/publication.md` and
+`canonical/skills/zenodo-artifact/references/delivery.md` before that later step.
+Service guidance above was checked on 2026-09-27; recheck before publication.
+
+## Migration, Evaluation And Troubleshooting
+
+- **Retired personal-library workflow:** follow the scoped retirement procedure
+  in [Uninstall And Rollback](uninstall-rollback.md). Preserve existing Lean
+  sources and history; remove obsolete routing/settings only after inspecting
+  their ownership and replacements.
+- **Executor unavailable or profile mismatch:** inspect helper `doctor`, confirm
+  the supported pins and explicitly provision/requalify. An unavailable check
+  does not permit running retrieved Lean directly on the host.
+- **Missing strict-gate file:** preview an updated partial install with runtime
+  profile `auto`; `--no-runtime` deliberately omits executable helpers.
+- **Disk pressure:** measure caches/build outputs separately from authored source.
+  Regenerable outputs may be removed after reviewing the exact paths; account for
+  download and rebuild cost. Do not delete source or evidence to make a test pass.
+- **Build passes, result still pending:** inspect closure and semantic status;
+  neither can be replaced by an archive registration or a CI badge.
+- **Bounded comparison test:** select a small statement subset from a pinned Lax
+  reference, hide reference proofs during independent formalization, then compare
+  definitions, assumptions, proof dependencies and build behavior. Report only
+  the tested subset. See `canonical/skills/lax-formalization/references/benchmark.md`
+  and the dated [Lean benchmark survey](lean-formalization-benchmarks.md).
+
+Related pages: [Dependencies](dependencies.md), [Verification](verification.md),
+[Workflow Overview](workflow-overview.md), [Windows](windows.md).
+"""
+
+
 def workflow_overview_text() -> str:
     return """# System And Research Workflow Overview
 
@@ -2360,10 +2592,11 @@ This repository is designed for an experimental personal multi-agent research
 workstation, with an emphasis on combinatorics and graph theory workflows. It
 is not guaranteed to work as desired in every environment. Codex, Claude, and
 DeepSeek each keep their own local configuration directory, but the reusable
-research instructions live here as canonical skill bodies. The installer links
-those skill bodies into whichever agents are present by default, can write thin
-reference adapters when symlinks are not suitable, and leaves absent agents
-alone.
+research instructions live here as canonical skill bodies. The default `auto`
+install mode follows each agent's policy: Codex uses copies, Claude uses
+symlinks, and DeepSeek uses reference adapters. Other target policies and
+explicit overrides are described in [Installation](installation.md). Absent
+agents are left alone.
 
 The system has three layers:
 
@@ -2417,6 +2650,11 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+- **Paper formalization:** search pinned Mathlib, then independently verify
+  relevant Lax results before reuse. Keep source and evidence per paper, use
+  CI for machine checks, and prepare Zenodo as a secondary archive. Follow
+  [Lax Formalization And Zenodo Archival](lax-formalization.md); publication
+  requires a separate request after local verification.
 - **Reusable workflow improvement:** `self-improving-agent` records local
   `.learnings/` entries, then proposes repo-first changes across `canonical/`,
   `manifest/`, generated docs, runtime helpers, and tests with explicit
@@ -2442,7 +2680,7 @@ The shared skills involved are:
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
 | `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; Goal Focus **enforce** for new loops; scripted force-loop defaults (hard goal_priority + notify). Soft `goal_priority.v1` remains a legacy compatibility path. |
-| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive timeouts), Goal Focus machinery, and the default **force-loop** kit (`force-loop/` bootstrap/start/drain on all OS). |
+| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive timeouts), Goal Focus machinery, and the **force-loop** kit with portable wrappers; enforce execution requires Linux/WSL. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
@@ -2462,11 +2700,13 @@ CLIs under its sandbox”:
 5. **Notify** (remote-bridge when configured) is progress messaging only;
    force-loop apply defaults leave notify **auto/on**.
 
-### Default scripted force-loop (all OS)
+### Default scripted force-loop (Linux/WSL enforce execution)
 
 Use the installed **force-loop** kit first. It applies Goal Focus **enforce**,
-goal_priority **hard**, and **notify auto**, and works on Linux, macOS, Windows,
-and WSL without requiring systemd. Discovery template: `arl-scripted-force-loop`.
+goal_priority **hard**, and **notify auto**. The enforced execution path requires
+Linux/WSL resource controls and does not require systemd. Portable shell and
+PowerShell wrappers do not qualify native macOS or Windows for `enforce`;
+native execution there is refused. Discovery template: `arl-scripted-force-loop`.
 
 ```bash
 # Bootstrap pins + smoke (init if needed)
@@ -2484,8 +2724,10 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
-Windows: `run_skill.ps1` with
-`skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1`.
+Native Windows has `run_skill.ps1` and
+`skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1` for
+supported management commands. Run enforced work inside Linux/WSL. See
+[Windows](windows.md) for the separate monitor-mode boundary.
 
 ### Advanced: raw drive / supervisor
 
@@ -2782,6 +3024,19 @@ Likely process:
 
 The output should say whether the skeleton is complete, blocked by missing
 lemmas, or revealing a real gap in the informal proof.
+
+## Example: Paper Artifact With Independently Checked Lax Reuse
+
+For a request to formalize selected paper results, begin with pinned Mathlib
+search, then use `lax-formalization` to find and independently verify relevant
+Lax candidates. Review definitions and statement meaning before accepting reuse.
+Keep the paper's source, target inventory, dependency closure and semantic review
+separate from archive registration. Prepare CI and an optional Zenodo bundle
+through [Lax Formalization And Zenodo Archival](lax-formalization.md).
+
+This workflow can run in one agent. When a formalization team is explicitly
+requested, keep proof construction and independent checking separate. A team
+consensus, passing skeleton, or registered reference is not proof evidence.
 
 ## When To Prefer Prose
 
@@ -3323,10 +3578,10 @@ Windows:
 ./make.ps1 precheck --profile research-core
 ./make.ps1 plan --profile research-core
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
 ```
 
-To test file writes without touching a real agent home, use a fake root:
+To test file writes without touching a real agent home, use a fake root from
+Linux/WSL or macOS. Native Windows blocks applied writes even inside fake roots:
 
 ```bash
 make lifecycle-test ARGS="--matrix default --platform-shape all"
@@ -4040,8 +4295,6 @@ Common commands from a native Windows shell:
 ./make.ps1 precheck --profile research-core
 ./make.ps1 plan --profile research-core
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
-./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ./make.ps1 verify --root <fake-or-real-root>
 ./make.ps1 docs
 ./make.ps1 sanitize-check
@@ -4053,7 +4306,17 @@ place. The installer still detects only agent homes that already exist under
 `--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
 before planning. A fake root with no detected agent homes produces no actions.
 
-### Applying to a Windows profile from WSL
+For Windows-shaped lifecycle tests, run these from Linux/WSL:
+
+```bash
+make lifecycle-test ARGS="--matrix default --platform-shape windows"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape windows"
+```
+
+These commands perform writes inside fake roots. They test Windows-shaped
+layouts under a POSIX host, not native Windows mutation safety.
+
+## Applying to a Windows profile from WSL
 
 WSL is the supported way to apply to a Windows profile while the gate stands.
 The gate reads the host interpreter, not `--platform`, so `os.name` is `posix`
@@ -4381,6 +4644,40 @@ Safety rules:
 - `--apply` and `--dry-run` cannot be combined
 - instruction files are removed only when the installer created them and they
   become empty after managed block removal
+
+## Retired Skills And The Lax Migration
+
+An exact skill name removed from the current catalog can still be selected by
+`uninstall` or `rollback` when the selected root/agent's managed journal records
+it. It is not accepted as an ordinary `plan`, `install` or `verify` selection.
+An unknown retired name is not permission to delete a matching directory.
+
+For a former personal-library installation, preview both the replacement and
+the exact retired scope from the checkout:
+
+```bash
+make audit-system ARGS="--profile formal-research"
+make plan ARGS="--no-skills --artifact template:lax-paper-artifact --with-deps --runtime-profile auto"
+./installer/bootstrap.sh --agents codex uninstall --skill lean-research-library --dry-run
+```
+
+Replace `codex` with the actual target and select the correct root if necessary.
+The retired name above is only an uninstall example, not an available skill.
+Inspect the preview and recorded backups before applying through the scoped
+commands above. Back up installer state, and keep the run ID for recovery.
+
+Uninstall may restore pre-install backups or preserve edited files. Afterwards,
+inspect agent discovery paths, manual instruction blocks and runtime settings
+for old library routing. Rules outside managed blocks and user-owned configs
+require a separate reviewed edit; uninstall does not rewrite them. Disable only
+the obsolete staging/intake settings and preserve unrelated user configuration.
+Do not delete existing HoangMathLib repositories, Lean sources or Git history.
+
+Install the reviewed replacement, run managed `verify` and the offline Lax and
+Zenodo doctors, then check that the agent discovers the intended skills. These
+checks validate installation/readiness, not any paper proof. Keep historical
+plans and generic Lean skills; the replacement workflow is described in
+[Lax Formalization And Zenodo Archival](lax-formalization.md).
 
 Related pages: [Installation](installation.md), [Verification](verification.md),
 [Audit And Migration](audit-and-migration.md), [Agent Locations](agent-locations.md).

@@ -12,7 +12,7 @@ The shared skills involved are:
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
 | `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; Goal Focus **enforce** for new loops; scripted force-loop defaults (hard goal_priority + notify). Soft `goal_priority.v1` remains a legacy compatibility path. |
-| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive timeouts), Goal Focus machinery, and the default **force-loop** kit (`force-loop/` bootstrap/start/drain on all OS). |
+| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive timeouts), Goal Focus machinery, and the **force-loop** kit with portable wrappers; enforce execution requires Linux/WSL. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
@@ -32,11 +32,13 @@ CLIs under its sandbox”:
 5. **Notify** (remote-bridge when configured) is progress messaging only;
    force-loop apply defaults leave notify **auto/on**.
 
-### Default scripted force-loop (all OS)
+### Default scripted force-loop (Linux/WSL enforce execution)
 
 Use the installed **force-loop** kit first. It applies Goal Focus **enforce**,
-goal_priority **hard**, and **notify auto**, and works on Linux, macOS, Windows,
-and WSL without requiring systemd. Discovery template: `arl-scripted-force-loop`.
+goal_priority **hard**, and **notify auto**. The enforced execution path requires
+Linux/WSL resource controls and does not require systemd. Portable shell and
+PowerShell wrappers do not qualify native macOS or Windows for `enforce`;
+native execution there is refused. Discovery template: `arl-scripted-force-loop`.
 
 ```bash
 # Bootstrap pins + smoke (init if needed)
@@ -54,8 +56,10 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
-Windows: `run_skill.ps1` with
-`skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1`.
+Native Windows has `run_skill.ps1` and
+`skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1` for
+supported management commands. Run enforced work inside Linux/WSL. See
+[Windows](windows.md) for the separate monitor-mode boundary.
 
 ### Advanced: raw drive / supervisor
 
@@ -352,6 +356,19 @@ Likely process:
 
 The output should say whether the skeleton is complete, blocked by missing
 lemmas, or revealing a real gap in the informal proof.
+
+## Example: Paper Artifact With Independently Checked Lax Reuse
+
+For a request to formalize selected paper results, begin with pinned Mathlib
+search, then use `lax-formalization` to find and independently verify relevant
+Lax candidates. Review definitions and statement meaning before accepting reuse.
+Keep the paper's source, target inventory, dependency closure and semantic review
+separate from archive registration. Prepare CI and an optional Zenodo bundle
+through [Lax Formalization And Zenodo Archival](lax-formalization.md).
+
+This workflow can run in one agent. When a formalization team is explicitly
+requested, keep proof construction and independent checking separate. A team
+consensus, passing skeleton, or registered reference is not proof evidence.
 
 ## When To Prefer Prose
 

@@ -23,6 +23,8 @@ myst_enable_extensions = [
     "deflist",
     "substitution",
 ]
+# Resolve Markdown section links such as installation.md#skill-python-venv.
+myst_heading_anchors = 3
 
 templates_path = ["_templates"]
 exclude_patterns: list[str] = ["_build", "Thumbs.db", ".DS_Store"]

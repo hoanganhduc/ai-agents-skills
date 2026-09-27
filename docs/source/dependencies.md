@@ -172,20 +172,20 @@ Evidence inspected:
 | `docling-cli` | optional CLI layer for docling workflows | Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling. | Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe. | `docling` |
 | `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH or at the default winget path C:\Program Files\eSpeak NG\espeak-ng.exe. | `slides-to-video offline TTS` |
 | `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |
-| `git-cli` | required for repository workflows and publishing | git on PATH. | git.exe or git on PATH. | `GitHub workflows`, `repo install/update examples` |
+| `git-cli` | required for repository workflows and publishing | git on PATH. | git.exe or git on PATH. | `GitHub workflows`, `repo install/update examples`, `lax-formalization`, `zenodo-artifact prepare` |
 | `github-cli` | optional for GitHub workflows that need local gh commands | gh on PATH with auth configured when needed. | gh.exe or gh on PATH with auth configured when needed. | `github`, `gh-fix-ci`, `yeet` |
 | `gnupg` | optional; only needed for PGP/MIME email signing (send-email --sign) | gpg on PATH with your secret key in the keyring, e.g. apt-get install gnupg. | gpg.exe on PATH (Gpg4win), with your secret key imported. | `send-email` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
 | `hcloud-cli` | optional until up/push/run/wait/fetch/down are used | hcloud on PATH; HCLOUD_TOKEN supplied via the environment, never an hcloud context file. | hcloud.exe or hcloud on PATH; HCLOUD_TOKEN supplied via the environment. | `hetzner-research-compute` |
 | `kaggle-cli` | optional until push/status/wait/fetch/run are used | The selected trusted Python 3.11+ must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; the managed driver invokes python -I -m kaggle and never searches PATH. The new Kaggle API token is supplied through the guarded KAGGLE_API_TOKEN environment projection, never a pathname-read token file, legacy kaggle.json, or KAGGLE_USERNAME + KAGGLE_KEY. | A signed, admin-owned Python 3.11+ selected by AAS_KAGGLE_PYTHON must import kaggle>=2.2.4,<3 and kagglehub>=1.0.2,<2; its digest and signer are pinned with the Kaggle-specific attestation variables. The driver never executes kaggle.exe from PATH. | `kaggle-research-compute` |
-| `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
-| `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
+| `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake`, `lax-formalization pinned executor (Linux/WSL)` |
+| `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lax-formalization pinned executor (Linux/WSL)` |
 | `libreoffice` | optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
 | `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | ./make.ps1 invokes installer commands without requiring GNU Make. | `installation` |
 | `manim-tex-runtime` | required for manim-math-animation rendering (heavier than plain tex-runtime) | LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev. | MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels. | `manim-math-animation` |
-| `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake` |
+| `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake`, `lax-formalization warm store (Linux/WSL)` |
 | `modal-cli` | optional until submit/deploy/wait/fetch are used | Installed by the modal Python package and authenticated with modal token set/new. | Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH. | `modal-research-compute` |
-| `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
+| `node-runtime` | required for Node-backed MCP servers, optional Zotero translation-server workflows and Lax authoring setup | Node.js 18+ for generic consumers; Lax authoring needs 20+, and the qualified verifier uses pinned Node 22 images. Generic precheck does not qualify that executor. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server`, `lax-formalization setup (Linux/WSL)` |
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
 | `pdftotext` | optional for venue lookup; required for venue-ranking-evidence browser-proof marker verification | pdftotext on PATH from Poppler, e.g. apt-get install poppler-utils. | pdftotext.exe from a Poppler distribution on PATH. | `venue-ranking-evidence` |
 | `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `./make.ps1`, `installer bootstrap`, `Windows runtime wrappers` |
@@ -383,6 +383,16 @@ free: it validates the scene-spec round-trip, the generated Manim source,
 and the manim/ffmpeg argv builders with no Manim, LaTeX, or ffmpeg. Run
 `doctor` to confirm the render toolchain before `render`; a real render is
 intentionally not part of default CI smoke.
+
+## Lax Verification And Zenodo Archives
+
+Offline Lax doctor/search and Zenodo validation do not need Docker or
+service credentials. Source packaging also needs Git; restore extracts files.
+Real Lax verification needs the separately provisioned, pinned executor
+on non-root Linux/WSL, Docker, Lean/mathlib, and the strict-gate runtime.
+The generic optional-tool precheck does not certify that executor.
+See [Lax Formalization And Zenodo Archival](lax-formalization.md) for
+the supported versions, resource limits, setup, and command examples.
 
 ## Detection Notes
 

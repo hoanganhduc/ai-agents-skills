@@ -26,6 +26,9 @@ Latest update: {sub-ref}`today`
   adding OpenClaw as a writable target.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
+- Lean paper formalization: use
+  [Lax Formalization And Zenodo Archival](lax-formalization.md) for independently
+  verified reuse, per-paper CI, migration and the secondary archival option.
 - Runtime-backed skill questions: use [Installation](installation.md) for
   runtime roots and inventory boundaries, then [Dependencies](dependencies.md)
   for Docling/OCR and local config notes.
@@ -68,9 +71,12 @@ and manifest data. Generated docs are `README.md`, each page emitted by
 `generated_doc_texts()` under `docs/`, and mirrored copies under `docs/source/`.
 Edit the generator or manifests, run `make docs`, then use `make docs-site`
 when you need to preview the Sphinx site. This `index.md` page, `overview.md`,
-`submission-venue-selector-plan.md`, `course-management.md`, and
-`external-dependencies.md` are maintained manually as docs-site pages (keep
-their `docs/` copies in sync with `docs/source/`).
+`submission-venue-selector-plan.md`, `course-management.md`,
+`external-dependencies.md`, `restore-target-contract.md`, and
+`lean-formalization-benchmarks.md` are maintained manually as docs-site pages.
+Only `index.md` and `overview.md` are source-only; keep the other manual pages'
+`docs/` copies in sync with `docs/source/`. Generated-text consistency does not
+establish factual correctness.
 
 ```{toctree}
 :maxdepth: 2
@@ -79,6 +85,8 @@ their `docs/` copies in sync with `docs/source/`).
 overview
 workflow-overview
 multi-agent-examples
+lax-formalization
+lean-formalization-benchmarks
 submission-venue-selector-plan
 course-management
 external-dependencies
@@ -95,6 +103,7 @@ audit-and-migration
 openclaw-integration-plan
 openclaw-install-target-plan
 verification
+restore-target-contract
 architecture
 windows
 linux

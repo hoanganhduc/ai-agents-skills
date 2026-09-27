@@ -123,6 +123,12 @@ behavior but lighter platform-specific guidance.
   eOffice application packages (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
+- [docs/lax-formalization.md](docs/lax-formalization.md): per-paper Lean/Lax
+  setup, independent verification, CI, secondary Zenodo archives, and migration.
+- [docs/lean-formalization-benchmarks.md](docs/lean-formalization-benchmarks.md):
+  dated Lean benchmark survey and the separate bounded Lax workflow test.
+- [docs/restore-target-contract.md](docs/restore-target-contract.md): restore
+  target contract and evidence requirements.
 - [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research
   tools connect during real workflows.
 - [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
@@ -160,11 +166,13 @@ Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
 and the manifests for generated pages, then run `make docs`; CI checks that
 generated docs are current. Generated docs are `README.md`, each page emitted
 by `generated_doc_texts()` under `docs/`, and the mirrored copies under
-`docs/source/`. `docs/source/index.md`, `docs/source/overview.md`,
-`docs/source/submission-venue-selector-plan.md`, and
-`docs/source/course-management.md` are maintained manually;
-`docs/submission-venue-selector-plan.md` and `docs/course-management.md`
-are the top-level manual copies of those pages.
+`docs/source/`. The source-only `docs/source/index.md` and
+`docs/source/overview.md` are maintained manually. Manual pages with matching
+copies under both `docs/` and `docs/source/` are
+`submission-venue-selector-plan.md`, `course-management.md`,
+`external-dependencies.md`, `restore-target-contract.md`, and
+`lean-formalization-benchmarks.md`; keep each pair in sync. `docs-check` checks
+generated text consistency, not the factual correctness of the instructions.
 
 ## Acknowledgements
 
@@ -231,9 +239,11 @@ Windows:
 ./make.ps1 plan --profile research-core
 ./make.ps1 plan --no-skills --artifact-profile workflow-templates
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
-./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ```
+
+Lifecycle tests perform real writes inside fake roots and are blocked on native
+Windows too. Run Windows-shaped lifecycle tests from Linux/WSL; see
+[Windows](docs/windows.md). This checks path/layout behavior, not native mutation.
 
 For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
 `install` before any lifecycle matrix. `lifecycle-test` and

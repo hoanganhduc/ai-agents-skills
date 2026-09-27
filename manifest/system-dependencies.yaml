@@ -69,10 +69,10 @@
     },
     "node-runtime": {
       "display_name": "Node.js with npm/npx",
-      "requirement": "required for Node-backed MCP servers and optional Zotero translation-server workflows",
-      "linux": "Node.js 18+ with npm.",
+      "requirement": "required for Node-backed MCP servers, optional Zotero translation-server workflows and Lax authoring setup",
+      "linux": "Node.js 18+ for generic consumers; Lax authoring needs 20+, and the qualified verifier uses pinned Node 22 images. Generic precheck does not qualify that executor.",
       "windows": "Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server.",
-      "used_by": ["Codex MCP", "zotero translation server"]
+      "used_by": ["Codex MCP", "zotero translation server", "lax-formalization setup (Linux/WSL)"]
     },
     "uvx-cli": {
       "display_name": "uvx",
@@ -86,28 +86,28 @@
       "requirement": "optional for local formal typechecking; never installed by wrappers",
       "linux": "Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install.",
       "windows": "Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install.",
-      "used_by": ["lean-strict-verification-gate"]
+      "used_by": ["lean-strict-verification-gate", "lax-formalization pinned executor (Linux/WSL)"]
     },
     "lake-cli": {
       "display_name": "Lake command line",
       "requirement": "optional for local Lean project checks; never installed by wrappers",
       "linux": "Lake executable on PATH, via AAS_LAKE, or via an existing elan install.",
       "windows": "Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install.",
-      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake"]
+      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake", "lax-formalization pinned executor (Linux/WSL)"]
     },
     "mathlib-cache": {
       "display_name": "mathlib cache",
       "requirement": "optional manually prepared Lean dependency cache",
       "linux": "Existing project-local mathlib cache or manually prepared Lake cache.",
       "windows": "Existing project-local mathlib cache or manually prepared Lake cache.",
-      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake"]
+      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake", "lax-formalization warm store (Linux/WSL)"]
     },
     "git-cli": {
       "display_name": "Git",
       "requirement": "required for repository workflows and publishing",
       "linux": "git on PATH.",
       "windows": "git.exe or git on PATH.",
-      "used_by": ["GitHub workflows", "repo install/update examples"]
+      "used_by": ["GitHub workflows", "repo install/update examples", "lax-formalization", "zenodo-artifact prepare"]
     },
     "github-cli": {
       "display_name": "GitHub CLI",

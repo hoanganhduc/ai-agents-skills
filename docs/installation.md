@@ -231,10 +231,10 @@ Windows:
 ./make.ps1 precheck --profile research-core
 ./make.ps1 plan --profile research-core
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
 ```
 
-To test file writes without touching a real agent home, use a fake root:
+To test file writes without touching a real agent home, use a fake root from
+Linux/WSL or macOS. Native Windows blocks applied writes even inside fake roots:
 
 ```bash
 make lifecycle-test ARGS="--matrix default --platform-shape all"

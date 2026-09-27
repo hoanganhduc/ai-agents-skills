@@ -224,6 +224,9 @@
   "skills": {
     "lax-formalization": {
       "runtime_dir": "lax-formalization",
+      "runtime_requires": [
+        "lean-strict-verification-gate"
+      ],
       "smoke_coverage": {
         "status": "offline-smoke",
         "reason": "Offline readiness only; no credentials, network, provisioning or publication."

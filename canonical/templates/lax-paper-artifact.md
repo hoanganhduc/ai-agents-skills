@@ -13,8 +13,8 @@ Before using the template:
    consistent. The CFF example uses JSON-compatible YAML for deterministic checks.
 3. Select a reviewed, published full commit of `ai-agents-skills` in the GitHub
    repository variable `AAS_SKILLS_REV`. The placeholder is intentionally not an
-   old commit lacking the verifier. Until this implementation is published by its
-   owner, validate entrypoints locally with the current source checkout.
+   old commit lacking the verifier. Check that the selected revision contains
+   the runtime and validate its entrypoints locally before configuring CI.
 4. Pin the action revisions after checking their upstream source. The workflow
    template uses reviewed full SHAs, not floating action tags.
 
@@ -28,8 +28,11 @@ release, enables Zenodo integration, uploads to Zenodo or submits/registers Lax.
 Leave optional Pages deployment and version-port probes as separately reviewed
 workflows. A Lax environment upgrade must not silently follow latest mathlib.
 
-Install `lean-strict-verification-gate` with the two artifact skills. The hosted
+Installing this template with `--with-deps` includes `lax-formalization`,
+`lean-strict-verification-gate` and `zenodo-artifact`. The hosted
 workflow requires the owner to set `AAS_SKILLS_REV` to a reviewed, published
 40-character commit that contains this runtime; a local uncommitted checkout
-cannot be used by GitHub Actions. Until that later GitHub operation is authorized,
-exercise the same trusted entrypoint locally. No test here claims a hosted run.
+cannot be used by GitHub Actions. Exercise the same trusted entrypoint locally
+before an authorized GitHub push. The local Lean/Docker qualification and the
+ai-agents-skills repository CI do not establish a hosted run of a paper workflow;
+record that run separately for the exact paper revision.

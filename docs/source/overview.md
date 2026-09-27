@@ -96,6 +96,8 @@ make verify ARGS="--root <fake-or-real-root>"
   entrypoints, and management notices.
 - [Dependencies](dependencies.md): logical tools, Python packages, and
   platform-specific detection behavior.
+- [Lax Formalization And Zenodo Archival](lax-formalization.md): independent
+  Lean verification, per-paper CI, safe migration and secondary archival.
 - [Workflow Overview](workflow-overview.md): how the research stack connects
   agents, skills, runtimes, and external software.
 - [Audit And Migration](audit-and-migration.md): how to inspect an existing

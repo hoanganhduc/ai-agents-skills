@@ -98,5 +98,39 @@ Safety rules:
 - instruction files are removed only when the installer created them and they
   become empty after managed block removal
 
+## Retired Skills And The Lax Migration
+
+An exact skill name removed from the current catalog can still be selected by
+`uninstall` or `rollback` when the selected root/agent's managed journal records
+it. It is not accepted as an ordinary `plan`, `install` or `verify` selection.
+An unknown retired name is not permission to delete a matching directory.
+
+For a former personal-library installation, preview both the replacement and
+the exact retired scope from the checkout:
+
+```bash
+make audit-system ARGS="--profile formal-research"
+make plan ARGS="--no-skills --artifact template:lax-paper-artifact --with-deps --runtime-profile auto"
+./installer/bootstrap.sh --agents codex uninstall --skill lean-research-library --dry-run
+```
+
+Replace `codex` with the actual target and select the correct root if necessary.
+The retired name above is only an uninstall example, not an available skill.
+Inspect the preview and recorded backups before applying through the scoped
+commands above. Back up installer state, and keep the run ID for recovery.
+
+Uninstall may restore pre-install backups or preserve edited files. Afterwards,
+inspect agent discovery paths, manual instruction blocks and runtime settings
+for old library routing. Rules outside managed blocks and user-owned configs
+require a separate reviewed edit; uninstall does not rewrite them. Disable only
+the obsolete staging/intake settings and preserve unrelated user configuration.
+Do not delete existing HoangMathLib repositories, Lean sources or Git history.
+
+Install the reviewed replacement, run managed `verify` and the offline Lax and
+Zenodo doctors, then check that the agent discovers the intended skills. These
+checks validate installation/readiness, not any paper proof. Keep historical
+plans and generic Lean skills; the replacement workflow is described in
+[Lax Formalization And Zenodo Archival](lax-formalization.md).
+
 Related pages: [Installation](installation.md), [Verification](verification.md),
 [Audit And Migration](audit-and-migration.md), [Agent Locations](agent-locations.md).

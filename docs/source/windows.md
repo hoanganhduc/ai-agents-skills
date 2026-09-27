@@ -23,8 +23,6 @@ Common commands from a native Windows shell:
 ./make.ps1 precheck --profile research-core
 ./make.ps1 plan --profile research-core
 ./make.ps1 install --profile research-core --dry-run
-./make.ps1 lifecycle-test --matrix default --platform-shape windows
-./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ./make.ps1 verify --root <fake-or-real-root>
 ./make.ps1 docs
 ./make.ps1 sanitize-check
@@ -36,7 +34,17 @@ place. The installer still detects only agent homes that already exist under
 `--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
 before planning. A fake root with no detected agent homes produces no actions.
 
-### Applying to a Windows profile from WSL
+For Windows-shaped lifecycle tests, run these from Linux/WSL:
+
+```bash
+make lifecycle-test ARGS="--matrix default --platform-shape windows"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape windows"
+```
+
+These commands perform writes inside fake roots. They test Windows-shaped
+layouts under a POSIX host, not native Windows mutation safety.
+
+## Applying to a Windows profile from WSL
 
 WSL is the supported way to apply to a Windows profile while the gate stands.
 The gate reads the host interpreter, not `--platform`, so `os.name` is `posix`
