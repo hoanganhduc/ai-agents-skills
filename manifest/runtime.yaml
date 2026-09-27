@@ -19,7 +19,8 @@
         "docling",
         "formal-skeleton-helper",
         "lean-formalization-intake",
-        "lean-research-library",
+        "lax-formalization",
+      "zenodo-artifact",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "get-available-resources",
@@ -221,6 +222,419 @@
     }
   ],
   "skills": {
+    "lax-formalization": {
+      "runtime_dir": "lax-formalization",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Offline readiness only; no credentials, network, provisioning or publication."
+      },
+      "files": [
+        {
+          "source": "skills/lax-formalization/Executor.Dockerfile",
+          "target": "workspace/skills/lax-formalization/Executor.Dockerfile",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/ci_verify.py",
+          "target": "workspace/skills/lax-formalization/ci_verify.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/container_entry.mjs",
+          "target": "workspace/skills/lax-formalization/container_entry.mjs",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/lax_adapter.mjs",
+          "target": "workspace/skills/lax-formalization/lax_adapter.mjs",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/lax_executor.py",
+          "target": "workspace/skills/lax-formalization/lax_executor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/lax_formalization.py",
+          "target": "workspace/skills/lax-formalization/lax_formalization.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/.github/workflows/package.yml",
+          "target": "workspace/skills/lax-formalization/paper-template/.github/workflows/package.yml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/.github/workflows/verify.yml",
+          "target": "workspace/skills/lax-formalization/paper-template/.github/workflows/verify.yml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/.gitignore",
+          "target": "workspace/skills/lax-formalization/paper-template/.gitignore",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/.lax-targets.json",
+          "target": "workspace/skills/lax-formalization/paper-template/.lax-targets.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/.zenodo.json",
+          "target": "workspace/skills/lax-formalization/paper-template/.zenodo.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/CITATION.cff",
+          "target": "workspace/skills/lax-formalization/paper-template/CITATION.cff",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/README.md",
+          "target": "workspace/skills/lax-formalization/paper-template/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/scripts/package.py",
+          "target": "workspace/skills/lax-formalization/paper-template/scripts/package.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/scripts/verify.py",
+          "target": "workspace/skills/lax-formalization/paper-template/scripts/verify.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/provision_executor.py",
+          "target": "workspace/skills/lax-formalization/provision_executor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/run_lax_formalization.ps1",
+          "target": "workspace/skills/lax-formalization/run_lax_formalization.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/run_lax_formalization.sh",
+          "target": "workspace/skills/lax-formalization/run_lax_formalization.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/lax-formalization/stop_children.mjs",
+          "target": "workspace/skills/lax-formalization/stop_children.mjs",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "lib/git_safety.py",
+          "target": "workspace/skills/lax-formalization/git_safety.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/lax-formalization/run_lax_formalization.sh",
+          "macos": "workspace/skills/lax-formalization/run_lax_formalization.sh",
+          "wsl": "workspace/skills/lax-formalization/run_lax_formalization.sh",
+          "windows": "workspace/skills/lax-formalization/run_lax_formalization.ps1",
+          "windows_ps1": "workspace/skills/lax-formalization/run_lax_formalization.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 20,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "publication_enabled",
+              "equals": false
+            }
+          ]
+        },
+        "env_canaries": {
+          "AAS_LAX_FORMALIZATION_TOKEN": "LAX-FORMALIZATION-SMOKE-CANARY"
+        }
+      }
+    },
+    "zenodo-artifact": {
+      "runtime_dir": "zenodo-artifact",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Offline readiness only; no credentials, network, provisioning or publication."
+      },
+      "files": [
+        {
+          "source": "skills/zenodo-artifact/run_zenodo_artifact.ps1",
+          "target": "workspace/skills/zenodo-artifact/run_zenodo_artifact.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zenodo-artifact/run_zenodo_artifact.sh",
+          "target": "workspace/skills/zenodo-artifact/run_zenodo_artifact.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zenodo-artifact/zenodo_artifact.py",
+          "target": "workspace/skills/zenodo-artifact/zenodo_artifact.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "lib/git_safety.py",
+          "target": "workspace/skills/zenodo-artifact/git_safety.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/zenodo-artifact/run_zenodo_artifact.sh",
+          "macos": "workspace/skills/zenodo-artifact/run_zenodo_artifact.sh",
+          "wsl": "workspace/skills/zenodo-artifact/run_zenodo_artifact.sh",
+          "windows": "workspace/skills/zenodo-artifact/run_zenodo_artifact.ps1",
+          "windows_ps1": "workspace/skills/zenodo-artifact/run_zenodo_artifact.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 20,
+        "writes": [
+          "home"
+        ],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "publication_enabled",
+              "equals": false
+            }
+          ]
+        },
+        "env_canaries": {
+          "AAS_ZENODO_ARTIFACT_TOKEN": "ZENODO-ARTIFACT-SMOKE-CANARY"
+        }
+      }
+    },
     "manim-math-animation": {
       "runtime_dir": "manim-math-animation",
       "smoke_coverage": {
@@ -7608,171 +8022,6 @@
               "minimum": 1
             }
           ]
-        }
-      }
-    },
-    "lean-research-library": {
-      "runtime_dir": "lean-research-library",
-      "smoke_coverage": {
-        "status": "offline-smoke",
-        "reason": "Doctor smoke reports tool/config state offline; every network verb is marked and excluded from smoke."
-      },
-      "files": [
-        {
-          "source": "skills/lean-research-library/lean_research_library.py",
-          "target": "workspace/skills/lean-research-library/lean_research_library.py",
-          "platforms": [
-            "linux",
-            "macos",
-            "windows",
-            "wsl"
-          ],
-          "type": "text",
-          "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/lean-research-library/run_lean_research_library.ps1",
-          "target": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/lean-research-library/run_lean_research_library.sh",
-          "target": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-          "platforms": [
-            "linux",
-            "macos",
-            "wsl"
-          ],
-          "type": "text",
-          "newline": "lf",
-          "mode": "0755"
-        }
-      ],
-      "smoke": {
-        "schema": "runtime-smoke.v1",
-        "mode": "offline",
-        "command": {
-          "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-          "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-          "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-          "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
-          "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
-        },
-        "args": [
-          "doctor"
-        ],
-        "timeout_seconds": 20,
-        "writes": [
-          "home"
-        ],
-        "safety": {
-          "network": "forbidden",
-          "live_api": "forbidden",
-          "package_install": "forbidden",
-          "server_start": "forbidden",
-          "config_write": "forbidden",
-          "real_secrets": "forbidden"
-        },
-        "secret_file_canaries": {
-          "pointer_env": "AAS_SKILL_SECRETS_FILE",
-          "format": "env",
-          "values": {
-            "ZENODO_TOKEN": "LEAN-RESEARCH-LIBRARY-SMOKE-CANARY"
-          }
-        },
-        "expect": {
-          "exit_code": 0,
-          "stdout_json": [
-            {
-              "path": "status",
-              "equals": "ok"
-            },
-            {
-              "path": "no_auto_install",
-              "equals": true
-            },
-            {
-              "path": "installs_attempted",
-              "equals": false
-            },
-            {
-              "path": "tool_status.lean.status",
-              "regex": "^(available|tool_unavailable)$"
-            },
-            {
-              "path": "network_required",
-              "equals": false
-            },
-            {
-              "path": "library_configured",
-              "type": "boolean"
-            }
-          ]
-        }
-      },
-      "functional_smoke": {
-        "status": {
-          "schema": "runtime-functional-smoke.v1",
-          "command": {
-            "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
-            "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
-          },
-          "args": [
-            "status"
-          ],
-          "timeout_seconds": 60,
-          "requires_python_modules": [],
-          "safety": {
-            "network": "forbidden"
-          },
-          "expect": {
-            "exit_code": 0,
-            "stdout_json": [
-              {
-                "path": "status",
-                "equals": "not-configured"
-              }
-            ]
-          }
-        }
-      },
-      "live_check": {
-        "ecosystem": {
-          "schema": "runtime-live-check.v1",
-          "command": {
-            "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-            "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
-            "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
-          },
-          "args": [
-            "doctor",
-            "--ecosystem"
-          ],
-          "timeout_seconds": 120,
-          "read_only": true,
-          "requires": {
-            "network": true
-          },
-          "expect": {
-            "exit_code": 0,
-            "stdout_json": [
-              {
-                "path": "ecosystem.latest_stable_mathlib",
-                "regex": "^v?\\d+"
-              }
-            ]
-          }
         }
       }
     }

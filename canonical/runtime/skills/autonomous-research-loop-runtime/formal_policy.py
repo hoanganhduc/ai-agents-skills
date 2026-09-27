@@ -41,6 +41,7 @@ PRIVILEGED_KEYS = frozenset(
         "typecheck",
         "force_after_iteration",
         "allow_create_skeleton",
+        "lax_request",
     }
 )
 _ENV_ON = frozenset({"1", "on", "true", "yes"})
@@ -88,8 +89,8 @@ ALLOWED_FORCE_SKILLS = frozenset(
         # Library-first reuse (F2') and user-gated intake proposals (F7').
         # search is read-only; intake only writes a proposal packet — the
         # user-gated apply/stage verbs stay outside the force-skill set.
-        "lean_research_library.search",
-        "lean_research_library.intake",
+        "lax_formalization.search",
+        "lax_formalization.verify",
     }
 )
 
@@ -99,12 +100,12 @@ BINDING_BLOCK = (
     "1. When path is formal-track: F1 intake → F2 Explore → F3 skeleton → F4a agent fill "
     "→ F4b OpenGauss optional interactive only → F5 strict gate → F6 fresh-context "
     "→ F7 acceptance.\n"
-    "1a. F2' library-first (BINDING): before formalizing any target statement, run "
-    "lean-research-library search for it; precedence mathlib > personal-library staging "
-    "> personal-library research > new formalization. Record the search evidence with "
-    "the skeleton. F7' after acceptance: lean-research-library intake may only WRITE A "
-    "PROPOSAL; staging, pushes, and any library mutation are user-gated — never run "
-    "them from the loop.\n"
+    "1a. For paper formalization use the Lax format: search pinned mathlib, then "
+    "Lax candidates, then formalize new. Independently verify reused Lax sources, "
+    "proof closure and statement meaning; registration is not proof evidence. "
+    "Freeze reviewed concepts and use the host-pinned lax-formalization request. "
+    "No private-library intake is required. Prepare local artifacts only; "
+    "publication is outside the loop. Generic Lean work keeps its strict gate.\n"
     "2. Never auto-spawn OpenGauss (refuse-by-default without headless_qualified driver).\n"
     "3. Evidence labels only: lean_declaration_search | opengauss_run | formal_scan | "
     "formal_typecheck. Never promote those to claim_support alone.\n"
@@ -160,6 +161,7 @@ def default_formal_config() -> dict[str, Any]:
         "typecheck": False,
         "force_after_iteration": False,
         "allow_create_skeleton": False,
+        "lax_request": "",
         "notes": [],
         "status": {
             "phase": "",
@@ -293,6 +295,8 @@ def _normalize_policy_dict(raw: dict[str, Any]) -> dict[str, Any]:
         cfg["policy"] = p if p in FORMAL_POLICIES else "off"
     if "project" in raw and raw["project"] is not None:
         cfg["project"] = str(raw["project"]).strip() or "formal/"
+    if "lax_request" in raw and raw["lax_request"] is not None:
+        cfg["lax_request"] = str(raw["lax_request"]).strip()
     if "force_credits" in raw:
         cfg["force_credits"] = _safe_int(raw.get("force_credits"), 3)
     for bkey in (
@@ -351,6 +355,7 @@ class FormalPolicy:
     typecheck: bool = False
     force_after_iteration: bool = False
     allow_create_skeleton: bool = False
+    lax_request: str = ""
     notes: list[str] = field(default_factory=list)
     status: dict[str, Any] = field(default_factory=dict)
     legacy_enabled: bool = False
@@ -366,6 +371,7 @@ class FormalPolicy:
             "typecheck": self.typecheck,
             "force_after_iteration": self.force_after_iteration,
             "allow_create_skeleton": self.allow_create_skeleton,
+            "lax_request": self.lax_request,
             "notes": list(self.notes),
             "status": dict(self.status),
         }
@@ -407,6 +413,8 @@ def load_formal_policy(
 
     if env.get("AAS_AUTOLOOP_FORMAL_PROJECT"):
         cfg["project"] = str(env["AAS_AUTOLOOP_FORMAL_PROJECT"]).strip() or cfg["project"]
+    if env.get("AAS_AUTOLOOP_LAX_REQUEST"):
+        cfg["lax_request"] = str(env["AAS_AUTOLOOP_LAX_REQUEST"]).strip()
     if env.get("AAS_AUTOLOOP_FORMAL_FORCE_CREDITS") is not None:
         cfg["force_credits"] = _safe_int(env.get("AAS_AUTOLOOP_FORMAL_FORCE_CREDITS"), 3)
     if "AAS_AUTOLOOP_FORMAL_ALLOW_PATH_STEAL" in env:
@@ -423,6 +431,8 @@ def load_formal_policy(
             cfg["policy"] = p if p in FORMAL_POLICIES else "off"
         if cli.get("project") is not None:
             cfg["project"] = str(cli["project"]).strip() or cfg["project"]
+        if cli.get("lax_request") is not None:
+            cfg["lax_request"] = str(cli["lax_request"]).strip()
         if cli.get("force_credits") is not None:
             cfg["force_credits"] = _safe_int(cli.get("force_credits"), 3)
         for bkey in (
@@ -454,6 +464,7 @@ def load_formal_policy(
         typecheck=bool(cfg.get("typecheck")),
         force_after_iteration=bool(cfg.get("force_after_iteration")),
         allow_create_skeleton=bool(cfg.get("allow_create_skeleton")),
+        lax_request=str(cfg.get("lax_request") or ""),
         notes=list(cfg.get("notes") or []),
         status=dict(cfg.get("status") or {}),
         legacy_enabled=legacy_enabled,
@@ -749,7 +760,7 @@ def formal_policy_panel_addon(
 
 def pin_privileged_policy(pol: FormalPolicy) -> dict[str, Any]:
     """Snapshot privileged keys for drive-start pin."""
-    return {
+    pin = {
         "policy": pol.policy,
         "project": pol.project,
         "force_credits": pol.force_credits,
@@ -757,9 +768,16 @@ def pin_privileged_policy(pol: FormalPolicy) -> dict[str, Any]:
         "typecheck": pol.typecheck,
         "force_after_iteration": pol.force_after_iteration,
         "allow_create_skeleton": pol.allow_create_skeleton,
+        "lax_request": pol.lax_request,
         "pinned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pin_source": "drive_start",
     }
+    if pol.lax_request:
+        try:
+            pin["lax_request_sha256"] = hashlib.sha256(_read_regular_text(Path(pol.lax_request)).encode()).hexdigest()
+        except OSError:
+            pin["lax_request_sha256"] = "unavailable"
+    return pin
 
 
 def write_host_pin(run_dir: Path, pin: dict[str, Any]) -> None:
@@ -799,6 +817,7 @@ def export_formal_env(pol: FormalPolicy) -> dict[str, str]:
         "AAS_AUTOLOOP_FORMAL_ALLOW_PATH_STEAL": "1" if pol.allow_path_steal else "0",
         "AAS_AUTOLOOP_FORMAL_TYPECHECK": "1" if pol.typecheck else "0",
         "AAS_AUTOLOOP_FORMAL_FORCE": "1" if pol.force_after_iteration else "0",
+        "AAS_AUTOLOOP_LAX_REQUEST": pol.lax_request,
     }
 
 
@@ -866,6 +885,8 @@ def resolve_formal_project(
                     continue
             if (resolved / "lakefile.toml").is_file() or (resolved / "lakefile.lean").is_file():
                 return resolved
+            if (resolved / "submission/manifest.yaml").is_file() and (resolved / "submission/concepts/lakefile.toml").is_file():
+                return resolved / "submission"
             if resolved.is_dir() and any(resolved.glob("**/lakefile.toml")):
                 # prefer dir itself if lakefile later; still return if named DbHam style
                 return resolved
@@ -918,6 +939,19 @@ def default_gate_runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
     payload (empty dict when the gate did not produce one, which callers must
     treat as "gate never ran", never as a clean result).
     """
+    if name == "lax_formalization.verify":
+        script = Path(__file__).resolve().parent.parent / "lax-formalization/lax_formalization.py"
+        if not script.is_file(): return {"ok": False, "status": "tool_unavailable", "report": {}}
+        # The receipt is copied into the host verdict. Proof artifacts stay in a
+        # private supervisor-created directory outside the candidate/run tree.
+        output = Path(tempfile.mkdtemp(prefix="aas-lax-check-")) / "evidence"
+        try:
+            completed = subprocess.run([sys.executable, str(script), "verify", "--request", str(payload["request"]), "--out", str(output)],
+                capture_output=True, text=True, encoding="utf-8", check=False)
+            report = json.loads(completed.stdout or "{}")
+            return {"ok": completed.returncode == 0, "status": report.get("status", "failed"), "report": report}
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return {"ok": False, "status": "unavailable", "detail": _redact_secrets(str(exc)[:200]), "report": {}}
     project = str(payload.get("project") or "")
     script = _locate_gate_script()
     if script is None:
@@ -1067,6 +1101,15 @@ def formal_force_tick(
                 "detail": str(proj) if proj else pol.project,
             }
         )
+
+        if proj and (proj / "manifest.yaml").is_file() and (proj / "concepts/lakefile.toml").is_file():
+            # The short hygiene tick cannot certify a two-package isolated
+            # rebuild. Do not misclassify legitimate concept axioms with the
+            # generic scanner or promote stale cached Lax evidence here.
+            report["ledger"].append({"step": "lax_verification", "decision": "deferred",
+                "detail": "Run host formal-terminal-state with the pinned Lax request; independent replay is required."})
+            _write_force_report(run_path, report)
+            return report
 
         # Gate project scan when available; crude scan is the honest fallback
         # and is recorded as "crude_fallback", never equated with a gate result.
@@ -1486,6 +1529,42 @@ def _run_axiom_audit(
     return summary
 
 
+def _evaluate_lax_terminal(project: Path, runner: Callable, pin: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"backend": "lax", "terminal_state": "indeterminate", "detail": "lax_request_not_pinned", "obligations": [], "gate": {}}
+    request_name = str(pin.get("lax_request") or "")
+    expected = str(pin.get("lax_request_sha256") or "")
+    if not request_name or not re.fullmatch(r"[a-f0-9]{64}", expected): return result
+    try:
+        raw = _read_regular_text(Path(request_name))
+        if hashlib.sha256(raw.encode()).hexdigest() != expected:
+            result["detail"] = "lax_request_changed"; return result
+        request = json.loads(raw)
+        requested_project = (Path(request["project_root"]) / request.get("submission", "submission")).resolve()
+        if requested_project != project.resolve():
+            result["detail"] = "lax_project_mismatch"; return result
+        response = runner("lax_formalization.verify", {"request": request_name, "project": str(project)})
+        report = response.get("report", {})
+        if report.get("schema_version") != "lax-verification.v1" or report.get("request_digest") != expected:
+            result["detail"] = "lax_evidence_unavailable_or_wrong_request"; return result
+        keys = ["backend", "source", "source_digest", "scope_digest", "challenge_digest", "request_digest",
+                "database_commit", "database_digest", "tools", "dependency_digests"]
+        binding = hashlib.sha256(json.dumps({k: report[k] for k in keys}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        result["gate"] = {"backend": "lax", "typecheck_status": "typechecked" if report.get("machine_status") == "passed" else "not_run",
+            "scan": {"coverage_digest": binding, "source_digest": binding, "source_digest_scope": "lax_all_verification_inputs", "findings": len(report.get("closure", {}).get("open", []))},
+            "lax": report}
+        if report.get("machine_status") != "passed": result["detail"] = "lax_machine_check_failed"
+        elif report.get("closure_status") != "closed":
+            result["terminal_state"] = "open_ledger"; result["detail"] = "lax_open_obligations"
+            result["obligations"] = [{"kind": "open_statement", "detail": x, "file": ""} for x in report.get("closure", {}).get("open", [])]
+        elif report.get("semantic_status") != "accepted": result["detail"] = "lax_semantic_review_pending"
+        elif response.get("ok") is not True: result["detail"] = "lax_verifier_refused"
+        else:
+            result["terminal_state"] = "sorry_free_artifact"; result["detail"] = "lax_verified_scope"
+        return result
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        result["detail"] = _redact_secrets(str(exc)[:200]); return result
+
+
 def evaluate_formal_terminal_state(
     run_dir: Path | str,
     *,
@@ -1549,6 +1628,10 @@ def evaluate_formal_terminal_state(
             _persist(verdict)
             return verdict
         active_runner = runner if runner is not None else default_gate_runner
+        if (proj / "manifest.yaml").is_file() and (proj / "concepts/lakefile.toml").is_file() and (proj / "proofs/lakefile.toml").is_file():
+            verdict.update(_evaluate_lax_terminal(proj, active_runner, dict(pin or pol.pin or read_host_pin(run_path))))
+            _persist(verdict)
+            return verdict
         scan_result = active_runner(
             "lean_strict_verification_gate.scan", {"project": str(proj)}
         )

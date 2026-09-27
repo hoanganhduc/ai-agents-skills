@@ -40,14 +40,15 @@ never silently escalates to `force`.
 
 ## Binding rules (when policy ≠ `off`)
 
-1. Formal-track positions: F1 intake → F2 Explore → F2' library reuse gate →
-   F3 skeleton → F4a agent fill → F4b OpenGauss optional interactive only →
-   F5 strict gate → F6 fresh-context → F7 acceptance → F7' library intake gate.
-1a. F2' library-first: run `lean-research-library search` per target statement;
-   precedence is normative: mathlib > personal library > peer satellite >
-   formalize new (`statement_only` hits are never reusable proofs). F7' intake
-   is proposal-only: staging, pushes, and library mutation stay user-gated and
-   never run from the loop.
+1. Formal-track positions: intake → Mathlib/Lax search → independent dependency
+   verification → skeleton/proofs → strict gate → semantic review → artifact evidence.
+   Registered Lax entries are unverified candidates until this workflow checks them.
+   Lax layouts require a host-owned outside-project request via
+   `AAS_AUTOLOOP_LAX_REQUEST` (or `lax_request` in policy). Host pin binds its bytes;
+   explicit terminal verification binds source, DB, tools and dependencies. Force
+   ticks defer this expensive check and never promote a terminal result.
+   Generic Lean retains its existing strict scanner/typecheck path. Neither path
+   stages a personal library or publishes anything. Zenodo preparation is secondary.
 2. Never auto-spawn OpenGauss without headless_qualified driver (MVP: refuse).
 3. Evidence labels only: `lean_declaration_search` | `opengauss_run` |
    `formal_scan` | `formal_typecheck`. Never promote those alone to claim_support.

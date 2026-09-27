@@ -94,7 +94,6 @@ class StaticCheckTests(unittest.TestCase):
             "OPENCLAW_S2_API_KEY",
             "SEMANTIC_SCHOLAR_API_KEY",
             "UNPAYWALL_EMAIL",
-            "ZENODO_TOKEN",
         }
         posix = Path("canonical/runtime/runners/run_skill.sh").read_text(encoding="utf-8")
         projection_blocks = []

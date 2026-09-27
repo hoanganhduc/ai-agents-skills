@@ -203,8 +203,6 @@ _allow(_S + "kaggle-research-compute/kaggle_driver.py", "run", "confirm dest",
        "the CLI contract retains these live-run options while multi-run execution is fail-closed")
 _allow(_W + "research_compute/cli.py", "command_wait", "config",
        "cli.py calls every command_* with (args, config)")
-_allow(_S + "lean-research-library/lean_research_library.py", "intake_payload", "cfg",
-       "every *_payload builder takes (cfg, args); intake reads only args")
 _allow(_S + "venue-ranking-evidence/venue_ranking_evidence.py", "parse_doaj", "final_url",
        "every parse_* source adapter takes (payload, final_url)")
 _allow(_S + "venue-ranking-evidence/venue_ranking_evidence.py", "parse_icore", "final_url",

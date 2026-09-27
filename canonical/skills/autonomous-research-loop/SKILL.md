@@ -242,10 +242,10 @@ Env: `AAS_AUTOLOOP_FORMAL_POLICY`, `AAS_AUTOLOOP_FORMAL_PROJECT`,
 `<loop>/formal/formal_policy.json` or `loop_state.standing_orders.formal`.
 
 When the committed path is **formal-track**, use positions F1–F7' from
-`informal-to-lean-formalization-runbook` (intake → Explore → F2' library reuse
-gate via `lean-research-library search` → skeleton → fill → optional
-interactive OpenGauss only → strict gate → fresh review → acceptance → F7'
-proposal-only library intake; staging/pushes stay user-gated).
+`informal-to-lean-formalization-runbook` (intake → Mathlib/Lax discovery →
+independent dependency verification → skeleton → proof → strict verification →
+fresh semantic review → paper artifact evidence). Lax projects require a host-pinned
+`AAS_AUTOLOOP_LAX_REQUEST`; only explicit terminal verification can complete them.
 Evidence labels (`lean_declaration_search`, `opengauss_run`, `formal_scan`,
 `formal_typecheck`) never alone set claim-support. Host force tick reports are
 hygiene: their `claim_support_status` comes from checks the host ran itself and
@@ -703,4 +703,4 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 - `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
 - `sample-arl-headless-driver-with-formal` -- thin formal-env layer only (not the force-loop default).
 
-When `formal_policy` is `auto`, `on`, or `force`, wire `lean-research-library` at F2' (search-first) and F7' (user-gated intake); staging and outward-facing actions batch at run boundaries and always wait for the user.
+When `formal_policy` is `auto`, `on`, or `force`, use Mathlib > independently verified Lax > new proofs. Keep artifacts per paper. `zenodo-artifact` only prepares offline bundles; no registration, push, release or publication runs from the loop.

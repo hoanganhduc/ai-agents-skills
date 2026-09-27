@@ -1,0 +1,8 @@
+{
+  "title": "<ARTIFACT-TITLE>",
+  "description": "<ARTIFACT-DESCRIPTION>",
+  "version": "<ARTIFACT-VERSION>",
+  "upload_type": "software",
+  "license": "Apache-2.0",
+  "creators": [{"name": "<FORMALIZER-NAME>"}]
+}

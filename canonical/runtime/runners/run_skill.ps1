@@ -143,9 +143,6 @@ $flatContracts = @{
             "SEMANTIC_SCHOLAR_API_KEY", "UNPAYWALL_EMAIL"
         )
     }
-    "skills\lean-research-library\run_lean_research_library.ps1" = @{
-        Pointer = "AAS_SKILL_SECRETS_FILE"; Format = "env"; Keys = @("ZENODO_TOKEN")
-    }
     "skills\zotero\zot.py" = @{
         Pointer = "AAS_ZOTERO_SECRETS_FILE"; Format = "json"; Keys = @(
             "ZOTERO_API_KEY", "WEBDAV_PASSWORD", "GDRIVE_CREDENTIALS",

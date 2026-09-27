@@ -1,0 +1,6 @@
+{
+  "name": "aas-qualified-lax-tooling",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {"lax-archive": "0.1.48"}
+}

@@ -1,0 +1,9 @@
+{
+  "cff-version": "1.2.0",
+  "message": "If you use this formalization, cite this source revision and its archived version.",
+  "type": "software",
+  "title": "<ARTIFACT-TITLE>",
+  "version": "<ARTIFACT-VERSION>",
+  "license": "Apache-2.0",
+  "authors": [{"family-names": "<FORMALIZER-FAMILY-NAME>", "given-names": "<FORMALIZER-GIVEN-NAMES>"}]
+}

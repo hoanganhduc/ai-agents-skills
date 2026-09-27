@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "lax-request.v1",
+  "required": [
+    "schema_version",
+    "project_root",
+    "database_root",
+    "environment",
+    "targets",
+    "challenge_root"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "lax-request.v1"
+    },
+    "project_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "submission": {
+      "type": "string",
+      "minLength": 1
+    },
+    "database_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment": {
+      "const": "v4.33.0"
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "challenge_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dependencies": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^lax-[1-9][0-9]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "semantic_review": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reviewer",
+        "challenge_sha256",
+        "scope_digest"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "pending",
+            "rejected"
+          ]
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "challenge_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "scope_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

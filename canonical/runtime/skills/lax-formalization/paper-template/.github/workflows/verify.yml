@@ -1,0 +1,77 @@
+name: Lax machine verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      package:
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      package:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LAX_DISABLE_UPDATE_CHECK: '1'
+      LAX_HOME: ${{ runner.temp }}/lax-home
+      AAS_SKILLS_REV: ${{ vars.AAS_SKILLS_REV }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: project
+          persist-credentials: false
+      - name: Require a reviewed runtime revision
+        shell: bash
+        run: '[[ "$AAS_SKILLS_REV" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: hoanganhduc/ai-agents-skills
+          ref: ${{ env.AAS_SKILLS_REV }}
+          path: aas
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install locked authoring tools without package scripts
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --install-strategy=nested --prefix aas/tools/lax-ci
+          echo "$GITHUB_WORKSPACE/aas/tools/lax-ci/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Provision trusted inputs before reading candidate Lean
+        run: |
+          lax doctor
+          python3 -B aas/canonical/runtime/skills/lax-formalization/provision_executor.py --apply
+      - name: Check the actual source revision; semantic review remains separate
+        run: |
+          python3 -B aas/canonical/runtime/skills/lax-formalization/ci_verify.py \
+            --project "$GITHUB_WORKSPACE/project" \
+            --state-dir "$RUNNER_TEMP/lax-check"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: lax-verification-${{ github.sha }}
+          path: ${{ runner.temp }}/lax-check/evidence/verification.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Prepare an explicit nonpublished archive
+        if: inputs.package == true
+        run: |
+          python3 -B aas/canonical/runtime/skills/zenodo-artifact/zenodo_artifact.py prepare \
+            --project "$GITHUB_WORKSPACE/project" \
+            --evidence "$RUNNER_TEMP/lax-check/evidence/verification.json" \
+            --metadata "$GITHUB_WORKSPACE/project/.zenodo.json" \
+            --out "$RUNNER_TEMP/archive-bundle"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: inputs.package == true
+        with:
+          name: source-and-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/archive-bundle/
+          if-no-files-found: error
+          retention-days: 14

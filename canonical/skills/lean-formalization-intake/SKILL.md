@@ -86,9 +86,10 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `informal-to-lean-formalization-runbook` -- Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.
 
-## Personal library cooperation
+## Lax cooperation
 
-When `lean-research-library` is installed, run its `search` verb alongside
-intake (before formalizing: mathlib > personal library > formalize new), and
-after an accepted result run its `intake` verb — its user-approval gate, not
-this skill, decides whether anything enters the personal library.
+Search Mathlib, then use `lax-formalization search` before proving new results.
+Search hits and registered entries are candidates, not accepted proof evidence.
+Independently verify exact sources, dependency closure and semantic correspondence.
+Keep results in the paper repository; use `zenodo-artifact` for optional offline
+archival preparation. Intake never registers or publishes anything.

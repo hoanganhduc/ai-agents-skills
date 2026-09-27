@@ -13,7 +13,8 @@ STDLIB_ONLY_SKILLS = (
     "send-email",
     "remote-bridge",
     "submission-venue-selector",
-    "lean-research-library",
+    "lax-formalization",
+    "zenodo-artifact",
     "axiom-axle-mcp",
     "autonomous-research-loop-runtime",
 )
@@ -67,9 +68,11 @@ class StdlibOnlySkillsTests(unittest.TestCase):
             for skill in STDLIB_ONLY_SKILLS
         ]
         roots_and_paths.append((SKILLS / "zotero", _delivery_modules()))
+        shared = SKILLS.parent / "lib"
+        roots_and_paths.append((shared, set(shared.rglob("*.py"))))
         failures = []
         for root, paths in roots_and_paths:
-            local = _local_modules(root)
+            local = _local_modules(root) | _local_modules(shared)
             for path in sorted(paths):
                 for line_number, module in _imports(path):
                     if module not in sys.stdlib_module_names and module not in local:

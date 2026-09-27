@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "lax-reuse.v1",
+  "properties": {
+    "schema_version": {
+      "const": "lax-reuse.v1"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "coverage_status": {
+      "enum": [
+        "local-catalog",
+        "unavailable",
+        "incomplete",
+        "truncated"
+      ]
+    },
+    "candidates": {
+      "type": "array"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "query",
+    "environment",
+    "coverage_status",
+    "candidates",
+    "limitations"
+  ]
+}

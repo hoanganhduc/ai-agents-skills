@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "lax-verification.v1",
+  "properties": {
+    "schema_version": {
+      "const": "lax-verification.v1"
+    },
+    "backend": {
+      "const": "lax"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "machine_status": {
+      "enum": [
+        "passed",
+        "failed",
+        "not_run"
+      ]
+    },
+    "closure_status": {
+      "enum": [
+        "closed",
+        "open",
+        "unknown"
+      ]
+    },
+    "semantic_status": {
+      "enum": [
+        "accepted",
+        "pending",
+        "rejected"
+      ]
+    },
+    "publication_status": {
+      "enum": [
+        "local",
+        "registered"
+      ]
+    },
+    "publication_enabled": {
+      "const": false
+    },
+    "submission_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "submission_folder": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "object"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "scope_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "challenge_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "request_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "database_commit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "database_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "tools": {
+      "type": "object"
+    },
+    "capture": {
+      "type": "object"
+    },
+    "phases": {
+      "type": "array"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "closure": {
+      "type": "object"
+    },
+    "verified_proofs": {
+      "type": "array"
+    },
+    "dependency_digests": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "backend",
+    "status",
+    "machine_status",
+    "closure_status",
+    "semantic_status",
+    "publication_status",
+    "publication_enabled",
+    "submission_id",
+    "submission_folder",
+    "source",
+    "source_digest",
+    "scope_digest",
+    "challenge_digest",
+    "request_digest",
+    "database_commit",
+    "database_digest",
+    "tools",
+    "capture",
+    "phases",
+    "coverage",
+    "closure",
+    "verified_proofs",
+    "dependency_digests",
+    "limitations",
+    "targets"
+  ]
+}

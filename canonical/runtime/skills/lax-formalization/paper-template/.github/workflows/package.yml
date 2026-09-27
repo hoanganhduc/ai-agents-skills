@@ -1,0 +1,10 @@
+name: Review archival readiness
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-exact-revision:
+    uses: ./.github/workflows/verify.yml
+    with:
+      package: true

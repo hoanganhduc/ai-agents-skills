@@ -47,10 +47,11 @@ NON_ADOPTING_COMMANDS = (
         "smoke",
     ),
     (
-        "skills/lean-research-library/run_lean_research_library.sh",
+        "skills/lax-formalization/run_lax_formalization.sh",
         ("doctor",),
         "doctor",
     ),
+    ("skills/zenodo-artifact/run_zenodo_artifact.sh", ("doctor",), "doctor"),
     ("skills/send-email/run_send_email.sh", ("--help",), "help"),
     ("skills/send-email/send_email.py", ("--help",), "help"),
     ("skills/remote-bridge/run_remote_bridge.sh", ("--help",), "help"),
@@ -146,6 +147,11 @@ class WrapperVenvArgv0Tests(unittest.TestCase):
             for path in cls.runtime.rglob("*"):
                 if not path.is_symlink():
                     path.chmod(0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644)
+            # Shared first-party modules are delivered beside each helper by
+            # the manifest; reproduce that closure in this direct-copy fixture.
+            for skill in ["lax-formalization", "zenodo-artifact"]:
+                shutil.copy2(REPO / "canonical/runtime/lib/git_safety.py",
+                             cls.runtime / "workspace/skills" / skill / "git_safety.py")
             for command, _, _ in (*ADOPTING_COMMANDS, *NON_ADOPTING_COMMANDS):
                 (cls.runtime / "workspace" / command).chmod(0o755)
             cls.runtime.chmod(0o700)

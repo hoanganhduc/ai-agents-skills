@@ -276,7 +276,7 @@ class RuntimePythonBlockManifestTests(unittest.TestCase):
                 armed.update(match.group(1).split("|"))
         manifest = json.loads((REPO_ROOT / "manifest/credential-runtime.json").read_text(encoding="utf-8"))
         declared = {command for consumer in manifest["consumers"] for command in consumer["commands"]}
-        self.assertEqual(len(armed), 25)
+        self.assertEqual(len(armed), 24)  # The retired Zenodo publication route is absent.
         self.assertEqual(armed, declared)
 
     def test_every_declared_skill_has_the_planned_modules_and_provision(self) -> None:

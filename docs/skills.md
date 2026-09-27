@@ -46,9 +46,9 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `hetzner-research-compute` | Route heavy CPU or high-memory compute to a disposable Hetzner Cloud server through the local broker, with agent-driven provision, run, collect, and destroy under hard cost caps. | `full-research` |
 | `intent-interview` | Elicit and confirm real intent one question at a time before any brief, spec, or code. | `research-core`, `serious-research`, `full-research` |
 | `kaggle-research-compute` | Route heavy compute to free Kaggle Kernels through the local broker, with agent-driven push, poll, fetch, and a multi-run resume loop across concurrent kernels; free CPU (quota-free) and GPU under a self-imposed weekly GPU-hour cap. | `full-research` |
+| `lax-formalization` | Formalize paper results in the Lax format with independently checked reuse, isolated replay and source-bound evidence; no publication. | `formal-research`, `formal-research-remote`, `full-research` |
 | `lean-explore-mcp` | Optional inert LeanExplore MCP setup helper for Lean declaration search. | `formal-research`, `formal-research-remote`, `full-research` |
 | `lean-formalization-intake` | Optional local-first Lean formalization intake and suitability decision workflow. | `formal-research`, `formal-research-remote`, `full-research` |
-| `lean-research-library` | Use when any Lean formalization task starts (reuse Mathlib and the personal research library first) or ends (user-gated intake of results into the library, mathlib-PR flagging, paper-artifact scaffolding and gated Zenodo publishing). | `formal-research`, `formal-research-remote`, `full-research` |
 | `lean-strict-verification-gate` | Scanner-first Lean artifact verification gate that separates typecheck status from claim support. | `formal-research`, `formal-research-remote`, `full-research` |
 | `manim-math-animation` | Render Manim math animations (handwritten-style equation Write, equation morphing, emphasis) to a silent clip normalized for splicing into slides-to-video or standalone use. | `media`, `full-research` |
 | `modal-research-compute` | Route heavy compute through the unified local broker, including Modal-backed remote CPU, high-memory CPU, and GPU execution. | `full-research` |
@@ -78,6 +78,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
 | `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and hand explicit file delivery to the authenticated host queue. |  |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
+| `zenodo-artifact` | Prepare and validate an offline source-and-evidence bundle for optional Zenodo archival; no uploads, DOI reservation or publication. | `formal-research`, `formal-research-remote`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |
 
 Related pages: [Installation](installation.md), [Verification](verification.md), [Agent Locations](agent-locations.md).

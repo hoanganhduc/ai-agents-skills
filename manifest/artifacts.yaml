@@ -30,7 +30,9 @@
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
         "template:tikz-figure-verification-runbook",
-        "template:compute-offload-sizing-gate"
+        "template:compute-offload-sizing-gate",
+        "instruction-doc:autonomous-loop-formal-policy",
+        "template:lax-paper-artifact"
       ]
     },
     "serious-research": {
@@ -57,7 +59,8 @@
         "instruction-doc:writing-style-settings",
         "instruction-doc:math-manuscript-style",
         "instruction-doc:graph-combinatorics-style",
-        "instruction-doc:mathscinet-zbmath-review-style"
+        "instruction-doc:mathscinet-zbmath-review-style",
+        "instruction-doc:autonomous-loop-formal-policy"
       ]
     },
     "workflow-instructions": {
@@ -224,7 +227,9 @@
         "entrypoint-alias:slides-to-video",
         "entrypoint-alias:manim-math-animation",
         "entrypoint-alias:url-to-screenshot",
-        "management-notice:repo-management"
+        "management-notice:repo-management",
+        "instruction-doc:autonomous-loop-formal-policy",
+        "template:lax-paper-artifact"
       ]
     }
   },
@@ -662,7 +667,8 @@
         ],
         "depends_on_skills": [
           "lean-formalization-intake",
-          "lean-research-library",
+          "lax-formalization",
+          "zenodo-artifact",
           "formal-skeleton-helper",
           "lean-explore-mcp",
           "lean-strict-verification-gate",
@@ -717,6 +723,21 @@
           "decision-doubt-loop",
           "agent-group-discuss",
           "model-router"
+        ]
+      },
+      "lax-paper-artifact": {
+        "description": "Shared Lax source, independent CI and optional nonpublishing Zenodo archive template.",
+        "source": "lax-paper-artifact.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity"
+        ],
+        "depends_on_skills": [
+          "lax-formalization",
+          "zenodo-artifact"
         ]
       }
     },
@@ -973,6 +994,17 @@
           "cross-agent-delegation",
           "agent-group-discuss",
           "model-router"
+        ]
+      },
+      "autonomous-loop-formal-policy": {
+        "description": "Host-pinned generic Lean and Lax terminal verification policy; independently verified reuse and no publication.",
+        "source": "autonomous-loop-formal-policy.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity"
         ]
       }
     },

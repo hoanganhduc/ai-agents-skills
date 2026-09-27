@@ -4371,7 +4371,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
         wrappers = {
             "deep-research-workflow": ("run_deep_research_workflow.ps1", "deep_research_workflow.py"),
             "lean-formalization-intake": ("run_lean_formalization_intake.ps1", "lean_formalization_intake.py"),
-            "lean-research-library": ("run_lean_research_library.ps1", "lean_research_library.py"),
+            "lax-formalization": ("run_lax_formalization.ps1", "lax_formalization.py"),
+            "zenodo-artifact": ("run_zenodo_artifact.ps1", "zenodo_artifact.py"),
             "lean-strict-verification-gate": (
                 "run_lean_strict_verification_gate.ps1",
                 "lean_strict_verification_gate.py",
@@ -4451,7 +4452,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
         wrappers = {
             "deep-research-workflow": ("run_deep_research_workflow.ps1", "deep_research_workflow.py"),
             "lean-formalization-intake": ("run_lean_formalization_intake.ps1", "lean_formalization_intake.py"),
-            "lean-research-library": ("run_lean_research_library.ps1", "lean_research_library.py"),
+            "lax-formalization": ("run_lax_formalization.ps1", "lax_formalization.py"),
+            "zenodo-artifact": ("run_zenodo_artifact.ps1", "zenodo_artifact.py"),
             "lean-strict-verification-gate": ("run_lean_strict_verification_gate.ps1", "lean_strict_verification_gate.py"),
             "self-improving-agent": ("run_self_improving_agent.ps1", "self_improving_agent.py"),
         }
@@ -4508,7 +4510,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
         for skill in (
             "deep-research-workflow",
             "lean-formalization-intake",
-            "lean-research-library",
+            "lax-formalization",
+            "zenodo-artifact",
             "lean-strict-verification-gate",
             "self-improving-agent",
         ):

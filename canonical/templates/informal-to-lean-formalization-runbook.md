@@ -48,14 +48,14 @@ Apply every phase, in order.
 |---|---|---|---|---|---|
 | F1. Intake & suitability | Local-first decision on whether to formalize and at what granularity. | `lean-formalization-intake` |  |  |  |
 | F2. Declaration map | Map each informal step to a Lean declaration; search for reusable Mathlib results first. | `lean-explore-mcp` |  |  |  |
-| F2'. Library reuse gate | Run `lean-research-library search` per target statement; precedence is normative: mathlib > personal library > peer satellite > formalize new. `statement_only` hits are never reusable proofs. | `lean-research-library` |  |  |  |
+| F2'. Reuse gate | Search Mathlib, then `lax-formalization search` per target. Independently rebuild/check exact Lax candidates and dependency closure; review the statement correspondence before reuse. | `lax-formalization` |  |  |  |
 | F3. Skeleton | Emit minimal statement stubs and namespace wrappers with explicit `sorry` placeholders. | `formal-skeleton-helper` |  |  |  |
 | F4a. Fill & track (agent/Mathlib) | Discharge each `sorry` via reuse and local proof work; track blockers. | `lean-explore-mcp` |  |  |  |
 | F4b. OpenGauss fill (optional) | When `opengauss doctor` is ready and live install exists, use guided `/prove` or `/draft` only; record `opengauss_run` provenance — never claim-support. | `opengauss` |  |  |  |
 | F5. Strict verify | Scanner-first verification; report typecheck status and claim-support status separately. | `lean-strict-verification-gate` |  |  |  |
 | F6. Fresh-context cross-check | A different context independently confirms both typecheck and claim support. | `cross-agent-delegation`, `decision-doubt-loop` |  |  |  |
 | F7. Acceptance | Decide `verified` or `not-ready`; both a clean typecheck and confirmed claim support are required. |  |  |  |  |
-| F7'. Library intake gate | After acceptance (for paper-artifact campaigns: once, after the FULL formalization), run `lean-research-library intake`. Candidate criterion: absent from mathlib AND the library (search-verified) AND useful beyond the immediate task — otherwise it stays in the paper repo. Present proposals with usefulness justifications and ASK THE USER before any `stage --apply`. Staging and anything outward-facing (repos, pushes, Zenodo) stay user-gated even in autonomous runs. | `lean-research-library` |  |  |  |
+| F7'. Artifact gate | Keep accepted results in the paper repository. Verify the exact source revision and record scope, dependencies, semantic review and open obligations. Prepare an optional secondary archive offline. No registration or publication in this workflow. | `lax-formalization`, `zenodo-artifact` |  |  |  |
 
 ## Intake and Suitability Gate (F1)
 
@@ -318,11 +318,14 @@ Recommended next action:
 
 ## Paper-to-artifact pipeline (autonomous runs)
 
-For end-to-end "formalize this paper" requests, drive F1-F7' with
-`autonomous-research-loop` (`formal_policy: force`, headless drive). Set
-`closed_deps: true` in the lean-research-library config when the run must use
-only Lean core, Mathlib, and the personal library. The run terminates in one
-of exactly two states, decided by `lean-strict-verification-gate`: a
-sorry-free artifact scaffolded via `lean-research-library artifact new`, or an
-honest ledger of open statements. Approval gates batch at run boundaries:
-library staging and artifact publication always wait for the user.
+For end-to-end "formalize this paper" requests, use a paper repository with
+Lax concepts/proofs packages and a fixed Lean/mathlib environment. Search Mathlib,
+then independently verified Lax candidates before writing new proofs. Preserve
+GitHub verification workflows and explicit archive preparation from
+`lax-paper-artifact`. Generic Lean projects keep their existing strict gate.
+
+For ARL, provide an outside-project host-owned `AAS_AUTOLOOP_LAX_REQUEST`.
+Terminal acceptance requires fresh machine verification, closed dependencies and
+accepted semantic review over the exact target scope. Otherwise retain an honest
+open ledger or indeterminate status. There is no private-library intake step.
+Registration, GitHub releases and Zenodo publication remain outside this run.

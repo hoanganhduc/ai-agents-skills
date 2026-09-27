@@ -9,7 +9,7 @@ if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
 fi
 unset AAS_RUNTIME_COMMAND_FD AAS_RUNTIME_COMMAND_PATH
 SCRIPT_DIR="$(cd "$(dirname "$script_path")" && pwd -P)"
-SCRIPT="$SCRIPT_DIR/lean_research_library.py"
+SCRIPT="$SCRIPT_DIR/zenodo_artifact.py"
 
 if [[ ! -f "$SCRIPT" ]]; then
   printf 'runtime helper not found: %s\n' "$SCRIPT" >&2

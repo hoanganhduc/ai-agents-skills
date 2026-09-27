@@ -31,6 +31,7 @@ from .external_dependencies import (
 )
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
+from .lifecycle import lifecycle_records, lifecycle_record_schema_issue, load_run_actions
 from .lifecycle_matrix import run_lifecycle_matrix
 from .library_profiles import SYSTEM_PROFILES, audit_library_profiles
 from .manifest import load_manifests, skill_names
@@ -2035,6 +2036,21 @@ def resolve_skill_filter(args: argparse.Namespace, manifests: dict[str, Any]) ->
     resolved = set()
     for item in raw:
         canonical = canonical_skill_name(item, manifests)
+        if canonical is None and getattr(args, "command", None) in {"uninstall", "rollback"}:
+            # Catalog removal must not strand managed installations. Only an
+            # exact name already present in this root's journal is admissible;
+            # ordinary install/plan selection remains catalog-only.
+            state = load_state(args.root)
+            records = lifecycle_records(state)
+            run_id = getattr(args, "run", None)
+            if args.command == "rollback" and run_id:
+                records = [*records, *load_run_actions(args.root, state, run_id)]
+            agents = set(split_csv(args.agents)) if getattr(args, "agents", None) else None
+            if any(lifecycle_record_schema_issue(record) is None
+                   and record.get("skill") == item
+                   and (agents is None or record.get("agent") in agents)
+                   for record in records):
+                canonical = item
         if canonical is None:
             raise ValueError(f"unknown skill: {item}")
         resolved.add(canonical)

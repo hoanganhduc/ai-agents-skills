@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
 
-$script = Join-Path $PSScriptRoot "lean_research_library.py"
+$script = Join-Path $PSScriptRoot "lax_formalization.py"
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
     [Console]::Error.WriteLine("runtime helper not found: $script")
     exit 127

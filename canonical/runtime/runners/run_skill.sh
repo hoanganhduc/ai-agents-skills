@@ -198,11 +198,6 @@ case "$command_rel" in
     [ -n "$skill_pointer" ] && export AAS_SKILL_SECRETS_FILE="$skill_pointer"
     select_flat_projection AAS_SKILL_SECRETS_FILE env SEMANTIC_SCHOLAR_API_KEY UNPAYWALL_EMAIL
     ;;
-  skills/lean-research-library/run_lean_research_library.sh)
-    credential_contract=1
-    [ -n "$skill_pointer" ] && export AAS_SKILL_SECRETS_FILE="$skill_pointer"
-    select_flat_projection AAS_SKILL_SECRETS_FILE env ZENODO_TOKEN
-    ;;
   skills/zotero/run_zot.sh)
     credential_contract=1
     zotero_pointer="$(default_private_projection "$zotero_pointer" zotero-secrets.json)"

@@ -1,0 +1,7 @@
+**/.lake/
+**/lake-manifest.json
+**/build-output.json
+**/paper.pdf
+**/paper-web.tar
+/tools/node_modules/
+/output/
