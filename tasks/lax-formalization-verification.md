@@ -1,8 +1,9 @@
 # Lax workflow migration — delivery verification
 
 Scope: the approved local T0–T8 migration, a bounded independent benchmark and
-offline archival preparation. No remote publication was performed. Main-repository
-changes remain local and uncommitted; this does not imply a hosted CI run.
+offline archival preparation. This report records the local acceptance checkpoint
+before the separately authorized GitHub push. At that checkpoint main-repository
+changes were uncommitted; hosted CI results are tracked separately on GitHub.
 
 ## Delivered
 

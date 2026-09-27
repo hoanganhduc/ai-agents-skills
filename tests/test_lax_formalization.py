@@ -145,6 +145,7 @@ class ExecutorPolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unqualified local Git"):
                 ex.git(root, "status", "--porcelain")
 
+    @unittest.skipUnless(os.name == "posix", "executor cache ownership requires POSIX")
     def test_fingerprint_cache_never_replaces_content_pin(self):
         import lax_executor as ex
         with tempfile.TemporaryDirectory() as d:
@@ -168,6 +169,7 @@ class ExecutorPolicyTests(unittest.TestCase):
             child=root/'child';child.mkdir()
             with self.assertRaisesRegex(ValueError,'ancestor discovery'):ex.git(child,'status','--porcelain')
 
+    @unittest.skipUnless(os.name == "posix", "host Git supervisor requires POSIX process limits")
     def test_github_checkout_gc_setting_is_admitted_but_not_arbitrary_gc(self):
         import lax_executor as ex
         with tempfile.TemporaryDirectory() as d:
@@ -186,6 +188,10 @@ class ExecutorPolicyTests(unittest.TestCase):
                 ex.admit_capture(root, {"rootModule": "Lax1Proofs", "modules": ["Lax1Proofs.Result"]}, root)
 
     def test_container_boundary_has_no_network_or_engine_mount(self):
+        if sys.platform != "linux" or os.getuid() == 0:
+            with self.assertRaisesRegex(ValueError, "requires a non-root Linux/WSL operator"):
+                lax.container_options("test-123", "sha256:" + "a"*64, [], writable=False)
+            return
         args = lax.container_options("test-123", "sha256:" + "a"*64, [], writable=False)
         self.assertIn("--network=none", args)
         self.assertIn("--read-only", args)

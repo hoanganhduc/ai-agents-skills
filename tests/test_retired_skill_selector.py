@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -33,6 +34,7 @@ class RetiredSelectorTests(unittest.TestCase):
         with patch("installer.ai_agents_skills.cli.load_state", return_value={"uninstall_records": [self.record()]}):
             self.assertEqual(resolve_skill_filter(self.args("rollback"), self.manifests()), {"lean-research-library"})
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is intentionally disabled")
     def test_real_journal_survives_catalog_removal_and_preserves_edits(self):
         import tempfile
         from installer.ai_agents_skills.manifest import load_manifests
