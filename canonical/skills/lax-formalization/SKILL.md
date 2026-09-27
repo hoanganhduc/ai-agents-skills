@@ -9,6 +9,12 @@ Use the official Lax layout and validator while keeping independent verification
 separate from archive registration. A registered result is a candidate, not a
 proof certificate. Reading a paper alone does not authorize formalization.
 
+For a full paper job, selected reuse from an existing Lean repository, or an
+artifact update, use the `lax-paper-workflow` runbook. It produces a **new**
+publication repository from read-only research source, with explicit file
+selection and privacy/correspondence gates. See
+[workflow helpers](references/workflow.md) for the executable interfaces.
+
 1. Agree the claim scope, definitions and relevant transitive dependencies.
    Locate the source paper through the usual library-first workflow when needed.
 2. Search the **pinned mathlib** first, then the Lax catalog. Check statement

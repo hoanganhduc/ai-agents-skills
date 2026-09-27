@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper-versions.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "papers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "paper-versions.v1"
+    },
+    "papers": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "bibliographic entry",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "version",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "kind": {
+            "enum": [
+              "arxiv",
+              "conference",
+              "journal",
+              "correction",
+              "manuscript"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "doi": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "venue": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "year": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 9999
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "relation": {
+            "enum": [
+              "extends",
+              "corrects",
+              "version-of"
+            ]
+          },
+          "related_to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      }
+    }
+  }
+}

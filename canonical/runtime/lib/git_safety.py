@@ -20,7 +20,7 @@ def admit_git_config(root: Path, env: dict[str, str], *, allow_init: bool = Fals
     # --file and --no-includes read configuration as data, without entering
     # the repository or invoking any worktree conversion/filter operation.
     output = subprocess.check_output(["git", "config", "--file", str(config),
-        "--no-includes", "--null", "--list"], env=env, cwd="/", timeout=10)
+        "--no-includes", "--null", "--list"], env=env, cwd="/", stderr=subprocess.DEVNULL, timeout=10)
     core = {"core.repositoryformatversion", "core.filemode", "core.bare",
             "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode"}
     for item in output.decode().split("\0"):

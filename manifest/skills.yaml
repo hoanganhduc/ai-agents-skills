@@ -1818,7 +1818,8 @@
         "lean-tool-detection"
       ],
       "recommended_templates": [
-        "lax-paper-artifact"
+        "lax-paper-artifact",
+        "lax-paper-workflow"
       ],
       "verification": [
         "file-exists",
@@ -1847,7 +1848,8 @@
       "optional_dependencies": [],
       "optional_capabilities": [],
       "recommended_templates": [
-        "lax-paper-artifact"
+        "lax-paper-artifact",
+        "lax-paper-workflow"
       ],
       "verification": [
         "file-exists",

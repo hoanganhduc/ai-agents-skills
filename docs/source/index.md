@@ -29,6 +29,7 @@ Latest update: {sub-ref}`today`
 - Lean paper formalization: use
   [Lax Formalization And Zenodo Archival](lax-formalization.md) for independently
   verified reuse, per-paper CI, migration and the secondary archival option.
+  For the complete new-repository job, use [Lax Paper Workflow](lax-paper-workflow.md).
 - Runtime-backed skill questions: use [Installation](installation.md) for
   runtime roots and inventory boundaries, then [Dependencies](dependencies.md)
   for Docling/OCR and local config notes.
@@ -86,6 +87,7 @@ overview
 workflow-overview
 multi-agent-examples
 lax-formalization
+lax-paper-workflow
 lean-formalization-benchmarks
 submission-venue-selector-plan
 course-management

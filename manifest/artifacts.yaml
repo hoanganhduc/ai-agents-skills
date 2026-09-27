@@ -32,7 +32,8 @@
         "template:tikz-figure-verification-runbook",
         "template:compute-offload-sizing-gate",
         "instruction-doc:autonomous-loop-formal-policy",
-        "template:lax-paper-artifact"
+        "template:lax-paper-artifact",
+        "template:lax-paper-workflow"
       ]
     },
     "serious-research": {
@@ -229,7 +230,8 @@
         "entrypoint-alias:url-to-screenshot",
         "management-notice:repo-management",
         "instruction-doc:autonomous-loop-formal-policy",
-        "template:lax-paper-artifact"
+        "template:lax-paper-artifact",
+        "template:lax-paper-workflow"
       ]
     }
   },
@@ -723,6 +725,23 @@
           "decision-doubt-loop",
           "agent-group-discuss",
           "model-router"
+        ]
+      },
+      "lax-paper-workflow": {
+        "description": "New-repository Lax paper workflow: verified reuse, source selection, privacy, paper-version correspondence and optional Zenodo preparation.",
+        "source": "lax-paper-workflow.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity"
+        ],
+        "depends_on_skills": [
+          "lax-formalization",
+          "lean-strict-verification-gate",
+          "zenodo-artifact",
+          "get-available-resources"
         ]
       },
       "lax-paper-artifact": {

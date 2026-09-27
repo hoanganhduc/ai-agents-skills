@@ -25,6 +25,25 @@ class LaxInstallDependencyTests(unittest.TestCase):
         self.assertIn("lean-strict-verification-gate", selected)
 
     @unittest.skipIf(os.name == "nt", "native Windows mutation is disabled")
+    def test_workflow_partial_install_executes_new_helpers_from_installed_tree(self):
+        manifests = load_manifests(); artifacts = [("template", "lax-paper-workflow")]
+        skills = sorted(artifact_dependency_skills(artifacts, manifests))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); (root / ".codex").mkdir(); runtime = root / "runtime"
+            plan = build_plan(root, manifests, skills, detect_agents(root), artifacts=artifacts,
+                              runtime_profile="auto", runtime_root=runtime, install_mode="copy")
+            apply_plan(root, plan, dry_run=False)
+            self.assertTrue((root / ".codex/templates/lax-paper-workflow.md").is_file())
+            folder = runtime / "workspace/skills/lax-formalization"
+            for name in ["public_source.py", "workflow_check.py"]:
+                r = subprocess.run([sys.executable, "-I", "-B", "-c",
+                    "import sys,runpy; sys.path.insert(0,sys.argv[1]); p=sys.argv[1]+'/'+sys.argv[2]; "
+                    "sys.argv=[p,'--help']; runpy.run_path(p,run_name='__main__')", str(folder), name],
+                    cwd=root, capture_output=True, encoding="utf-8", timeout=30)
+                self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((folder / "paper-template/paper-versions.json").is_file())
+
+    @unittest.skipIf(os.name == "nt", "native Windows mutation is disabled")
     def test_template_only_install_can_identify_executor(self):
         manifests = load_manifests()
         artifacts = [("template", "lax-paper-artifact")]

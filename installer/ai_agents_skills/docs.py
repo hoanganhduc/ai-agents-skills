@@ -34,6 +34,7 @@ def generated_doc_texts(manifests: dict[str, Any]) -> dict[str, str]:
         "profiles.md": profiles_text(manifests),
         "dependencies.md": dependencies_text(manifests),
         "lax-formalization.md": lax_formalization_text(),
+        "lax-paper-workflow.md": (REPO_ROOT / "canonical/templates/lax-paper-workflow.md").read_text(encoding="utf-8"),
         "workflow-overview.md": workflow_overview_text(),
         "multi-agent-examples.md": multi_agent_examples_text(),
         "system-profile.md": system_profile_text(),
@@ -212,6 +213,9 @@ behavior but lighter platform-specific guidance.
   software, Python packages, Node packages, and manual integrations.
 - [docs/lax-formalization.md](docs/lax-formalization.md): per-paper Lean/Lax
   setup, independent verification, CI, secondary Zenodo archives, and migration.
+- [docs/lax-paper-workflow.md](docs/lax-paper-workflow.md): executable job runbook
+  for a new public repository, selected Lean reuse, TeX sanitation, paper versions
+  and controller-bound readiness. Generated from the canonical workflow template.
 - [docs/lean-formalization-benchmarks.md](docs/lean-formalization-benchmarks.md):
   dated Lean benchmark survey and the separate bounded Lax workflow test.
 - [docs/restore-target-contract.md](docs/restore-target-contract.md): restore
@@ -260,6 +264,8 @@ copies under both `docs/` and `docs/source/` are
 `external-dependencies.md`, `restore-target-contract.md`, and
 `lean-formalization-benchmarks.md`; keep each pair in sync. `docs-check` checks
 generated text consistency, not the factual correctness of the instructions.
+The Lax paper workflow page is rendered from
+`canonical/templates/lax-paper-workflow.md`; edit that template for its contents.
 
 ## Acknowledgements
 
@@ -2382,6 +2388,25 @@ Mathlib first, then look for reusable Lax declarations. Independently rebuild
 the selected Lax results, close their actual proof dependencies, and review
 whether the formal statements match the paper. Registration alone is not proof
 evidence. Zenodo is the secondary archive; no personal Lean library is required.
+
+For a complete job, follow [Lax Paper Workflow](lax-paper-workflow.md). It covers
+new formalization, selected reuse from an existing Lean repo, artifact updates
+and paper metadata updates. The research source stays read-only; the initial
+publication repository is new and does not inherit private Git history. The
+runbook uses the existing paper-template and adds source selection, bounded TeX
+sanitation and an executable gate binding paper review to exact source evidence.
+
+Install that runbook and its backing skills with:
+
+```bash
+make plan ARGS="--no-skills --artifact template:lax-paper-workflow --with-deps --runtime-profile auto"
+```
+
+Its `paper-versions.json` tracks preprint/conference/journal/correction entries.
+README on main may change while the Lax artifact stays at its pinned commit;
+new bibliography entries do not inherit semantic acceptance. CI exports only a
+bounded machine summary on success. Public source/history review must precede
+the first push; a CI badge does not provide privacy or paper-correspondence proof.
 
 ## Install The Workflow
 

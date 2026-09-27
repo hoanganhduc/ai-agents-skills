@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lax-workflow-job.v1 \u2014 final readiness request, not a scheduler",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "operation",
+    "execution",
+    "project_root",
+    "submission",
+    "public_origin",
+    "source_commit",
+    "targets",
+    "producer_run",
+    "paper_mode",
+    "paper",
+    "verification",
+    "correspondence",
+    "privacy_review",
+    "public_inventory"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "lax-workflow-job.v1"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "operation": {
+      "enum": [
+        "formalize-new",
+        "from-existing-lean",
+        "update-lax-artifact",
+        "update-paper-metadata"
+      ]
+    },
+    "execution": {
+      "enum": [
+        "audit-only",
+        "prepare-local"
+      ]
+    },
+    "project_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "submission": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "public_origin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "producer_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "paper_mode": {
+      "enum": [
+        "link-only",
+        "source-in-repo",
+        "embedded-tex"
+      ]
+    },
+    "paper": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "paper snapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "verification": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "correspondence": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "privacy_review": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "public_inventory": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "source_repo": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "paper_build": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "from-existing-lean"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "required": [
+          "source_repo"
+        ]
+      }
+    }
+  ]
+}

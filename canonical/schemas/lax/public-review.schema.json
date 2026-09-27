@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "public-review.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_version",
+    "status",
+    "reviewer_run",
+    "producer_run",
+    "source_commit",
+    "history_tip",
+    "source_digest",
+    "public_origin"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "public-review.v1"
+    },
+    "policy_version": {
+      "const": "lax-paper-workflow.v1"
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "pending",
+        "rejected"
+      ]
+    },
+    "reviewer_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "producer_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "history_tip": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "public_origin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "review_notes": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000
+    }
+  }
+}

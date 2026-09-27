@@ -5,6 +5,12 @@ names, environment pins and package layout. Then copy the paper-template files
 from the `lax-formalization` runtime's `paper-template/` directory to the repository
 root. This adds CI and archival metadata without a HoangMathLib dependency.
 
+For read-only extraction from an existing research repo, use the
+`lax-paper-workflow` runbook first. It creates a new publication repo, selects and
+sanitizes source, and binds paper correspondence and privacy review to evidence.
+Keep bibliographic history in `paper-versions.json`; updating README on main does
+not change the commit already referenced by Lax.
+
 Before using the template:
 
 1. Fill the real target IDs in `.lax-targets.json` after the concept scope is

@@ -98,6 +98,8 @@ make verify ARGS="--root <fake-or-real-root>"
   platform-specific detection behavior.
 - [Lax Formalization And Zenodo Archival](lax-formalization.md): independent
   Lean verification, per-paper CI, safe migration and secondary archival.
+- [Lax Paper Workflow](lax-paper-workflow.md): new publication repositories from
+  read-only source, selected code reuse, privacy and version-bound acceptance.
 - [Workflow Overview](workflow-overview.md): how the research stack connects
   agents, skills, runtimes, and external software.
 - [Audit And Migration](audit-and-migration.md): how to inspect an existing

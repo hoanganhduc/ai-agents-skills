@@ -21,6 +21,20 @@ update metadata, verify the draft inventory, and publish in a separate action.
 Use bearer headers; do not put credentials in URLs. Sandbox is also an external
 service and does not remove the need for authorization.
 
+For `lax-paper-workflow`, Zenodo remains optional: valid software metadata can be
+prepared on day one without a DOI, login or remote draft. Later prepare the exact
+public commit recorded for the intended artifact; metadata-only README updates
+on main do not move that artifact. The packager exports the complete tracked
+tree, so selection and sanitation must precede final verification, not happen by
+filtering the resulting ZIP. Review source, receipt, metadata and file inventory
+for disclosure before any upload; checksum consistency is not privacy clearance.
+
+File changes normally use a new linked Zenodo version with its own DOI. Editing
+title/creator metadata is a different operation and does not create a new version
+merely by changing a version string. Record both version DOI (exact artifact) and
+concept DOI (series), separately from paper DOI and Lax ID. Do not silently bind
+a newly listed journal paper to evidence reviewing only an earlier preprint.
+
 Once GitHub integration is enabled, a new Release can trigger publication.
 Checks on a release event are therefore not a pre-publication gate. Verify the
 exact tag's commit and obtain the permitted publication scope before creating it.

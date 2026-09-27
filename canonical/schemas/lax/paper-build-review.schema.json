@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper-build-review.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "source_commit",
+    "source_digest",
+    "paper_sha256",
+    "mode",
+    "isolated",
+    "no_private_mounts",
+    "compiled",
+    "render_reviewed",
+    "toolchain_digest",
+    "output_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "paper-build-review.v1"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "blocked",
+        "failed"
+      ]
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "paper_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "mode": {
+      "enum": [
+        "source-in-repo",
+        "embedded-tex"
+      ]
+    },
+    "isolated": {
+      "type": "boolean"
+    },
+    "no_private_mounts": {
+      "type": "boolean"
+    },
+    "compiled": {
+      "type": "boolean"
+    },
+    "render_reviewed": {
+      "type": "boolean"
+    },
+    "toolchain_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "output_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

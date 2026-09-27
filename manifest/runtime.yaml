@@ -233,6 +233,58 @@
       },
       "files": [
         {
+          "source": "skills/lax-formalization/public_source.py",
+          "target": "workspace/skills/lax-formalization/public_source.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/tex_sanitize.py",
+          "target": "workspace/skills/lax-formalization/tex_sanitize.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/workflow_check.py",
+          "target": "workspace/skills/lax-formalization/workflow_check.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lax-formalization/paper-template/paper-versions.json",
+          "target": "workspace/skills/lax-formalization/paper-template/paper-versions.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/lax-formalization/Executor.Dockerfile",
           "target": "workspace/skills/lax-formalization/Executor.Dockerfile",
           "platforms": [

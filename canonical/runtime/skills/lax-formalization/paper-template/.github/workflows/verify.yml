@@ -53,12 +53,16 @@ jobs:
           python3 -B aas/canonical/runtime/skills/lax-formalization/ci_verify.py \
             --project "$GITHUB_WORKSPACE/project" \
             --state-dir "$RUNNER_TEMP/lax-check"
+      - name: Export only the bounded public machine summary
+        run: |
+          python3 -B aas/canonical/runtime/skills/lax-formalization/workflow_check.py public-summary \
+            --evidence "$RUNNER_TEMP/lax-check/evidence/verification.json" \
+            --out "$RUNNER_TEMP/lax-public-summary.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
         with:
           name: lax-verification-${{ github.sha }}
-          path: ${{ runner.temp }}/lax-check/evidence/verification.json
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/lax-public-summary.json
+          if-no-files-found: error
           retention-days: 14
       - name: Prepare an explicit nonpublished archive
         if: inputs.package == true
@@ -68,10 +72,19 @@ jobs:
             --evidence "$RUNNER_TEMP/lax-check/evidence/verification.json" \
             --metadata "$GITHUB_WORKSPACE/project/.zenodo.json" \
             --out "$RUNNER_TEMP/archive-bundle"
+          python3 -B aas/canonical/runtime/skills/lax-formalization/workflow_check.py public-bundle \
+            --bundle "$RUNNER_TEMP/archive-bundle"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: inputs.package == true
         with:
           name: source-and-evidence-${{ github.sha }}
-          path: ${{ runner.temp }}/archive-bundle/
+          path: |
+            ${{ runner.temp }}/archive-bundle/source.zip
+            ${{ runner.temp }}/archive-bundle/metadata.json
+            ${{ runner.temp }}/archive-bundle/provenance.json
+            ${{ runner.temp }}/archive-bundle/verification-summary.json
+            ${{ runner.temp }}/archive-bundle/dependency-inventory.json
+            ${{ runner.temp }}/archive-bundle/REPRODUCE.md
+            ${{ runner.temp }}/archive-bundle/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

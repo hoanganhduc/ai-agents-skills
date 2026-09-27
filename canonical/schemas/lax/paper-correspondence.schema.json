@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "paper-correspondence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_version",
+    "status",
+    "reviewer_run",
+    "producer_run",
+    "paper_id",
+    "paper_version",
+    "paper_sha256",
+    "source_commit",
+    "source_digest",
+    "challenge_digest",
+    "scope_digest",
+    "dependency_digests"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "paper-correspondence.v1"
+    },
+    "policy_version": {
+      "const": "lax-paper-workflow.v1"
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "pending",
+        "rejected"
+      ]
+    },
+    "reviewer_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "producer_run": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "paper_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "paper_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "paper_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "challenge_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "scope_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "dependency_digests": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^lax-[1-9][0-9]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "review_notes": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000
+    }
+  }
+}
