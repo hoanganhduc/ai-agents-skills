@@ -34,7 +34,7 @@ executor.verify(None, None)
             result = subprocess.run([sys.executable, "-c", script, str(RUNTIME), str(marker)],
                                     capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 128 + signal.SIGTERM)
-            self.assertEqual(marker.read_text(), "cleanup-ran")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "cleanup-ran")
 
     def test_termination_guard_restores_callers_handler(self):
         previous = signal.getsignal(signal.SIGTERM)

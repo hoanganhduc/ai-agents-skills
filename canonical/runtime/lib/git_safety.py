@@ -31,6 +31,11 @@ def admit_git_config(root: Path, env: dict[str, str], *, allow_init: bool = Fals
             continue
         if key == "remote.origin.url" and re.fullmatch(r"https://(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org)/[A-Za-z0-9_.\-/]+", value):
             continue
+        # Optional convenience; not important. Only public_source.py's read-only
+        # inventory passes allow_ssh_origin, and it reads just `git ls-files`
+        # classes, so an HTTPS origin gives the same result. Lax execution,
+        # verification and publication never pass it, so they admit only the
+        # HTTPS origins above whether or not this branch exists.
         if key == "remote.origin.url" and allow_ssh_origin and re.fullmatch(
                 r"(?:git@(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org):|"
                 r"ssh://git@(?:github\.com|gitlab\.com|codeberg\.org|bitbucket\.org)/)"

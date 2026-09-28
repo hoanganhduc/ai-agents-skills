@@ -416,7 +416,7 @@ def verification_termination_guard():
     state = {"signal": None}
     token = _termination_state.set(state)
     previous = {}
-    def terminate(signum, frame):
+    def terminate(signum, _frame):
         if state["signal"] is None:
             state["signal"] = signum
     try:

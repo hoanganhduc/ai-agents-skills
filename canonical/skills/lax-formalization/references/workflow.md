@@ -25,6 +25,10 @@ Read-only inventory admits credential-free `git@host:owner/repo` and
 `ssh://git@host/owner/repo` origins on the supported Git hosts without fetching
 or editing the source config. Other configuration admission checks still apply.
 Publication/verification sources continue to require canonical HTTPS origins.
+This SSH admission is an optional convenience and is not important. The
+inventory reads only local `git ls-files` classes, so a checkout with an HTTPS
+origin gives the same result. Lax verification and publication never use this
+admission, so they behave the same with or without it.
 
 Schema sources are in the pinned checkout's `canonical/schemas/lax/`:
 `workflow-job.schema.json`, `public-source-plan.schema.json`,
