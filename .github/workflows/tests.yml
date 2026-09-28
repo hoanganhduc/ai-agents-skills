@@ -74,7 +74,7 @@ jobs:
         run: .github/scripts/containment-support.sh
 
       - name: Install runtime smoke dependencies
-        run: python -m pip install networkx psutil requests
+        run: python -m pip install networkx psutil requests shapely==2.1.2
 
       - name: Install attested system Node runtime
         run: sudo apt-get update && sudo apt-get install -y nodejs

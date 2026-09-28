@@ -18,6 +18,103 @@ COMMUTATIVE_ARROWHEAD_TOLERANCE_PT = 12.0
 COMMUTATIVE_SLOT_ORDER = ("a", "b", "c", "d")
 GRAPH_NODE_MATCH_TOLERANCE = 0.28
 
+# Text that PyMuPDF extracts for TeX math symbols set in Computer Modern, the
+# font of the standalone files tikz-draw compiles (without amssymb); composite
+# symbols come out as several characters, and \not overlays the next symbol.
+TEX_SYMBOL_TEXT = {
+    "not": "\u0338",
+    "lnot": "\u00ac",
+    "land": "\u2227",
+    "lor": "\u2228",
+    "owns": "\u220b",
+    "colon": ":",
+    "sim": "\u223c",
+    "simeq": "\u2243",
+    "approx": "\u2248",
+    "cong": "\u223c=",
+    "equiv": "\u2261",
+    "le": "\u2264",
+    "leq": "\u2264",
+    "ge": "\u2265",
+    "geq": "\u2265",
+    "ne": "\u0338=",
+    "neq": "\u0338=",
+    "in": "\u2208",
+    "notin": "/\u2208",
+    "ni": "\u220b",
+    "subset": "\u2282",
+    "subseteq": "\u2286",
+    "supset": "\u2283",
+    "supseteq": "\u2287",
+    "to": "\u2192",
+    "rightarrow": "\u2192",
+    "leftarrow": "\u2190",
+    "gets": "\u2190",
+    "leftrightarrow": "\u2194",
+    "Rightarrow": "\u21d2",
+    "Leftarrow": "\u21d0",
+    "Leftrightarrow": "\u21d4",
+    "mapsto": "7\u2192",
+    "longrightarrow": "\u2212\u2192",
+    "hookrightarrow": ",\u2192",
+    "uparrow": "\u2191",
+    "downarrow": "\u2193",
+    "times": "\u00d7",
+    "cdot": "\u00b7",
+    "cup": "\u222a",
+    "cap": "\u2229",
+    "pm": "\u00b1",
+    "prec": "\u227a",
+    "succ": "\u227b",
+    "preceq": "\u2aaf",
+    "succeq": "\u2ab0",
+    "ll": "\u226a",
+    "gg": "\u226b",
+    "perp": "\u22a5",
+    "parallel": "\u2225",
+    "propto": "\u221d",
+    "vee": "\u2228",
+    "wedge": "\u2227",
+    "oplus": "\u2295",
+    "otimes": "\u2297",
+    "circ": "\u25e6",
+    "ast": "\u2217",
+    "star": "\u22c6",
+    "infty": "\u221e",
+    "emptyset": "\u2205",
+    "neg": "\u00ac",
+    "forall": "\u2200",
+    "exists": "\u2203",
+    "partial": "\u2202",
+    "nabla": "\u2207",
+    "vdash": "\u22a2",
+    "triangleleft": "\u25c1",
+    "triangleright": "\u25b7",
+}
+TEX_SYMBOL_PATTERN = re.compile(r"\\(" + "|".join(sorted(TEX_SYMBOL_TEXT, key=len, reverse=True)) + r")(?![A-Za-z])")
+MATH_SYMBOL_CHARS = frozenset(char for text in TEX_SYMBOL_TEXT.values() for char in text if ord(char) > 127)
+# Commands that set no glyph of their own. In a TeX label that uses a symbol
+# above, every other command is kept behind this mark so that the label cannot
+# match: a dropped Greek letter or accent must not make a wrong figure pass.
+# \overline, \underline and \frac are left out on purpose: their rules leave no text.
+TEX_GLYPHLESS_COMMANDS = frozenset(
+    {
+        "mathcal", "mathrm", "mathbf", "mathit", "mathsf", "mathtt", "mathbb", "mathfrak", "mathscr",
+        "mathnormal", "boldsymbol", "bm", "text", "textrm", "textbf", "textit", "textsf", "texttt",
+        "textnormal", "emph", "operatorname", "mbox", "hbox", "displaystyle", "textstyle", "scriptstyle",
+        "scriptscriptstyle", "left", "right", "middle", "big", "Big", "bigg", "Bigg", "bigl", "bigr",
+        "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr", "mathop", "mathrel", "mathbin", "mathord",
+        "mathopen", "mathclose", "mathpunct", "limits", "nolimits", "quad", "qquad",
+        "rm", "bf", "it", "sf", "tt", "sl", "sc", "cal", "mit", "em", "relax", "strut", "mathstrut", "enspace",
+        "thinspace", "negthinspace", "medspace", "thickspace", "nobreak", "allowbreak",
+    }
+)
+# Commands whose braced argument is not set as text: a color name, a phantom's
+# content, a space's length. \textcolor keeps its second argument.
+TEX_UNRENDERED_ARGUMENT_PATTERN = re.compile(r"\\(?:color|textcolor|phantom|hphantom|vphantom|hspace|vspace)\*?\{[^{}]*\}")
+GROUP_LABEL_GAP_PT = 6.0
+UNMATCHED_COMMAND_MARK = "\ue000"
+
 
 def bbox_tuple(bbox: dict[str, Any]) -> tuple[float, float, float, float]:
     return (
@@ -63,8 +160,17 @@ def normalize_label(value: str | None) -> str | None:
     if value is None:
         return None
     raw = str(value).strip()
-    texish = any(token in raw for token in ("$", "_", "^", "\\"))
-    normalized = raw.strip("$")
+    texish = any(token in raw for token in ("$", "_", "^", "\\")) or any(char in MATH_SYMBOL_CHARS for char in raw)
+    normalized = TEX_SYMBOL_PATTERN.sub(lambda match: TEX_SYMBOL_TEXT[match.group(1)], raw.strip("$"))
+    normalized = TEX_UNRENDERED_ARGUMENT_PATTERN.sub("", normalized)
+    if any(char in MATH_SYMBOL_CHARS for char in normalized):
+        normalized = re.sub(
+            r"\\([A-Za-z]+)",
+            lambda match: match.group(0)
+            if match.group(1) in TEX_GLYPHLESS_COMMANDS
+            else UNMATCHED_COMMAND_MARK + match.group(1),
+            normalized,
+        )
     compact_math = normalized.replace("{", "").replace("}", "").replace(" ", "")
     sub_sup = re.fullmatch(r"([A-Za-z]+)_([A-Za-z0-9,]+)\^([A-Za-z0-9,]+)", compact_math)
     if sub_sup:
@@ -76,8 +182,9 @@ def normalize_label(value: str | None) -> str | None:
     normalized = re.sub(r"_([A-Za-z0-9,]+)", r" \1", normalized)
     normalized = re.sub(r"\^\{([^}]*)\}", r"\1", normalized)
     normalized = re.sub(r"\^([A-Za-z0-9,]+)", r"\1", normalized)
-    normalized = normalized.replace("{", "").replace("}", "")
+    # Strip commands before braces, so that \mathcal{U} keeps its argument U.
     normalized = re.sub(r"\\[A-Za-z]+", "", normalized)
+    normalized = normalized.replace("{", "").replace("}", "")
     normalized = " ".join(normalized.split()).strip()
     tokens = normalized.split()
     if texish or (
@@ -311,13 +418,27 @@ def nearest_node(point_payload: dict[str, Any], nodes: list[dict[str, Any]]) -> 
     return best
 
 
+def sits_above_group_box(line: dict[str, Any], shapes: list[dict[str, Any]]) -> bool:
+    x0, _y0, x1, y1 = bbox_tuple(line["bbox"])
+    center_x = (x0 + x1) / 2.0
+    for shape in shapes:
+        if shape["kind"] != "groupbox":
+            continue
+        box_x0, box_y0, box_x1, _box_y1 = bbox_tuple(shape["bbox"])
+        if box_x0 <= center_x <= box_x1 and box_y0 - GROUP_LABEL_GAP_PT <= y1 <= box_y0 + CONTAINMENT_TOLERANCE_PT:
+            return True
+    return False
+
+
 def assign_labels_to_edges(edges: list[dict[str, Any]], free_lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     used_lines: set[int] = set()
     for line_index, line in enumerate(free_lines):
-        center = Point(*bbox_center(line["bbox"]))
+        # Measure from the label's box, not its center: a long label placed beside
+        # a vertical edge has its center far from the edge but its box close to it.
+        label_box = box(*bbox_tuple(line["bbox"]))
         candidates: list[tuple[int, float, float]] = []
         for edge_index, edge in enumerate(edges):
-            distance = edge["geom"].distance(center)
+            distance = edge["geom"].distance(label_box)
             tolerance = float(edge.get("label_tolerance_pt", EDGE_LABEL_TOLERANCE_PT))
             if distance > tolerance:
                 continue
@@ -853,12 +974,21 @@ def verify_rendered_family(spec: dict[str, Any], render_semantics: dict[str, Any
             "node_distances": graph_recovered["node_distances"],
         }
     else:
-        actual_nodes, free_lines, _shapes = recover_nodes(page)
-        actual_edges, remaining_lines = recover_edges(page, actual_nodes, free_lines)
+        actual_nodes, free_lines, shapes = recover_nodes(page)
+        expected_group_labels = {normalize_label(group.get("label")) for group in spec.get("groups", []) if group.get("label")}
+        # A group label sits just above its dashed group box; keep such text away
+        # from edge-label assignment.
+        group_lines = [
+            line
+            for line in free_lines
+            if normalize_label(line["text"]) in expected_group_labels and sits_above_group_box(line, shapes)
+        ]
+        edge_lines = [line for line in free_lines if line not in group_lines]
+        actual_edges, remaining_lines = recover_edges(page, actual_nodes, edge_lines)
+        remaining_lines = [*remaining_lines, *group_lines]
         mismatches = compare_nodes(spec, actual_nodes)
         mismatches.extend(compare_edges(spec, actual_edges))
 
-        expected_group_labels = {normalize_label(group.get("label")) for group in spec.get("groups", []) if group.get("label")}
         ignored_free_text = [line["text"] for line in remaining_lines if normalize_label(line["text"]) in expected_group_labels]
         unmatched_free_text = [
             line["text"] for line in remaining_lines if normalize_label(line["text"]) not in expected_group_labels
