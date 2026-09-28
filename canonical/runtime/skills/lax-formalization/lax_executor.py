@@ -31,7 +31,7 @@ from lax_formalization import (BACKGROUND, ENVIRONMENT, MATHLIB_SHA, SPEC_SHA, V
 HERE = Path(__file__).resolve().parent
 LIMIT = 16 * 1024**2
 REQUEST_KEYS = {"schema_version", "project_root", "submission", "database_root", "environment", "targets",
-    "challenge_root", "semantic_review", "dependencies"}
+    "challenge_root", "semantic_review", "dependencies", "verification_kind", "compile_timeout_seconds"}
 
 
 def git_command(*args: str) -> list[str]:
@@ -193,8 +193,18 @@ def validate_request(path: Path) -> dict[str, Any]:
     req = read_json(path)
     if set(req) - REQUEST_KEYS or req.get("schema_version") != "lax-request.v1": raise ValueError("invalid request schema")
     if req.get("environment") != ENVIRONMENT: raise ValueError("unsupported Lax environment")
-    if not isinstance(req.get("targets"), list) or not req["targets"] or len(req["targets"]) > 500:
+    compile_timeout = req.get("compile_timeout_seconds", 1200)
+    if type(compile_timeout) is not int or not 60 <= compile_timeout <= 3600:
+        raise ValueError("compile timeout must be an integer from 60 to 3600 seconds")
+    kind = req.get("verification_kind", "theorems")
+    if not isinstance(kind, str) or kind not in {"theorems", "definitions-only"}:
+        raise ValueError("invalid verification kind")
+    if not isinstance(req.get("targets"), list) or len(req["targets"]) > 500:
+        raise ValueError("a bounded target set is required")
+    if kind == "theorems" and not req["targets"]:
         raise ValueError("a bounded nonempty target set is required")
+    if kind == "definitions-only" and req["targets"]:
+        raise ValueError("definitions-only requests cannot certify theorem targets")
     if any(not isinstance(t, str) or not re.fullmatch(r"[A-Za-z_][\w'.]*", t) for t in req["targets"]) or len(set(req["targets"])) != len(req["targets"]):
         raise ValueError("invalid or duplicate target")
     folder = req.get("submission", "submission")
@@ -217,6 +227,15 @@ def validate_request(path: Path) -> dict[str, Any]:
                 or any(not isinstance(review[k],str) or not re.fullmatch(r"[a-f0-9]{64}",review[k]) for k in ["challenge_sha256","scope_digest"])):
             raise ValueError("invalid semantic review contract")
     return req
+
+
+def validate_checked_scope(req: dict[str, Any], statements: set[str]) -> None:
+    """Check the fresh inspector inventory, never just a source/catalog label."""
+    if req.get("verification_kind", "theorems") == "definitions-only":
+        if statements:
+            raise ValueError("definitions-only dependency contains theorem statements")
+    elif not set(req["targets"]) <= statements:
+        raise ValueError("target missing from checked concept inventory")
 
 
 def export_source(root: Path, destination: Path) -> dict[str, str]:
@@ -421,6 +440,9 @@ def verify(request_path: Path, out: Path, *, dependency: bool = False, _active: 
 def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active: set[str] | None = None) -> dict[str, Any]:
     out = out.resolve()
     req = validate_request(request_path)
+    verification_kind = req.get("verification_kind", "theorems")
+    if verification_kind == "definitions-only" and not dependency:
+        raise ValueError("definitions-only verification is restricted to dependency requests")
     req_hash = hashlib.sha256(regular_bytes(request_path)).hexdigest()
     cfg = settings()
     trust_before = trusted_inputs(cfg)
@@ -501,7 +523,8 @@ def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active:
                 dest = work / "repo" / folder / kind / ".lake/packages" / entry["packageName"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(dependency_out[entry["submissionId"]] / "execution/source", dest)
-        phases.append(phase(cfg, mode, job, [(work, "/work", True), (snapshot, "/database", False)]))
+        phases.append(phase(cfg, mode, job, [(work, "/work", True), (snapshot, "/database", False)],
+                            timeout=req.get("compile_timeout_seconds", 1200) if mode == "compile" else 1200))
         if source_inventory(work / "repo") != source_inventory(source): raise ValueError("source changed during compilation")
     sealed = out / "sealed"; sealed.mkdir()
     admit_capture(job / "work-concepts/job/capture/concepts", static["inventories"]["concepts"], source / folder / "concepts")
@@ -514,7 +537,7 @@ def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active:
     report = read_json(job / "result-check/checked.json")
     if report.get("ok") is not True: raise ValueError("fresh inspection failed")
     statements = {s["id"] for c in report["inspection"]["concepts"] for s in c["statements"]}
-    if not set(req["targets"]) <= statements: raise ValueError("target missing from checked concept inventory")
+    validate_checked_scope(req, statements)
     proofs = [{**p, "state": "registered" if dependency else "local", "independently_verified": True} for p in report["inspection"]["proofs"]]
     by_proof = {p["id"]: p for p in proofs}
     for dep in dependency_reports.values():
@@ -537,7 +560,9 @@ def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active:
     semantic_ok = (isinstance(semantic, dict) and semantic.get("status") == "accepted"
         and semantic.get("challenge_sha256") == challenge_before["sha256"] and semantic.get("scope_digest") == digest(req["targets"]) and isinstance(semantic.get("reviewer"), str)
         and bool(semantic["reviewer"].strip()) and dependency_scope_ok and all(d["semantic_status"] == "accepted" for d in dependency_reports.values()))
-    result = {"schema_version": "lax-verification.v1", "backend": "lax", "status": "passed" if closure["closed"] else "failed",
+    result = {"schema_version": "lax-verification.v1", "backend": "lax", "verification_kind": verification_kind,
+        "compile_timeout_seconds": req.get("compile_timeout_seconds", 1200),
+        "status": "passed" if closure["closed"] else "failed",
         "machine_status": "passed", "closure_status": "closed" if closure["closed"] else "open", "closure": closure,
         "semantic_status": "accepted" if semantic_ok else "pending", "publication_status": "registered" if dependency else "local",
         "publication_enabled": False, "submission_id": sid, "submission_folder": folder,
@@ -550,6 +575,8 @@ def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active:
         "capture": seal, "phases": phases, "coverage": report["coverage"], "verified_proofs": proofs,
         "dependency_digests": {k: verification_binding(v) for k,v in dependency_reports.items()},
         "limitations": ["kernel/toolchain and pinned mathlib are declared background trust", "no external comparator was run", "no remote publication was tested"]}
+    if verification_kind == "definitions-only":
+        result["limitations"].append("definitions-only dependency: no theorem targets are certified")
     _raise_verification_termination()
     write_json(out / "verification.json", result)
     return result
@@ -557,6 +584,8 @@ def _verify(request_path: Path, out: Path, *, dependency: bool = False, _active:
 
 def publication_plan(request_path: Path, out: Path) -> dict[str, Any]:
     req = validate_request(request_path)
+    if req.get("verification_kind", "theorems") == "definitions-only":
+        raise ValueError("definitions-only requests are dependency checks, not publication plans")
     result = {"schema_version": "lax-publication-plan.v1", "status": "proposal", "publication_enabled": False,
         "environment": req["environment"], "targets": req["targets"], "required": ["fresh exact-source independent verification", "accepted semantic review", "separate scoped publication authorization"],
         "stages": ["issue binding may change manifest", "commit/push binding and reverify", "submit exact source", "register only if separately authorized"]}

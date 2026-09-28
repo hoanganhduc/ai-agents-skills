@@ -29,6 +29,32 @@ does not silently fetch Git repositories with credentials. The source triple
 must match the registered record. Every recursively checked result is rebuilt;
 editable archived status strings do not substitute for a fresh check.
 
+The optional operator-controlled `compile_timeout_seconds` selects the proof
+compilation budget as an integer from 60 through 3600 seconds; its default is
+1200. It is part of the request digest and is recorded in the receipt. Each
+dependency request selects its own budget. Static validation, concept-only
+compilation and final checking keep their existing 1200-second limits. This
+option does not increase CPU, memory, filesystem access or network access,
+and never converts a timeout or partial build into verification evidence.
+Keep the whole workflow within its separately approved resource/time budget.
+
+For a registered dependency whose concepts contain **only definitions**, use
+`"verification_kind": "definitions-only"` and `"targets": []` in that
+dependency's request. This explicit mode is supported only by
+`verify-dependency` and recursive dependency checks, not ordinary paper
+verification or `publication-plan`. It still performs source qualification,
+separate concept compilation, proof-package compilation and fresh inspection.
+The checked concept inventory must contain no theorem statements; a package
+with any such statement is rejected rather than silently skipping it. The
+default `theorems` mode continues to require nonempty targets.
+
+A definitions-only receipt reports its verification kind and explicitly
+certifies no theorem targets. An empty obligation graph is not evidence for
+a theorem, a downstream algorithm or a complexity bound. Definition meaning
+still requires its own review against the frozen challenge, and absent review
+keeps semantic status pending. Do not invent a trivial theorem target merely
+to admit a definition library.
+
 An optional `semantic_review` object records `status: accepted`, a nonempty
 `reviewer`, `challenge_sha256` from the reviewed concept inventory, and
 `scope_digest` from the exact reviewed target list. Only
