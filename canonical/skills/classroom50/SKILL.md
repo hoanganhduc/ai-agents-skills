@@ -141,14 +141,14 @@ archive with isolated Python (`-I -S`) and route its closed read-only command ma
 through a protected wrapper to the same checksum-pinned `gh-teacher` v1.40.0
 binary. Do not execute adapter or validation code from a mutable checkout.
 
-The only production classrooms permitted by this exception are:
-
-- `vnu-hus-mat1206e-winter-2026`, bound to student team ID `18900350`,
-  teacher team ID `18900351`, HTA team ID `18900353`, and TA team ID
-  `18900354`;
-- `vnu-hus-mat3508-winter-2026`, bound to student team ID `18900341`,
-  teacher team ID `18900342`, HTA team ID `18900343`, and TA team ID
-  `18900344`.
+The only production classrooms permitted by this exception are
+`vnu-hus-mat1206e-winter-2026` and `vnu-hus-mat3508-winter-2026`. Each is
+bound to exactly four team IDs (student, teacher, HTA and TA) recorded in the
+owner's private scope file
+`~/.config/course/classroom50/production-scope-2026-09-03.json` (mode 0600,
+kept in the encrypted recovery set, never in a public repository). Read the
+team IDs from that file; if it is missing or unreadable, or does not list
+exactly those four IDs for a classroom, this exception does not apply.
 
 The intent is create-only. Each target must begin without every listed slug, and
 the runner may add exactly one instance of each slug to each classroom:
