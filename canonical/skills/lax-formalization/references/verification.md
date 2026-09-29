@@ -1,7 +1,7 @@
 # Requests and evidence
 
-Supported initial profile: Lax 0.1.48, Lean v4.33.0, mathlib commit
-`db584cd6d46c92f209a44c0f1c829460d327499d`. Unsupported profiles fail explicitly.
+Supported initial profile: Lax 0.1.48, Lean v4.33.0,
+mathlib commit `db584cd6d46c92f209a44c0f1c829460d327499d`. Unsupported profiles fail explicitly.
 Lax's own spec/agent guide can be read with `lax print spec` and
 `lax print instructions`. Catalog/search output is unverified provenance.
 
