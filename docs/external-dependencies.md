@@ -27,8 +27,8 @@ The allowlisted manifest pins these sources:
 
 | Bundle | Repository revision | Stable native pointer |
 |---|---|---|
-| `course-management` | `course_management_toolkit` at `5e6e7b827d9ba80b4625884be9b4219a327a278b` | `~/.course_venv` |
-| `vnu-eoffice` | `vnu-eoffice` at `66d3ab694654bc5b11ca5c8253afeec1f0f00fae` | `~/.vnu-eoffice_venv` |
+| `course-management` | `course_management_toolkit` at `5e402db40db6c4a50d9c9292a5b352e62447ab04` | `~/.course_venv` |
+| `vnu-eoffice` | `vnu-eoffice` at `dba08aace662efb90c558778d87eab02aff8075e` | `~/.vnu-eoffice_venv` |
 
 The command clones only those fixed HTTPS repositories, verifies the full Git
 commit and tree, builds a non-editable wheel from an archived source snapshot,

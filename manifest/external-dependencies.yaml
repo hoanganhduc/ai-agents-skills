@@ -3,7 +3,7 @@
   "bundles": {
     "course-management": {
       "repository": "https://github.com/hoanganhduc/course_management_toolkit.git",
-      "revision": "5e6e7b827d9ba80b4625884be9b4219a327a278b",
+      "revision": "5e402db40db6c4a50d9c9292a5b352e62447ab04",
       "source_directory": "course_management_toolkit",
       "venv_pointer": ".course_venv",
       "distribution": "course-hoanganhduc",
@@ -36,7 +36,7 @@
     },
     "vnu-eoffice": {
       "repository": "https://github.com/hoanganhduc/vnu-eoffice.git",
-      "revision": "66d3ab694654bc5b11ca5c8253afeec1f0f00fae",
+      "revision": "dba08aace662efb90c558778d87eab02aff8075e",
       "source_directory": "vnu-eoffice",
       "venv_pointer": ".vnu-eoffice_venv",
       "distribution": "vnu-eoffice",

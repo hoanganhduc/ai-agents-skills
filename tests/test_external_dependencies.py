@@ -81,11 +81,11 @@ class ExternalDependencyManifestTests(unittest.TestCase):
         self.assertEqual(set(bundles), {"course-management", "vnu-eoffice"})
         self.assertEqual(
             bundles["course-management"]["revision"],
-            "5e6e7b827d9ba80b4625884be9b4219a327a278b",
+            "5e402db40db6c4a50d9c9292a5b352e62447ab04",
         )
         self.assertEqual(
             bundles["vnu-eoffice"]["revision"],
-            "66d3ab694654bc5b11ca5c8253afeec1f0f00fae",
+            "dba08aace662efb90c558778d87eab02aff8075e",
         )
 
     def test_manifest_rejects_an_unallowlisted_repository(self) -> None:
