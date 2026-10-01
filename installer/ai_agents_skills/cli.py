@@ -1397,7 +1397,7 @@ def incomplete_install_actions(
             "agent": action.get("agent"),
             "skill": action.get("skill"),
             "artifact_id": action.get("artifact_id"),
-            "path": action.get("path"),
+            "path": action_target_path(action),
             "classification": action.get("classification"),
             "operation": action.get("operation"),
             "reason": action.get("reason"),
@@ -1458,7 +1458,7 @@ def declared_install_exclusion(
         expected_path = target_for(root, "antigravity").target_dir_for(
             "entrypoint-alias"
         ) / f"{name}.md"
-        return install_target_paths_match(action.get("path"), expected_path)
+        return install_target_paths_match(action_target_path(action), expected_path)
     if code != "platform-inapplicable-support-file":
         return False
     skill = action.get("skill")
@@ -1504,7 +1504,17 @@ def declared_install_exclusion(
         expected_path = target_for(root, agent_name).support_dir_for(skill) / relative
     except ValueError:
         return False
-    return install_target_paths_match(action.get("path"), expected_path)
+    return install_target_paths_match(action_target_path(action), expected_path)
+
+
+def action_target_path(action: dict[str, Any]) -> Any:
+    """Return the target of a planned action or of its applied result.
+
+    A plan names the target ``path``; ``apply_plan`` records the same target as
+    ``artifact``.  The complete-install gate reads both, before and after apply.
+    """
+    path = action.get("path")
+    return path if path else action.get("artifact")
 
 
 def install_target_paths_match(actual: Any, expected: Path) -> bool:

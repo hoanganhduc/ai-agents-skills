@@ -26,6 +26,8 @@ from installer.ai_agents_skills.cli import (
     INSTALL_CONFIRMATION_PHRASE,
     audit_status,
     build_parser,
+    declared_install_exclusion_actions,
+    incomplete_install_actions,
     main,
     require_complete_install_plan,
     resolve_install_selection,
@@ -438,6 +440,65 @@ class ManifestTests(unittest.TestCase):
                             manifests,
                             platform="windows",
                         )
+
+    def test_complete_install_gate_accepts_declared_exclusions_after_apply(self) -> None:
+        # apply_plan records a target as "artifact"; the gate that runs after
+        # apply must still recognize a declared exclusion, and still refuse one
+        # whose recorded target was forged.
+        manifests = load_manifests()
+        requested_agents = ["claude", "antigravity"]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *requested_agents)
+            args = Args()
+            args.profile = "complete-restore"
+            args.artifact_profile = "workflow-artifacts"
+            plan = build_plan(
+                root,
+                manifests,
+                resolve_skills(args, manifests),
+                detect_agents(root, requested_agents),
+                artifacts=resolve_artifacts(args, manifests),
+                runtime_profile="full",
+                platform="linux",
+                requested_agents=requested_agents,
+            )
+            alias = next(
+                action
+                for action in plan["actions"]
+                if action.get("exclusion_code")
+                == "antigravity-managed-skill-alias-collision"
+            )
+            applied = apply_action(root, "run-complete-install-test", alias)
+            self.assertNotIn("path", applied)
+            self.assertEqual(applied["artifact"], alias["path"])
+
+            self.assertEqual(
+                incomplete_install_actions(
+                    [applied], manifests, platform="linux", root=root
+                ),
+                [],
+            )
+            self.assertEqual(
+                len(
+                    declared_install_exclusion_actions(
+                        [applied], manifests, platform="linux", root=root
+                    )
+                ),
+                1,
+            )
+            forged = {
+                **applied,
+                "artifact": str(root / "forged" / "unrelated-required-file"),
+            }
+            self.assertEqual(
+                len(
+                    incomplete_install_actions(
+                        [forged], manifests, platform="linux", root=root
+                    )
+                ),
+                1,
+            )
 
     def test_complete_install_gate_rejects_undeclared_platform_support_exclusion(self) -> None:
         manifests = copy.deepcopy(load_manifests())
