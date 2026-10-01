@@ -17,7 +17,7 @@ Credential-bearing launches use the single target-scoped authority
 `~/.config/ai-agents-skills/providers/copilot.env`; literal environment names
 are not recoverable authority paths. The installed launcher must resolve an
 immutable content-addressed npm closure of the form
-`~/.npm-global/closures/sha256-<source-sha256>-<tree-sha256>/.../npm-loader.js`
+`~/.local/share/coding-system/npm-closures/sha256-<arch>-<source-sha256>-<tree-sha256>/.../npm-loader.js`
 and verify the recorded launcher-source, rendered-launcher, Node executable,
 npm source, npm tree, and loader SHA-256 evidence immediately before execution.
 The compatibility loader under `~/.npm-global/lib/node_modules` is discovery

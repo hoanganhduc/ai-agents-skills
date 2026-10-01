@@ -194,7 +194,7 @@ class TargetStateContractTests(unittest.TestCase):
             {
                 "launcher": ".local/bin/copilot",
                 "launcher_source": "system/bin/copilot",
-                "closure_loader": ".npm-global/closures/sha256-{source_sha256}-{tree_sha256}/node_modules/@github/copilot/npm-loader.js",
+                "closure_loader": ".local/share/coding-system/npm-closures/sha256-{arch}-{source_sha256}-{tree_sha256}/node_modules/@github/copilot/npm-loader.js",
                 "compatibility_loader": ".npm-global/lib/node_modules/@github/copilot/npm-loader.js",
                 "authority": ".config/ai-agents-skills/providers/copilot.env",
                 "pointer_env": "AAS_PROVIDER_SECRETS_FILE",
