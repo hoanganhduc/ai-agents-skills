@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import subprocess
 from dataclasses import dataclass
@@ -43,6 +44,10 @@ OPENCLAW_TARGET_STATE_NAME = "openclaw-target-state.json"
 OPENCLAW_EXECUTABLE_NAMES = frozenset({"openclaw"})
 OPENCLAW_CHILD_PATH = "/usr/bin:/bin"
 NODE_PATH = Path("/usr/bin/node")
+# A coding-system restore links ~/.npm-global into sealed, read-only Node and
+# npm closure generations instead of a system /usr/bin/node and a mutable tree.
+SEALED_NODE_GENERATION = re.compile(r"sha256-(amd64|arm64)-[0-9a-f]{64}")
+SEALED_NPM_CLOSURE = re.compile(r"sha256-(amd64|arm64)-[0-9a-f]{64}-[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,39 @@ def _attest_regular_executable(path: Path, *, root_only: bool) -> tuple[int, int
     return _executable_identity(info)
 
 
+def _sealed_closure_node(supplied: Path, target_path: Path) -> Path:
+    """Admit a ~/.npm-global/bin/openclaw link into one sealed npm closure.
+
+    That closure runs on the sealed Node generation of the same architecture,
+    which ~/.npm-global/bin/node links to; it is returned for attestation.
+    """
+
+    npm_root = supplied.parent.parent
+    coding = npm_root.parent / ".local" / "share" / "coding-system"
+    closure = target_path.parent.parent.parent
+    closure_match = SEALED_NPM_CLOSURE.fullmatch(closure.name)
+    if (
+        supplied.parent.name != "bin"
+        or npm_root.name != ".npm-global"
+        or closure_match is None
+        or target_path != coding / "npm-closures" / closure.name / "node_modules" / "openclaw" / "openclaw.mjs"
+    ):
+        raise ValueError("--openclaw-bin must resolve to the pinned npm OpenClaw entrypoint")
+    try:
+        node = Path(os.path.realpath(npm_root / "bin" / "node", strict=True))
+    except OSError as exc:
+        raise ValueError("the sealed Node interpreter of the npm closure is unavailable") from exc
+    generation = node.parent.parent
+    node_match = SEALED_NODE_GENERATION.fullmatch(generation.name)
+    if (
+        node_match is None
+        or node_match.group(1) != closure_match.group(1)
+        or node != coding / "node-generations" / generation.name / "bin" / "node"
+    ):
+        raise ValueError("the sealed Node interpreter does not match the npm closure")
+    return node
+
+
 def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> AttestedOpenClawExecutable:
     """Admit one absolute, owner-controlled OpenClaw npm entrypoint.
 
@@ -129,6 +167,7 @@ def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> Attested
         raise ValueError("--openclaw-bin is unavailable") from exc
     _attest_posix_parent_chain(supplied.parent, allow_current_user=True)
     entry_target = ""
+    node_path = NODE_PATH
     if stat.S_ISLNK(entry_info.st_mode):
         entry_target = os.readlink(supplied)
         if not entry_target or "\x00" in entry_target:
@@ -136,7 +175,7 @@ def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> Attested
         target_path = Path(os.path.abspath(supplied.parent / entry_target))
         package_suffix = ("lib", "node_modules", "openclaw", "openclaw.mjs")
         if target_path.parts[-len(package_suffix):] != package_suffix:
-            raise ValueError("--openclaw-bin must resolve to the pinned npm OpenClaw entrypoint")
+            node_path = _sealed_closure_node(supplied, target_path)
     elif stat.S_ISREG(entry_info.st_mode):
         target_path = supplied
     else:
@@ -154,11 +193,10 @@ def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> Attested
         os.close(target_descriptor)
     if shebang not in {b"#!/usr/bin/env node", b"#!/usr/bin/node"}:
         raise ValueError("OpenClaw entrypoint must use the approved Node interpreter")
-    node_path = NODE_PATH
     try:
         node_identity = _attest_regular_executable(node_path, root_only=False)
     except (OSError, ValueError) as exc:
-        raise ValueError("the attested /usr/bin/node interpreter is unavailable") from exc
+        raise ValueError("the attested Node interpreter is unavailable") from exc
     return AttestedOpenClawExecutable(
         supplied,
         _executable_identity(entry_info),

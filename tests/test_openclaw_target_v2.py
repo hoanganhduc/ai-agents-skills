@@ -83,6 +83,44 @@ class OpenClawTargetV2Tests(unittest.TestCase):
                     attest_openclaw_executable(str(executable))
                 self.assertEqual(str(bad_parent.exception.__cause__), "OpenClaw executable has an unsafe parent chain")
 
+    def test_openclaw_in_a_sealed_npm_closure_runs_on_that_closures_node(self) -> None:
+        with openclaw_root() as root:
+            executable, node = sealed_openclaw(root)
+            attested = attest_openclaw_executable(str(executable))
+            self.assertEqual(attested.node_path, node)
+            self.assertEqual(attested.target_path, Path(os.readlink(executable)))
+
+            node_link = root / ".npm-global" / "bin" / "node"
+            other = root / ".local" / "share" / "coding-system" / "node-generations" / ("sha256-arm64-" + "1" * 64)
+            (other / "bin").mkdir(parents=True)
+            (other / "bin" / "node").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (other / "bin" / "node").chmod(0o555)
+            # Generation names alone do not admit a Node outside the sealed root.
+            stray_node = root / "elsewhere" / ("sha256-amd64-" + "1" * 64) / "bin" / "node"
+            stray_node.parent.mkdir(parents=True)
+            stray_node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            stray_node.chmod(0o555)
+            for wrong in (other / "bin" / "node", stray_node):
+                node_link.unlink()
+                node_link.symlink_to(wrong)
+                with self.assertRaisesRegex(ValueError, "does not match the npm closure"):
+                    attest_openclaw_executable(str(executable))
+            node_link.unlink()
+            node_link.symlink_to(node)
+
+            closure_name = "sha256-amd64-" + "2" * 64 + "-" + "3" * 64
+            for elsewhere in (
+                root / "elsewhere" / "node_modules" / "openclaw" / "openclaw.mjs",
+                root / "elsewhere" / closure_name / "node_modules" / "openclaw" / "openclaw.mjs",
+            ):
+                elsewhere.parent.mkdir(parents=True)
+                elsewhere.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+                elsewhere.chmod(0o555)
+                executable.unlink()
+                executable.symlink_to(elsewhere)
+                with self.assertRaisesRegex(ValueError, "pinned npm OpenClaw entrypoint"):
+                    attest_openclaw_executable(str(executable))
+
     def test_canary_manifest_approves_applies_and_uninstalls_skill_file(self) -> None:
         with openclaw_root() as root:
             content = skill_content("model-router")
@@ -620,6 +658,25 @@ def fake_openclaw(root: Path, *, observed_env: Path | None = None) -> Path:
     executable = bin_dir / "openclaw"
     executable.symlink_to("../lib/node_modules/openclaw/openclaw.mjs")
     return executable
+
+
+def sealed_openclaw(root: Path) -> tuple[Path, Path]:
+    """Lay out ~/.npm-global as a coding-system restore links it."""
+    coding = root / ".local" / "share" / "coding-system"
+    node = coding / "node-generations" / ("sha256-amd64-" + "1" * 64) / "bin" / "node"
+    closure = coding / "npm-closures" / ("sha256-amd64-" + "2" * 64 + "-" + "3" * 64)
+    entry = closure / "node_modules" / "openclaw" / "openclaw.mjs"
+    npm_bin = root / ".npm-global" / "bin"
+    for directory in (node.parent, entry.parent, npm_bin):
+        directory.mkdir(parents=True)
+    node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    entry.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    for path in (node, entry):
+        path.chmod(0o555)
+    (npm_bin / "node").symlink_to(node)
+    executable = npm_bin / "openclaw"
+    executable.symlink_to(entry)
+    return executable, node
 
 
 def build_manifest(
