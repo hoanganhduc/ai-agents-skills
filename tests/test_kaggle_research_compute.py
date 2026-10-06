@@ -946,6 +946,14 @@ class KaggleDriverTests(unittest.TestCase):
     all exercised offline."""
 
     def setUp(self) -> None:
+        # These orchestration tests substitute every provider operation. Native
+        # POSIX deadlines and unsupported-host refusal have dedicated tests.
+        bounded_io = mock.patch.object(
+            kaggle_driver, "_bounded_provider_io",
+            side_effect=lambda *args, **kwargs: contextlib.nullcontext(),
+        )
+        bounded_io.start()
+        self.addCleanup(bounded_io.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.config = _config(self.tmp)

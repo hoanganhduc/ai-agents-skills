@@ -9,6 +9,7 @@ import sys
 import time
 import json
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -18,6 +19,17 @@ sys.path.insert(0, str(ROOT / "canonical/runtime/workspace"))
 sys.path.insert(0, str(ROOT / "canonical/runtime/skills/kaggle-research-compute"))
 import kaggle_driver as driver
 import requests
+
+
+class UnsupportedProviderRuntimeTests(unittest.TestCase):
+    def test_non_posix_runtime_is_refused_before_http(self):
+        windows_os = SimpleNamespace(**{**vars(os), "name": "nt"})
+        with mock.patch.object(driver, "os", windows_os), \
+             mock.patch.object(requests.Session, "send") as send:
+            with self.assertRaisesRegex(driver.KaggleDriverError, "POSIX main-thread"):
+                with driver._bounded_provider_io("status"):
+                    self.fail("unsupported runtime entered the provider boundary")
+        send.assert_not_called()
 
 
 @unittest.skipUnless(os.name == "posix" and hasattr(signal, "setitimer"), "POSIX main-thread timeout qualification")
