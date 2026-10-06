@@ -1897,7 +1897,122 @@ def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
+LEGACY_VERIFICATION_PENDING = "formal/legacy_verification_pending.json"
+
+
+def _legacy_request(args: argparse.Namespace) -> dict[str, Any]:
+    return _validated_iteration_submission_request({
+        name: copy.deepcopy(getattr(args, name, None)) for name in ITERATION_SUBMISSION_ARG_FIELDS
+    })
+
+
+def _legacy_policy_binding(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "formal/host_policy.pin.json"
+    pin, _ = _read_json_snapshot(path)
+    return {key: value for key, value in pin.items() if key != "pinned_at"}
+
+
+def _load_legacy_verification_pending(run_dir: Path) -> tuple[dict[str, Any], str] | None:
+    path = run_dir / LEGACY_VERIFICATION_PENDING
+    if not path.exists() and not path.is_symlink():
+        return None
+    pending, digest = _read_json_snapshot(path)
+    if pending.get("schema_version") != "legacy_formal_pending.v1" or not isinstance(pending.get("expected_hashes"), dict):
+        raise ValueError("invalid legacy pending verification record")
+    _validated_iteration_submission_request(pending.get("request"))
+    safe_registry_run_id(pending.get("pending_id"))
+    if _legacy_policy_binding(run_dir) != pending.get("policy_binding"):
+        raise ValueError("formal policy changed while a legacy verification was pending")
+    permitted = {"loop_state.json", "budget.json", ITERATION_LEDGER_FILE, "formal/terminal_state.json"}
+    permitted.update(f"{PROOF_ARTIFACT_DIRNAME}/{name}.json" for name in parse_many(pending["request"]["evidence_id"]) if is_safe_evidence_id(name))
+    if not {"loop_state.json", "budget.json", ITERATION_LEDGER_FILE, "formal/terminal_state.json"}.issubset(pending["expected_hashes"]):
+        raise ValueError("legacy pending verification lacks exact preimage bindings")
+    for name, expected in pending["expected_hashes"].items():
+        if name not in permitted:
+            raise ValueError("legacy pending verification has an invalid source binding")
+        raw = _read_contained_regular_text(run_dir, run_dir / name, max_bytes=2_000_000)
+        if hashlib.sha256(raw.encode("utf-8")).hexdigest() != expected:
+            raise ValueError(f"legacy pending verification preimage changed: {name}")
+    control = pending.get("control")
+    if not isinstance(control, dict) or set(control) - {"AAS_AUTOLOOP_PRIMARY_PROVIDER", "AAS_AUTOLOOP_ITERATION_STARTED_AT", "AAS_AUTOLOOP_CANDIDATE_ID"} or any(not isinstance(value, str) for value in control.values()):
+        raise ValueError("invalid legacy pending host control")
+    if control.get("AAS_AUTOLOOP_CANDIDATE_ID") != pending["pending_id"]:
+        raise ValueError("legacy pending candidate identity mismatch")
+    return pending, digest
+
+
+def _save_legacy_verification_pending(run_dir: Path, args: argparse.Namespace,
+    control: Mapping[str, Any], expected_hashes: Mapping[str, str]) -> dict[str, Any]:
+    if getattr(args, "dry_run", False):
+        return {"status": "ok", "action": "append-iteration", "dry_run": True,
+                "verification_status": "verification_pending", "would_append": False}
+    request = _legacy_request(args)
+    existing = _load_legacy_verification_pending(run_dir)
+    if existing:
+        pending, _ = existing
+        if pending["request"] != request:
+            raise ValueError("another exact legacy append is awaiting verification")
+    else:
+        bindings = dict(expected_hashes)
+        for name in ["formal/terminal_state.json", *(f"{PROOF_ARTIFACT_DIRNAME}/{identity}.json" for identity in parse_many(request["evidence_id"]) if is_safe_evidence_id(identity))]:
+            raw = _read_contained_regular_text(run_dir, run_dir / name, max_bytes=2_000_000)
+            bindings[name] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        pending_id = "legacy-" + uuid.uuid4().hex
+        pending = {"schema_version": "legacy_formal_pending.v1", "pending_id": pending_id,
+            "request": request, "expected_hashes": bindings,
+            "policy_binding": _legacy_policy_binding(run_dir),
+            "control": {"AAS_AUTOLOOP_CANDIDATE_ID": pending_id,
+                "AAS_AUTOLOOP_PRIMARY_PROVIDER": str(control.get("AAS_AUTOLOOP_PRIMARY_PROVIDER") or ""),
+                "AAS_AUTOLOOP_ITERATION_STARTED_AT": str(control.get("AAS_AUTOLOOP_ITERATION_STARTED_AT") or "")}}
+        commit_transaction(run_dir, json_files={LEGACY_VERIFICATION_PENDING: pending},
+            expected_hashes=bindings, expected_absent=[LEGACY_VERIFICATION_PENDING, SENTINEL_STOP, SENTINEL_PAUSE])
+    return {"status": "ok", "action": "append-iteration", "verification_status": "verification_pending",
+            "pending_id": pending["pending_id"], "ledger_appended": False}
+
+
+def resume_legacy_verification(run_dir: Path) -> dict[str, Any]:
+    """Replay only the saved append; pending checks never rerun the producer."""
+    recover_transactions(run_dir)
+    if not (run_dir / LEGACY_VERIFICATION_PENDING).exists():
+        return {"status": "not_applicable"}
+    if (run_dir / SENTINEL_STOP).exists() or (run_dir / SENTINEL_PAUSE).exists():
+        return {"status": "ok", "verification_status": "paused_by_operator", "ledger_appended": False}
+    if compute_done(run_dir).get("done"):
+        return {"status": "ok", "verification_status": "budget_or_terminal_stop", "ledger_appended": False}
+    loaded = _load_legacy_verification_pending(run_dir)
+    if loaded is None:
+        return {"status": "not_applicable"}
+    pending, _ = loaded
+    return append_iteration(argparse.Namespace(dir=str(run_dir), **pending["request"]),
+                            _host_control=pending["control"])
+
+
+def resume_legacy_verification_command(args: argparse.Namespace) -> dict[str, Any]:
+    result = resume_legacy_verification(Path(args.dir).expanduser().resolve())
+    if result.get("status") == "not_applicable":
+        return {"status": "ok", "verification_status": "not_applicable", "ledger_appended": False}
+    return result
+
+
+def _prepare_legacy_remote_append(run_dir: Path, args: argparse.Namespace,
+    control: Mapping[str, Any], hashes: Mapping[str, str]) -> tuple[Any, Mapping[str, Any]]:
+    """Persist the exact append before a remote verification can be dispatched."""
+    existing = _load_legacy_verification_pending(run_dir)
+    if existing is not None:
+        return existing, existing[0]["control"]
+    pin_path = run_dir / "formal/host_policy.pin.json"
+    pin = _legacy_policy_binding(run_dir) if pin_path.exists() else None
+    pol = load_formal_policy(run_dir, pin=pin)
+    if pol.execution_backend == "kaggle-cpu" and not getattr(args, "dry_run", False):
+        if not pin:
+            raise ValueError("remote legacy verification requires an existing host policy pin")
+        _save_legacy_verification_pending(run_dir, args, control, hashes)
+        existing = _load_legacy_verification_pending(run_dir)
+        return existing, existing[0]["control"]
+    return None, control
+
+
+def _require_legacy_host_reverification(run_dir: Path, *, dry_run: bool = False) -> dict[str, Any]:
     """Re-run the host formal checks before a legacy run banks a proof claim.
 
     Goal-Focus enforce mode stages the record and re-checks at finalize, so a
@@ -1912,6 +2027,11 @@ def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
     re-check" means the stamp went away in between — which is how an agent
     turns a re-check it cannot survive into no re-check at all.
     """
+    if dry_run:
+        pin_path = run_dir / "formal/host_policy.pin.json"
+        policy = load_formal_policy(run_dir, pin=_legacy_policy_binding(run_dir) if pin_path.exists() else None)
+        if policy.execution_backend == "kaggle-cpu":
+            return {"status": "verification_pending", "ok": False, "detail": "dry run does not dispatch remote verification"}
     try:
         result = reverify_formal_evidence(run_dir)
     except Exception as exc:  # noqa: BLE001 - any failure to re-check is a refusal.
@@ -1925,7 +2045,7 @@ def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
             **early_stop_contract(),
         )
     status = str(result.get("status") or "").strip()
-    if status == "reverified":
+    if status in {"reverified", "verification_pending"}:
         return dict(result)
     detail = str(result.get("detail") or "").strip()
     raise GuardError(
@@ -1963,6 +2083,13 @@ def append_iteration(
     # worst instead of leaving a directory every later append refuses. Every
     # other reader of this run directory already opens with the same replay.
     recover_transactions(run_dir)
+    legacy_pending = _load_legacy_verification_pending(run_dir)
+    if legacy_pending is not None:
+        if _legacy_request(args) != legacy_pending[0]["request"]:
+            raise ValueError("a different legacy append is awaiting formal verification")
+        if (run_dir / SENTINEL_STOP).exists() or (run_dir / SENTINEL_PAUSE).exists():
+            return {"status": "ok", "verification_status": "paused_by_operator", "ledger_appended": False}
+        control = legacy_pending[0]["control"]
     errors = validate_loop_dir(run_dir)["errors"]
     if errors:
         raise ValueError("cannot append iteration before validation passes: " + "; ".join(errors))
@@ -2093,7 +2220,12 @@ def append_iteration(
                 # finalizes the candidate. A legacy run never reaches that
                 # step, so it re-checks here instead of banking a verdict
                 # nothing has confirmed since it was written.
-                host_reverification = _require_legacy_host_reverification(run_dir)
+                legacy_pending, control = _prepare_legacy_remote_append(run_dir, args, control,
+                    {paths["state"].name: state_hash, paths["budget"].name: budget_hash, ITERATION_LEDGER_FILE: ledger_hash})
+                host_reverification = _require_legacy_host_reverification(run_dir, dry_run=bool(getattr(args, "dry_run", False)))
+                if host_reverification.get("status") == "verification_pending":
+                    return _save_legacy_verification_pending(run_dir, args, control,
+                        {paths["state"].name: state_hash, paths["budget"].name: budget_hash, ITERATION_LEDGER_FILE: ledger_hash})
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -2197,7 +2329,15 @@ def append_iteration(
         # claim under the weakest check.
         formal_terminal_claim = _require_formal_terminal_state_for_success(run_dir)
         if formal_terminal_claim and not enforced_goal_focus and host_reverification is None:
-            host_reverification = _require_legacy_host_reverification(run_dir)
+            legacy_pending, control = _prepare_legacy_remote_append(run_dir, args, control,
+                {paths["state"].name: state_hash, paths["budget"].name: budget_hash, ITERATION_LEDGER_FILE: ledger_hash})
+            if legacy_pending is not None:
+                record["candidate_id"] = legacy_pending[0]["pending_id"]
+            host_reverification = _require_legacy_host_reverification(run_dir, dry_run=bool(getattr(args, "dry_run", False)))
+            if host_reverification.get("status") == "verification_pending":
+                return _save_legacy_verification_pending(run_dir, args, control,
+                    {paths["state"].name: state_hash, paths["budget"].name: budget_hash, ITERATION_LEDGER_FILE: ledger_hash})
+            record["host_reverification"] = host_reverification
     record["progress_assessment"] = {
         "campaign_delta": campaign_delta,
         "global_delta": global_delta,
@@ -2359,10 +2499,13 @@ def append_iteration(
                 paths["state"].name: state,
                 paths["budget"].name: budget,
             },
+            deletes=[LEGACY_VERIFICATION_PENDING] if legacy_pending is not None else [],
+            expected_absent=[SENTINEL_STOP, SENTINEL_PAUSE] if legacy_pending is not None else [],
             expected_hashes={
                 ITERATION_LEDGER_FILE: ledger_hash,
                 paths["state"].name: state_hash,
                 paths["budget"].name: budget_hash,
+                **({LEGACY_VERIFICATION_PENDING: legacy_pending[1]} if legacy_pending is not None else {}),
             },
         )
     except RevisionConflict as exc:
@@ -3053,6 +3196,12 @@ def _apply_formal_drive_start(
 ) -> tuple[Any, dict[str, Any]]:
     """Resolve formal policy at drive start: pin, persist, export env. Never raises."""
     try:
+        pending = _load_legacy_verification_pending(run_dir)
+        if pending is not None:
+            # Restarting a verifier must not rewrite the saved append's state
+            # preimage or replace its original policy with a new drive pin.
+            pin = pending[0]["policy_binding"]
+            return load_formal_policy(run_dir, pin=pin), pin
         formal_cli = _formal_cli_from_args(args)
         pol = load_formal_policy(run_dir, cli=formal_cli or None)
         pin = pin_privileged_policy(pol)
@@ -3126,14 +3275,13 @@ STUB_ITERATION_SNIPPET = (
     "marker = os.path.join(run_dir, 'quota_marker')\n"
     "if '--quota-first' in sys.argv and not os.path.exists(marker):\n"
     "    open(marker, 'w').write('seen')\n"
-    "    print('provider error: HTTP 429 Too Many Requests')\n"
+    "    print(json.dumps({'type':'error','error':{'type':'rate_limit_error'}}), file=sys.stderr)\n"
     "    sys.exit(1)\n"
     "if '--auth-fail' in sys.argv:\n"
-    "    print('ERROR: refresh_token_invalidated')\n"
-    "    print('401 Unauthorized: Please try signing in again.')\n"
+    "    print(json.dumps({'type':'error','error':{'type':'authentication_error'}}), file=sys.stderr)\n"
     "    sys.exit(1)\n"
     "if '--weekly-limit' in sys.argv:\n"
-    "    print(\"You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)\")\n"
+    "    print(json.dumps({'type':'error','error':{'type':'usage_limit_reached'}}), file=sys.stderr)\n"
     "    sys.exit(1)\n"
     "if '--generic-fail' in sys.argv:\n"
     "    print('tool crashed: assertion failed')\n"
@@ -3387,6 +3535,18 @@ def prepare_primary_private_prompt_transport(
     return secured, prompt
 
 
+def _primary_capture_evidence(result: Any, environ: Mapping[str, str]) -> dict[str, Any]:
+    evidence = provider_resources.process_evidence(result)
+    text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+    diagnostics = "\n".join(str(value or "") for value in (result.capture_error, result.cleanup_error))
+    if panel_payload_sensitive_findings(text + "\n" + diagnostics, environ=environ):
+        evidence = provider_resources.withhold_process_evidence(evidence, "sensitive_output")
+        for field in ("capture_error", "cleanup_error"):
+            if evidence.get(field):
+                evidence[field] = "[withheld diagnostic]"
+    return evidence
+
+
 def run_primary_subprocess(
     run_args: list[str] | str,
     *,
@@ -3580,7 +3740,7 @@ def run_primary_subprocess(
                 output_limit_bytes=resource_limits["output_max_bytes"],
                 scope_unit=resource_scope,
                 stdin_text=stdin_text,
-                merge_stderr=True,
+                merge_stderr=False,
             )
         except Exception as exc:
             prior_cleanup_error = getattr(exc, "cleanup_error", None)
@@ -3601,6 +3761,7 @@ def run_primary_subprocess(
             resource_metadata["oversized_output"] = bounded.oversized
             resource_metadata["capture_verified"] = bounded.capture_error is None
             resource_metadata["finished_at"] = utc_now()
+            resource_metadata["process_evidence"] = _primary_capture_evidence(bounded, execution_env)
         if bounded.oversized:
             return_code = 126
             output_text = (
@@ -3614,8 +3775,8 @@ def run_primary_subprocess(
             )
         else:
             return_code = bounded.return_code
-            output_text = bounded.stdout.decode("utf-8", errors="replace")
-            sensitive_findings = panel_payload_sensitive_findings(output_text)
+            output_text = (bounded.stdout + bounded.stderr).decode("utf-8", errors="replace")
+            sensitive_findings = panel_payload_sensitive_findings(output_text, environ=execution_env)
             if sensitive_findings:
                 if resource_metadata is not None:
                     resource_metadata["sensitive_output_blocked"] = True
@@ -3626,15 +3787,21 @@ def run_primary_subprocess(
                     + ", ".join(sensitive_findings)
                     + "\n"
                 )
+            elif resource_metadata is not None and provider and return_code != 0 and not bounded.timed_out:
+                resource_metadata["provider_failure_class"] = classify_iteration_failure(
+                    bounded.stderr.decode("utf-8", errors="replace"), host_diagnostic=True
+                )
         output.write(output_text)
         output.flush()
         if bounded.cleanup_error is not None:
-            return 126, bounded.timed_out, bounded.cleanup_error
+            safe_error = (resource_metadata or {}).get("process_evidence", {}).get("cleanup_error", bounded.cleanup_error)
+            return 126, bounded.timed_out, safe_error
         return return_code, bounded.timed_out, None
     # Allocate capture storage only after every fail-closed preflight.  In
     # particular, blocked enforce-mode calls must not retain a descriptor until
     # cyclic/implementation-specific garbage collection happens.
     private_output = tempfile.TemporaryFile(mode="w+b")
+    private_stderr = tempfile.TemporaryFile(mode="w+b")
     try:
         process = subprocess.Popen(
             run_args,
@@ -3642,12 +3809,13 @@ def run_primary_subprocess(
             env=execution_env,
             cwd=str(cwd),
             stdout=private_output,
-            stderr=subprocess.STDOUT,
+            stderr=private_stderr,
             stdin=subprocess.PIPE if stdin_text is not None else None,
             **options,
         )
     except Exception:
         private_output.close()
+        private_stderr.close()
         cleanup_provider_sandbox_vault(credential_vault)
         if resource_scope is not None:
             cleanup_resource_scope(resource_scope)
@@ -3704,13 +3872,25 @@ def run_primary_subprocess(
     private_output.seek(0)
     output_limit = int(resource_limits.get("output_max_bytes") or 16_000_000)
     output_bytes = private_output.read(output_limit + 1)
+    stdout_bytes = output_bytes
     private_output.close()
+    private_stderr.flush()
+    private_stderr.seek(0)
+    stderr_bytes = private_stderr.read(output_limit + 1)
+    private_stderr.close()
+    output_bytes += stderr_bytes
+    observed_return_code = process.returncode
+    evidence = _primary_capture_evidence(provider_resources.BoundedProcessResult(
+        return_code, stdout_bytes, stderr_bytes, timed_out, len(output_bytes) > output_limit,
+        None, cleanup_error, observed_return_code), execution_env)
+    if resource_metadata is not None:
+        resource_metadata["process_evidence"] = evidence
     if len(output_bytes) > output_limit:
         return_code = 126
         output_text = "primary output was blocked before persistence because it was oversized\n"
     else:
         output_text = output_bytes.decode("utf-8", errors="replace")
-        sensitive_findings = panel_payload_sensitive_findings(output_text)
+        sensitive_findings = panel_payload_sensitive_findings(output_text, environ=execution_env)
         if sensitive_findings:
             return_code = 126
             output_text = (
@@ -3719,10 +3899,14 @@ def run_primary_subprocess(
                 + ", ".join(sensitive_findings)
                 + "\n"
             )
+        elif resource_metadata is not None and provider and return_code != 0 and not timed_out:
+            resource_metadata["provider_failure_class"] = classify_iteration_failure(
+                stderr_bytes.decode("utf-8", errors="replace"), host_diagnostic=True
+            )
     output.write(output_text)
     output.flush()
     if cleanup_error is not None:
-        return 126, timed_out, cleanup_error
+        return 126, timed_out, evidence.get("cleanup_error", cleanup_error)
     return return_code, timed_out, None
 
 
@@ -3859,21 +4043,23 @@ def selftest_driver_checks() -> dict[str, Any]:
         if QUOTA_PATTERN.search("If you hit a credit or quota error, exit nonzero"):
             errors.append("quota pattern false-positive on host prompt phrase")
         weekly = (
-            "You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)\n"
+            "Error: You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)\n"
         )
-        if classify_iteration_failure(weekly, prompt="") != "quota":
-            errors.append("weekly limit phrase did not classify as quota")
+        if classify_iteration_failure(weekly, prompt="", host_diagnostic=True) != "hard_quota":
+            errors.append("host weekly-limit diagnostic did not classify as hard quota")
+        if classify_iteration_failure(weekly, prompt="") != "failure":
+            errors.append("untrusted narration established provider credit")
         # 2b. Classification: AUTH before QUOTA; prompt dual-match → auth.
         host_prompt = (
             "You are one iteration of a bounded autonomous research loop. "
             "If you hit a credit or quota error, exit nonzero with the provider's error text."
         )
         auth_body = (
-            "ERROR codex: 401 Unauthorized: Your authentication token has been "
+            "Error: 401 Unauthorized: Your authentication token has been "
             "invalidated. refresh_token_invalidated. Please try signing in again."
         )
         dual = host_prompt + "\n" + HOST_PROMPT_SENTINEL + "\n" + auth_body
-        if classify_iteration_failure(dual, prompt=host_prompt) != "auth":
+        if classify_iteration_failure(dual, prompt=host_prompt, host_diagnostic=True) != "auth":
             errors.append("dual-match prompt+auth did not classify as auth")
         if classify_iteration_failure(
             host_prompt + "\n" + HOST_PROMPT_SENTINEL + "\ntool crashed",
@@ -3970,6 +4156,18 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
     """
 
     errors: list[str] = []
+    def diagnostic_drive(loop: Path, flag: str, *, max_attempts: int = 3) -> dict[str, Any]:
+        # Exercise the actual separate-stderr classifier with an explicit
+        # synthetic transport. No installed provider binary is resolved/run.
+        from unittest import mock
+        args = selftest_drive_args(loop, base / "reg", "unused")
+        args.cmd = None
+        args.provider = "claude"
+        args.max_failures = max_attempts
+        spec = {"mode": "argv", "binary_found": True, "argv": [sys.executable, str(stub), flag],
+                "prompt": "offline diagnostic selftest", "prompt_transport": "stdin"}
+        with mock.patch.object(sys.modules[__name__], "resolve_provider_command", return_value=spec):
+            return drive_command(args)
     # 3. Drive to completion on a stub command (budget cap = 2 iterations).
     loop_a = base / "loop-a"
     init_loop(selftest_init_args(loop_a, max_iterations=2))
@@ -3990,15 +4188,12 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
     elif not list((loop_a / "driver_logs").glob("iter_*.log")):
         errors.append("drive stub run left no iteration logs")
     # 4. Quota pause-and-resume: first stub call fails with a 429 signal and
-    # must be waited out (not counted as a failure with max_failures=1),
+    # consumes one persistent attempt before the second succeeds,
     # the second call succeeds and the budget cap ends the loop.
     loop_b = base / "loop-b"
     init_loop(selftest_init_args(loop_b, max_iterations=1))
-    quota_cmd = f'"{sys.executable}" "{stub}" --quota-first'
     # Short backoff so selftest stays fast.
-    result_b = drive_command(
-        selftest_drive_args(loop_b, base / "reg", quota_cmd)
-    )
+    result_b = diagnostic_drive(loop_b, "--quota-first", max_attempts=2)
     if (
         result_b.get("reason") != "done"
         or result_b.get("quota_waits_total") != 1
@@ -4008,32 +4203,25 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
     # 5. Auth fail → exit 7, no quota waits.
     loop_c = base / "loop-c"
     init_loop(selftest_init_args(loop_c, max_iterations=3))
-    auth_cmd = f'"{sys.executable}" "{stub}" --auth-fail'
-    args_c = selftest_drive_args(loop_c, base / "reg", auth_cmd)
-    args_c.max_failures = 5
-    result_c = drive_command(args_c)
+    result_c = diagnostic_drive(loop_c, "--auth-fail")
     if (
         result_c.get("reason") != "auth_or_session_dead"
         or int(result_c.get("exit_code") or 0) != 7
         or int(result_c.get("quota_waits_total") or 0) != 0
     ):
         errors.append(f"drive auth fail did not exit 7: {result_c}")
-    # 6. Weekly limit ×3 with max_quota_waits=3 → exit 5 (switch signal).
+    # 6. Hard usage cap excludes after one observed error, without retries.
     loop_d = base / "loop-d"
     init_loop(selftest_init_args(loop_d, max_iterations=10))
-    weekly_cmd = f'"{sys.executable}" "{stub}" --weekly-limit'
-    args_d = selftest_drive_args(loop_d, base / "reg", weekly_cmd)
-    args_d.max_quota_waits = 3
-    args_d.quota_backoff = 0
-    args_d.max_failures = 3
-    result_d = drive_command(args_d)
+    result_d = diagnostic_drive(loop_d, "--weekly-limit")
     if (
-        result_d.get("reason") != "quota_wait_exhausted"
-        or int(result_d.get("exit_code") or 0) != 5
-        or int(result_d.get("quota_waits_total") or 0) != 3
+        result_d.get("reason") != "hard_quota_exhausted"
+        or int(result_d.get("exit_code") or 0) != 18
+        or int(result_d.get("quota_waits_total") or 0) != 0
+        or result_d.get("iterations_run") != 1
     ):
         errors.append(
-            f"drive weekly-limit×3 did not exit 5 after 3 waits: {result_d}"
+            f"drive hard quota did not exclude immediately: {result_d}"
         )
     return errors
 
@@ -5716,15 +5904,76 @@ def build_classification_text(log_tail: str, prompt: str | None = None) -> str:
 
 
 def classify_iteration_failure(
-    log_tail: str, prompt: str | None = None
+    log_tail: str, prompt: str | None = None, *, host_diagnostic: bool = False
 ) -> str:
-    """Return 'auth' | 'quota' | 'failure' for a nonzero iteration exit."""
+    """Classify a host-captured provider error, never model narration.
+
+    The caller must supply the separate stderr transport and a nonzero exit.
+    Only error envelopes or anchored CLI diagnostics are admitted. ``quota``
+    means transient throttling; hard credit/usage caps never retry.
+    """
+    if not host_diagnostic:
+        return "failure"
     text = build_classification_text(log_tail, prompt)
-    if AUTH_PATTERN.search(text):
-        return "auth"
-    if QUOTA_PATTERN.search(text):
-        return "quota"
+    for line in text.splitlines():
+        try:
+            envelope = json.loads(line)
+        except ValueError:
+            envelope = None
+        if isinstance(envelope, dict):
+            error = envelope.get("error")
+            if envelope.get("type") not in {None, "error"} or envelope.get("role") or not isinstance(error, dict):
+                continue
+            kind = str(error.get("type") or error.get("code") or "")
+            status = error.get("status") or envelope.get("status")
+            if kind in {"authentication_error", "invalid_api_key", "token_invalidated"} or status == 401:
+                return "auth"
+            if kind in {"insufficient_quota", "insufficient_credit", "billing_error", "credit_exhausted", "usage_limit_reached"} or status == 402:
+                return "hard_quota"
+            if kind in {"rate_limit_error", "rate_limit_exceeded", "too_many_requests"} or status == 429:
+                return "quota"
+            continue
+        if not re.match(r"^\s*(?:Error:|API Error:|HTTP\s+(?:401|402|429)\b)", line, re.IGNORECASE):
+            continue
+        if AUTH_PATTERN.search(line):
+            return "auth"
+        if QUOTA_SHORT_BACKOFF_PATTERN.search(line) or re.search(r"insufficient_quota|quota[ _-]?(?:exceeded|exhausted)", line, re.IGNORECASE):
+            return "hard_quota"
+        if QUOTA_PATTERN.search(line):
+            return "quota"
     return "failure"
+
+
+def remaining_worker_timeout(
+    run_dir: Path, configured: float | None, *, cleanup_allowance: float = 60.0
+) -> float | None:
+    """Clamp a new worker to the remaining run wall budget and cleanup room."""
+    timeout = None if configured is None else float(configured)
+    if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("worker timeout must be finite and positive")
+    state = read_json(run_dir / "loop_state.json")
+    budget = read_json(run_dir / "budget.json")
+    cap = budget.get("max_wall_time_seconds", 0)
+    if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not math.isfinite(cap) or cap < 0:
+        raise ValueError("wall-time budget must be finite and nonnegative")
+    if not cap:
+        return timeout
+    started = parse_iso(state.get("created_at"))
+    if started is None:
+        raise ValueError("bounded worker requires a valid run creation time")
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    remaining = max(0.0, cap - max(0.0, elapsed) - cleanup_allowance)
+    return remaining if timeout is None else min(timeout, remaining)
+
+
+def provider_excluded(run_dir: Path, provider: str | None) -> bool:
+    """Exclusions survive restarts; a different explicit available choice is valid."""
+    cfg = load_panel_config(run_dir)
+    def names(value: object) -> set[str]:
+        raw = value.split(",") if isinstance(value, str) else value or []
+        return {str(item).strip().lower().replace("codewhale", "deepseek") for item in raw}
+    excluded = names(cfg.get("exclude_until_credit")) | names(cfg.get("exclude_providers"))
+    return str(provider or "").lower().replace("codewhale", "deepseek") in excluded
 
 
 def interruptible_sleep(seconds: float, run_dir: Path, *, slice_s: float = 5.0) -> bool:
@@ -8244,7 +8493,7 @@ def _build_notify_v2_envelope(
 
     error_class_out = failure_class or None
 
-    return notify_v2.build_event(
+    envelope = notify_v2.build_event(
         event=event,
         event_id=stable_event_id or None,
         occurred_at=timestamp,
@@ -8283,6 +8532,11 @@ def _build_notify_v2_envelope(
         reviewer_families=reviewer_families,
         plan_revision=plan_revision,
     )
+    if not stable_event_id:
+        run_identity = str(state.get("created_at") or run_dir.resolve())
+        semantic = notify_v2.retry_fingerprint(envelope)
+        envelope["event_id"] = "arl-" + hashlib.sha256((run_identity + semantic).encode()).hexdigest()
+    return envelope
 
 
 def build_progress_event(
@@ -9015,6 +9269,9 @@ def emit_loop_progress(
         "AUTOLOOP_MAX": str(payload.get("max_iterations", "")),
         "AUTOLOOP_STATUS": str(payload.get("status", "")),
     }
+    if isinstance(payload.get("notification"), dict):
+        env_payload["AUTOLOOP_EVENT_ID"] = str(payload["notification"].get("event_id") or "")
+        env_payload["AUTOLOOP_SEMANTIC_SHA256"] = notify_v2.retry_fingerprint(payload["notification"])
     if to_stderr:
         # Prefer compact one-liner on stderr; multi-line body is for notify clients.
         sys.stderr.write(str(payload.get("text_compact") or payload.get("text") or "") + "\n")
@@ -9037,7 +9294,10 @@ def emit_loop_progress(
         external_notify_allowed
         and channel
         and channel != "off"
-        and event in _DEFAULT_REMOTE_NOTIFY_EVENTS
+        and event in (_DEFAULT_REMOTE_NOTIFY_EVENTS | {
+            "synthesis_started", "synthesis_start", "synthesis_completed", "synthesis_complete",
+            "loop_completed", "run_completed", "completed",
+        })
     ):
         # Prefer the validated v2 envelope; Telegram/Zulip rendering and stable
         # topic selection belong to remote-bridge, not this caller.
@@ -9183,15 +9443,74 @@ def notify_event_command(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def watch_notify(cmd: str | None, payload: dict[str, str]) -> None:
+def watch_notify(cmd: str | None, payload: dict[str, str]) -> dict[str, Any] | None:
     if not cmd:
         print(json.dumps(payload), flush=True)
         return
-    env = raw_notify_environment(payload)
+    if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") != "1" or not payload.get("AUTOLOOP_DIR"):
+        return {"status": "blocked", "reason": "raw_hook_requires_explicit_policy_and_loop"}
+    run_dir = Path(payload["AUTOLOOP_DIR"]).resolve()
+    if goal_focus_runtime_mode(run_dir) == "enforce" and os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") != "allow":
+        return {"status": "blocked", "reason": "external_notify_not_authorized"}
+    path = run_dir / "raw_notify_intents.json"
+    marker = run_dir / "raw_notify_initialized.json"
     try:
-        subprocess.run(cmd, shell=True, env=env, timeout=60, check=False)
-    except Exception:  # noqa: BLE001 - notification is best-effort.
-        pass
+        safe_payload = _scrub_progress_payload(dict(payload))
+        semantic = str(safe_payload.get("AUTOLOOP_SEMANTIC_SHA256") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", semantic):
+            semantic = hashlib.sha256(json.dumps(safe_payload, sort_keys=True).encode()).hexdigest()
+        event_id = str(safe_payload.get("AUTOLOOP_EVENT_ID") or semantic)
+        key = hashlib.sha256(json.dumps([cmd, event_id], ensure_ascii=False).encode()).hexdigest()
+        expected: dict[str, str] = {}
+        absent = []
+        if path.exists() or path.is_symlink():
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 2_000_000:
+                raise ValueError("unsafe raw notification state")
+            raw = path.read_bytes()
+            state = json.loads(raw)
+            expected[path.name] = hashlib.sha256(raw).hexdigest()
+            if (not isinstance(state, dict) or state.get("schema_version") != "raw-notify.v1"
+                    or not isinstance(state.get("intents"), dict)):
+                raise ValueError("invalid raw notification state")
+        else:
+            if marker.exists() or marker.is_symlink():
+                raise ValueError("raw notification state is missing after initialization")
+            state = {"schema_version": "raw-notify.v1", "intents": {}}
+            absent = [path.name, marker.name]
+        previous = state["intents"].get(key)
+        if previous is not None:
+            if (not isinstance(previous, dict) or previous.get("semantic_sha256") != semantic
+                    or previous.get("state") not in {"attempted", "outcome_unknown", "hook_completed"}):
+                raise ValueError("raw notification identity has changed content")
+            return {"status": "suppressed", "reason": "prior_hook_outcome_retained", "outcome": previous.get("state")}
+        record = {"state": "attempted", "semantic_sha256": semantic, "payload": safe_payload,
+                  "command_sha256": hashlib.sha256(cmd.encode()).hexdigest()}
+        state["intents"][key] = record
+        if len(state["intents"]) > 2000 or len(json.dumps(state).encode()) > 2_000_000:
+            raise ValueError("raw notification registry is full")
+        files = {path.name: state}
+        if absent:
+            files[marker.name] = {"schema_version": "raw-notify-initialized.v1"}
+        commit_transaction(run_dir, json_files=files, expected_hashes=expected, expected_absent=absent)
+        # Bind the exact admitted post-image, not a later reader's snapshot:
+        # another event may have committed between our transaction and this line.
+        admitted_hash = hashlib.sha256((json.dumps(state, indent=2, sort_keys=True) + "\n").encode()).hexdigest()
+    except Exception:
+        return {"status": "blocked", "reason": "raw_notification_intent_refused"}
+    try:
+        completed = subprocess.run(cmd, shell=True, env=raw_notify_environment(safe_payload), timeout=60, check=False)
+        # An opaque shell hook cannot attest a remote acknowledgement. Even a
+        # nonzero exit may follow a partial send, so neither outcome authorizes replay.
+        record["state"] = "hook_completed" if completed.returncode == 0 else "outcome_unknown"
+        record["returncode"] = completed.returncode
+    except Exception as exc:
+        record.update(state="outcome_unknown", error_type=type(exc).__name__)
+    try:
+        commit_transaction(run_dir, json_files={path.name: state}, expected_hashes={path.name: admitted_hash})
+    except Exception:
+        return {"status": "unknown", "reason": "raw_hook_outcome_persistence_failed"}
+    return {"status": record["state"], "remote_acknowledgement": "unverified"}
 
 
 def watch_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -9987,6 +10306,10 @@ DRIVE_EXIT_CODES = {
     "max_failures": 3,
     "runtime_error": 4,
     "quota_wait_exhausted": 5,
+    "hard_quota_exhausted": 18,
+    "provider_excluded": 20,
+    "formal_verification_pending": 19,
+    "formal_verification_unavailable": 21,
     "provider_unavailable": 6,
     "auth_or_session_dead": 7,
     "resource_cleanup_unverified": 8,
@@ -10216,6 +10539,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     platform-neutral replacement for the bash driver; the .sh shim delegates here."""
     run_dir = Path(args.dir).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else run_dir
+    if (run_dir / LEGACY_VERIFICATION_PENDING).exists():
+        saved = _load_legacy_verification_pending(run_dir)
+        supplied = _formal_cli_from_args(args)
+        if saved is not None and any(saved[0]["policy_binding"].get(key) != value for key, value in supplied.items()):
+            return {"status": "failed", "action": "drive", "reason": "bad_arguments",
+                    "error": "a pending legacy append retains its original formal policy; conflicting overrides are refused",
+                    "exit_code": DRIVE_EXIT_CODES["bad_arguments"]}
     if migration_claim_active(run_dir):
         return {
             "status": "failed",
@@ -10253,10 +10583,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             "exit_code": DRIVE_EXIT_CODES["runtime_error"],
         }
     iter_timeout = args.iteration_timeout if args.iteration_timeout and args.iteration_timeout > 0 else None
-    max_failures = max(1, int(args.max_failures))
+    max_failures = min(3, max(1, int(args.max_failures)))
     poll = max(0.0, float(args.poll))
     provider = getattr(args, "provider", None)
     cmd = getattr(args, "cmd", None)
+    if provider and not (run_dir / LEGACY_VERIFICATION_PENDING).exists() and provider_excluded(run_dir, provider):
+        return {"status": "failed", "action": "drive", "reason": "provider_excluded",
+                "exit_code": DRIVE_EXIT_CODES["provider_excluded"]}
     if bool(provider) == bool(cmd):
         return {
             "status": "failed",
@@ -10457,6 +10790,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     failures = 0
     quota_waits = 0
     review_waits = 0
+    legacy_verification_waits = 0
     quota_waits_total = 0
     iterations_run = 0
     reason = "unknown"
@@ -10501,6 +10835,38 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     )
     try:
         while True:
+            # User control is checked before reviews, identity probes, or other
+            # pre-dispatch effects; an idle restart cannot override a stop.
+            early_verdict = compute_done(run_dir)
+            if early_verdict.get("done"):
+                reason = "done"
+                break
+            if early_verdict.get("paused"):
+                interruptible_sleep(max(poll, 0.1), run_dir)
+                time.sleep(min(max(poll, 0.1), 1.0))
+                continue
+            if (run_dir / LEGACY_VERIFICATION_PENDING).exists():
+                try:
+                    replayed = resume_legacy_verification(run_dir)
+                except Exception as exc:
+                    _progress("result_review_error", source="drive", review_status="pending",
+                              current_summary=f"Saved legacy append remains unbanked: {str(exc)[:300]}")
+                    reason = "formal_verification_unavailable"
+                    break
+                if replayed.get("verification_status") == "verification_pending":
+                    legacy_verification_waits += 1
+                    _progress("result_review_wait", source="drive", review_status="pending",
+                              current_summary="Host formal verification is pending; the producer will not be rerun.")
+                    if legacy_verification_waits >= (max_review_waits or 3):
+                        reason = "formal_verification_pending"
+                        break
+                    interruptible_sleep(max(poll, 1.0), run_dir)
+                else:
+                    legacy_verification_waits = 0
+                continue
+            if provider and provider_excluded(run_dir, provider):
+                reason = "provider_excluded"
+                break
             goal_focus_present = goal_focus_state_present(run_dir)
             goal_focus_mode = "off"
             goal_focus_gate: dict[str, Any] | None = None
@@ -10805,12 +11171,16 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         iter_dir=str(review_dir),
                     )
                     try:
-                        review_summary = run_panel_phase_for_drive(
+                        cached_formal_review = goal_focus_v2.pending_formal_review(
+                            run_dir, pending, formal_pin=formal_pin,
+                        )
+                        review_summary = ({"cached_formal_review": cached_formal_review}
+                                          if cached_formal_review is not None else run_panel_phase_for_drive(
                             run_dir,
                             root,
                             "result_review",
                             iter_dir=review_dir,
-                        )
+                        ))
                         if review_summary.get("fatal_resource_cleanup_failure"):
                             _progress(
                                 "result_review_error",
@@ -10845,7 +11215,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             reason = "panel_roster_withdrawn"
                             break
-                        review_outcome = _result_review_from_panel(pending, review_summary)
+                        review_outcome = ({"status": "accepted", "review": cached_formal_review}
+                                          if cached_formal_review is not None else
+                                          _result_review_from_panel(pending, review_summary))
                     except Exception as exc:  # noqa: BLE001 - pending must survive
                         review_outcome = {
                             "status": "pending",
@@ -10879,6 +11251,22 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 current_summary=f"The reviewed candidate remains pending: {str(exc)[:400]}",
                                 next_action="Recover the transaction and retry exact-candidate finalization.",
                                 error=str(exc)[:400],
+                            )
+                            interruptible_sleep(max(poll, 30.0), run_dir)
+                            continue
+                        if finalized.get("status") in {"verification_pending", "control_wait"}:
+                            if finalized.get("status") == "verification_pending":
+                                review_waits += 1
+                                if max_review_waits > 0 and review_waits >= max_review_waits:
+                                    reason = "formal_verification_pending"
+                                    break
+                            _progress(
+                                "formal_verification_wait", source="drive",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="waiting", review_status="passed",
+                                completed_summary="The content review is retained; no result has been banked.",
+                                current_summary="Waiting for host formal verification or operator control.",
+                                next_action="Resume the same verification attempt without repeating the panel.",
                             )
                             interruptible_sleep(max(poll, 30.0), run_dir)
                             continue
@@ -11484,6 +11872,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 "AUTOLOOP_ROOT": str(root),
                 "AAS_AUTOLOOP_PRIMARY_PROVIDER": str(provider or "custom"),
                 "AAS_AUTOLOOP_ITERATION_STARTED_AT": iteration_started_at,
+                "AAS_AUTOLOOP_PANEL": "on" if effective_panel_enabled else "off",
+                "AAS_AUTOLOOP_NOTIFY": notify_channel or "off",
+                "AAS_AUTOLOOP_GOAL_FOCUS_MODE": goal_focus_mode,
             }
             if goal_focus_mode != "enforce":
                 control_env["AUTOLOOP_PROMPT"] = prompt
@@ -11560,6 +11951,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 # provider processes keep the private argv/stdin transport.
                 allow_prompt_env=not provider,
             )
+            # Reserve the attempt once per logical pending iteration, shared
+            # across driver restarts and primary rotation. A crash consumes it.
+            from panel_parent import reserve_panel_attempt
+            worker_timeout = remaining_worker_timeout(run_dir, iter_timeout)
+            control_verdict = compute_done(run_dir)
+            if control_verdict.get("done") or control_verdict.get("paused") or (worker_timeout is not None and worker_timeout < 1):
+                _cancel_prepared_dispatch(dispatch_intent, "control_or_wall_budget_before_spawn")
+                finalize_remote_inbox_claim(remote_job or "", claim_ids, claimer=claimer, fences=claim_fences, success=False)
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                reason = "done" if not control_verdict.get("paused") else "paused"
+                break
+            attempt_number, attempt_allowed = reserve_panel_attempt(
+                panel_iter_dir or ensure_iter_dir(run_dir), "primary",
+                max_attempts=max_failures, run_dir=run_dir,
+            )
+            if not attempt_allowed:
+                _cancel_prepared_dispatch(dispatch_intent, "primary_attempt_cap_reached")
+                finalize_remote_inbox_claim(remote_job or "", claim_ids, claimer=claimer, fences=claim_fences, success=False)
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                reason = "max_failures"
+                break
             iterations_run += 1
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             log_nonce = uuid.uuid4().hex[:16]
@@ -11633,7 +12045,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                         "use_shell": use_shell,
                                         "child_env": child_env,
                                         "cwd": str(root),
-                                        "timeout_s": iter_timeout,
+                                        "timeout_s": worker_timeout,
                                         "provider": provider,
                                         "enforce_mode": goal_focus_mode == "enforce",
                                         "trusted_local": provider_transport
@@ -11644,7 +12056,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                             _host_pinned_primary_compute_lanes(run_dir)
                                         ),
                                     },
-                                    timeout_s=iter_timeout,
+                                    timeout_s=worker_timeout,
                                 )
                                 rc = int(broker_response.get("returncode", 126))
                                 timed_out = bool(broker_response.get("timed_out"))
@@ -11666,7 +12078,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                     use_shell=use_shell,
                                     child_env=child_env,
                                     cwd=root,
-                                    timeout_s=iter_timeout,
+                                    timeout_s=worker_timeout,
                                     output=log_fh,
                                     provider=provider,
                                     enforce_mode=goal_focus_mode == "enforce",
@@ -11708,6 +12120,23 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     # descriptor. Never close and reopen a pathname that a
                     # same-user workspace process could replace.
                     captured_log_tail = _read_open_log_tail(log_fh)
+                capture = primary_resource_metadata.pop("process_evidence", None)
+                if capture is not None:
+                    if provider_resources.validate_process_evidence(capture):
+                        raise OSError("primary process byte evidence is invalid")
+                    evidence_path = log_path.with_suffix(".process.json")
+                    evidence_record = {
+                        "schema_version": "primary_process_record.v1",
+                        "provider": provider or "custom", "attempt": attempt_number,
+                        "dispatch_id": dispatch_intent.get("dispatch_id", ""),
+                        "candidate_id": dispatch_intent.get("candidate_id", ""),
+                        "input_sha256": hashlib.sha256(str(prompt or "").encode()).hexdigest(),
+                        "process_evidence": capture,
+                    }
+                    write_json(evidence_path, evidence_record)
+                    primary_resource_metadata["process_evidence_ref"] = str(evidence_path)
+                    primary_resource_metadata["process_evidence_sha256"] = hashlib.sha256(
+                        json.dumps(evidence_record, sort_keys=True).encode()).hexdigest()
             except OSError as exc:
                 sys.stderr.write(f"autoloop-driver: could not create iteration log: {exc}\n")
                 rc = 127
@@ -11984,9 +12413,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 failure_class = (
                     "timeout"
                     if timed_out
-                    else classify_iteration_failure(
-                        tail, prompt=str(prompt or "")
-                    )
+                    else str(primary_resource_metadata.get("provider_failure_class") or "failure")
                 )
                 if quarantined_after_failure:
                     failures += 1
@@ -12033,6 +12460,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         f"(log: {log_path})\n"
                     )
                     break
+                if failure_class == "hard_quota":
+                    from sync_panel_exclude import sync_exclude
+                    excluded_result = sync_exclude(run_dir, str(provider))
+                    reason = "hard_quota_exhausted" if excluded_result.get("ok") else "runtime_error"
+                    _progress("quota_wait", source="drive", failure_class="hard_quota",
+                              provider=provider or "custom", quota_waits=0)
+                    break
                 if failure_class == "quota":
                     # Credit/quota outage: pause-and-retry, or after N consecutive
                     # quota signals (default operator policy: N=3) exit 5 so an
@@ -12063,7 +12497,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     # N means switch after the N-th consecutive quota failure
                     # (was `>` which required N+1 signals).
-                    if max_quota_waits and quota_waits >= max_quota_waits:
+                    if attempt_number >= max_failures or (max_quota_waits and quota_waits >= max_quota_waits):
                         reason = "quota_wait_exhausted"
                         sys.stderr.write(
                             f"autoloop-driver: provider credit/quota exhausted after "
@@ -12230,12 +12664,16 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         iter_dir=str(review_dir),
                     )
                     try:
-                        review_summary = run_panel_phase_for_drive(
+                        cached_formal_review = goal_focus_v2.pending_formal_review(
+                            run_dir, pending, formal_pin=formal_pin,
+                        )
+                        review_summary = ({"cached_formal_review": cached_formal_review}
+                                          if cached_formal_review is not None else run_panel_phase_for_drive(
                             run_dir,
                             root,
                             "result_review",
                             iter_dir=review_dir,
-                        )
+                        ))
                         if review_summary.get("fatal_resource_cleanup_failure"):
                             _progress(
                                 "result_review_error",
@@ -12271,9 +12709,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             reason = "panel_roster_withdrawn"
                             break
-                        review_outcome = _result_review_from_panel(
-                            pending, review_summary
-                        )
+                        review_outcome = ({"status": "accepted", "review": cached_formal_review}
+                                          if cached_formal_review is not None else
+                                          _result_review_from_panel(pending, review_summary))
                     except Exception as exc:  # noqa: BLE001 - candidate remains pending
                         review_outcome = {
                             "status": "pending",
@@ -12325,6 +12763,22 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             if failures >= max_failures:
                                 reason = "max_failures"
                                 break
+                            continue
+                        if finalized.get("status") in {"verification_pending", "control_wait"}:
+                            if finalized.get("status") == "verification_pending":
+                                review_waits += 1
+                                if max_review_waits > 0 and review_waits >= max_review_waits:
+                                    reason = "formal_verification_pending"
+                                    break
+                            _progress(
+                                "formal_verification_wait", source="drive",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="waiting", review_status="passed",
+                                completed_summary="The content review is retained; no result has been banked.",
+                                current_summary="Waiting for host formal verification or operator control.",
+                                next_action="Resume the same verification attempt without repeating the panel.",
+                            )
+                            interruptible_sleep(max(poll, 30.0), run_dir)
                             continue
                         if integrity_failure_class:
                             # The reviewed candidate stays banked, but the
@@ -12506,6 +12960,11 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     continue
 
                 # Legacy mode keeps its established append-then-review behavior.
+                if (run_dir / LEGACY_VERIFICATION_PENDING).exists():
+                    finalize_remote_inbox_claim(remote_job or "", claim_ids, claimer=claimer,
+                                                fences=claim_fences, success=False)
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    continue
                 iter_ok = ledger_advanced or not remote_job
                 finalize_remote_inbox_claim(
                     remote_job or "",
@@ -12735,14 +13194,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             # for the full lake build; failure exits record a scan-only ledger
             # so shutdown stays fast and never certifies sorry-free.
             try:
-                formal_verdict = evaluate_formal_terminal_state(
-                    run_dir,
-                    root=root,
-                    policy=formal_pol,
-                    pin=formal_pin,
-                    reason=f"drive_stop:{reason}",
-                    require_typecheck=(reason == "done"),
-                    integrity=integrity_summary,
+                formal_verdict = formal_shutdown_verdict(
+                    run_dir, root=root, policy=formal_pol, pin=formal_pin,
+                    reason=reason, integrity=integrity_summary,
                 )
                 formal_terminal = str(formal_verdict.get("terminal_state") or "")
             except Exception:  # noqa: BLE001 - verdict is best-effort at shutdown.
@@ -12765,7 +13219,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
 
     exit_code = DRIVE_EXIT_CODES.get(reason, 0)
     return {
-        "status": "failed" if exit_code else "ok",
+        "status": {"formal_verification_pending": "pending", "formal_verification_unavailable": "incomplete"}.get(
+            reason, "failed" if exit_code else "ok"),
         "action": "drive",
         "dir": str(run_dir),
         "provider": provider,
@@ -12778,6 +13233,25 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         "progress_jsonl": str(log_dir / "progress.jsonl"),
         "integrity": {**integrity_summary, "clean": integrity_clean},
     }
+
+
+def formal_shutdown_verdict(
+    run_dir: Path, *, root: Path, policy: Any, pin: Mapping[str, Any],
+    reason: str, integrity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Shutdown reporting must not replace evidence a pending row relies on."""
+    preserve = any((run_dir / name).exists() for name in (
+        LEGACY_VERIFICATION_PENDING, goal_focus_v2.PENDING_CANDIDATE_FILE,
+        SENTINEL_STOP, SENTINEL_PAUSE, SENTINEL_BLOCKED,
+    )) or reason in {"formal_verification_pending", "formal_verification_unavailable"}
+    if preserve:
+        return dict(load_formal_terminal_state(run_dir) or {
+            "terminal_state": "indeterminate", "detail": "shutdown_did_not_run_formal_verification",
+        })
+    return evaluate_formal_terminal_state(
+        run_dir, root=root, policy=policy, pin=dict(pin), reason=f"drive_stop:{reason}",
+        require_typecheck=(reason == "done"), integrity=dict(integrity),
+    )
 
 
 def positive_int(value: str) -> int:
@@ -13467,6 +13941,10 @@ def add_formal_policy_args(sub: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline autonomous research loop ledger helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    resume_legacy = subparsers.add_parser("resume-legacy-verification",
+        help="poll host verification and replay only the exact saved legacy append")
+    resume_legacy.add_argument("--dir", required=True)
+    resume_legacy.set_defaults(func=resume_legacy_verification_command)
 
     init = subparsers.add_parser("init", help="initialize loop ledger files")
     init.add_argument("--dir", required=True, help="loop directory")
@@ -14196,7 +14674,12 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
         except ValueError as exc:
             return {"status": "failed", "action": "panel", "error": str(exc)}
     else:
-        providers = list(cfg.get("providers") or ["codex", "claude", "codewhale"])
+        providers = list(cfg.get("providers", ["codex", "claude", "codewhale"]))
+    excluded = set()
+    for key in ("exclude_until_credit", "exclude_providers"):
+        raw = cfg.get(key) or []
+        excluded.update(str(p).strip().lower().replace("codewhale", "deepseek") for p in (raw.split(",") if isinstance(raw, str) else raw))
+    providers = [p for p in providers if p.lower().replace("codewhale", "deepseek") not in excluded]
     if args.smoke or args.phase == "smoke":
         timeout = args.timeout or int((cfg.get("timeouts") or {}).get("smoke", 120))
         summary = panel_smoke(root, providers=providers, timeout_s=timeout)

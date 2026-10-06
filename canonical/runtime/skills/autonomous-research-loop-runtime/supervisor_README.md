@@ -74,7 +74,8 @@ Default example **drive** order (`failover.example.json`):
 
 | Drive exit | Meaning | Supervisor |
 |------------|---------|------------|
-| **5** | `quota_wait_exhausted` after **N** consecutive quota signals (`max_quota_waits`, default **3**), including weekly/usage limits | Session-exclude as temporary **quota_or_credit** (+ panel `exclude_until_credit`); switch to first available |
+| **5** | Transient throttle wait/attempt cap reached | Temporarily exclude; switch to first available |
+| **18** | Host-observed hard quota or active user exclusion | Persist exclusion without automatic TTL; no retry/probe |
 | **6** | provider binary unavailable | Session-exclude; switch |
 | **7** | auth/session dead | Session-exclude; switch |
 | **3** | `max_failures` (drive already saw N consecutive non-quota fails, default 3) | Session-exclude immediately; switch |
@@ -82,11 +83,13 @@ Default example **drive** order (`failover.example.json`):
 
 When none remain → exit 11.
 
-Session exclusions are **not** permanent. Each entry in `{loop}/driver/EXCLUDED`
+Soft-failure session exclusions are temporary. Each entry in `{loop}/driver/EXCLUDED`
 is stored as `name<TAB>epoch` and expires after `session_exclude_ttl_s` seconds
 (`failover.json`, default `21600` = 6 h), so a provider that regains credit
 re-enters rotation on the next supervisor pass without operator action. Set it
-to `0` to disable expiry. A legacy bare-name file is read as excluded from
+to `0` to disable expiry. A timestamp of `0` denotes a permanent hard exclusion
+and never expires. Active panel user/credit exclusions also prevent primary
+selection. A legacy bare-name file is read as excluded from
 **now**, so an upgrade costs one more TTL window rather than a permanent
 exclusion. To clear immediately, remove the file and empty
 `standing_orders.panel.exclude_until_credit` in `loop_state.json`.
@@ -107,7 +110,8 @@ same provider is `deepseek` (both are accepted by panel dispatch).
 
 | rc | Meaning | Supervisor action |
 |----|---------|-------------------|
-| 5 | quota_wait_exhausted | session-exclude + rotate |
+| 5 | soft throttle exhausted | temporary exclude + rotate |
+| 18 | hard quota / provider excluded | permanent exclude + rotate |
 | 6 | provider_unavailable | session-exclude + rotate |
 | 7 | auth_or_session_dead | session-exclude + rotate |
 | 3/4 | failures / runtime | streak then rotate (no permanent exclude) |

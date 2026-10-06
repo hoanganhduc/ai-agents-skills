@@ -649,7 +649,7 @@ class RemoteBridgeNotifyFallback(unittest.TestCase):
         with mock.patch.object(
             mod,
             "zulip_send",
-            return_value={"ok": False, "channel": "zulip", "error": "boom"},
+            return_value={"ok": False, "channel": "zulip", "error": "boom", "outcome": "definitely_not_sent"},
         ) as zs, mock.patch.object(
             mod, "telegram_send", return_value={"ok": True, "channel": "telegram"}
         ) as ts:
@@ -1708,7 +1708,7 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
                 self.assertEqual(mod.cmd_send(args), 0)
             self.assertEqual(send.call_count, 1)
 
-        # A failed transport is retried because no delivery was recorded.
+        # Only confirmed nonacceptance permits a bounded retry.
         mod = self._mod()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1730,13 +1730,13 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
                 mod,
                 "notify_channels",
-                return_value={"zulip": {"ok": False, "error": "offline"}},
+                return_value={"zulip": {"ok": False, "error": "offline", "outcome": "definitely_not_sent"}},
             ) as send, redirect_stdout(io.StringIO()):
                 self.assertEqual(mod.cmd_send(args), 1)
                 self.assertEqual(mod.cmd_send(args), 1)
             self.assertEqual(send.call_count, 2)
 
-    def test_same_event_id_with_changed_body_is_delivered_again(self) -> None:
+    def test_changed_body_requires_a_new_event_identity(self) -> None:
         from unittest import mock
 
         mod = self._mod()
@@ -1759,6 +1759,9 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
                 event["sections"]["current"] = (
                     "The same event now reports a materially changed current state."
                 )
+                event_path.write_text(json.dumps(event), encoding="utf-8")
+                self.assertEqual(mod.cmd_send(args), 1)
+                event["event_id"] = "new-logical-transition"
                 event_path.write_text(json.dumps(event), encoding="utf-8")
                 self.assertEqual(mod.cmd_send(args), 0)
             self.assertEqual(send.call_count, 2)

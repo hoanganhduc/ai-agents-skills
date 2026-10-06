@@ -1851,7 +1851,7 @@ class RuntimeDriveTests(unittest.TestCase):
         _primary_containment_available(),
         "driving real iterations requires a working bubblewrap",
     )
-    def test_grok_402_balance_exhaustion_uses_three_quota_tries(self) -> None:
+    def test_custom_stdout_credit_narration_is_an_ordinary_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
             _init_loop(loop, reg, max_iterations=5)
@@ -1871,7 +1871,8 @@ class RuntimeDriveTests(unittest.TestCase):
                 "--quota-backoff",
                 "1",
             )
-            self.assertEqual(res.returncode, 5, res.stderr)
+            self.assertEqual(res.returncode, 3, res.stderr)
+            self.assertNotIn("quota_wait", res.stderr)
             self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
 
     def test_failover_defaults_cap_driver_at_three(self) -> None:
@@ -7380,7 +7381,7 @@ if command == "drive":
     if (loop / "stub.exit17").exists():
         raise SystemExit(17)
     if provider == "claude":
-        raise SystemExit(5)
+        raise SystemExit(18 if (loop / "stub.hardquota").exists() else 5)
     (loop / "stub.done").write_text("done\\n", encoding="utf-8")
     raise SystemExit(0)
 raise SystemExit(2)
@@ -7661,6 +7662,7 @@ raise SystemExit(2)
                 root = Path(tmp)
                 loop = root / "loop"
                 loop.mkdir(mode=0o700)
+                (loop / "stub.hardquota").write_text("hard quota", encoding="utf-8")
                 sync = root / "sync_stub.py"
                 sync.write_text(f"raise SystemExit({rc})\n", encoding="utf-8")
 
@@ -8109,9 +8111,11 @@ class NotifyPolicyTests(unittest.TestCase):
                 "KAGGLE_API_TOKEN": "kaggle-token-must-not-cross",
                 "OPENAI_API_KEY": "provider-token-must-not-cross",
                 "ZULIP_API_KEY": "zulip-token-must-not-cross",
+                "AAS_ALLOW_RAW_NOTIFY_CMD": "1",
             },
             clear=False,
         ), mock.patch.object(mod.subprocess, "run") as run:
+            payload["AUTOLOOP_DIR"] = tmp
             mod.watch_notify("operator-approved-hook", payload)
 
         run.assert_called_once()

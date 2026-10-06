@@ -2,13 +2,13 @@
   "policy": {
     "backends": [
       "local",
-      "kaggle",
-      "modal"
+      "kaggle"
     ],
     "forbidden_services": [
+      "modal",
       "hetzner",
       "github-actions"
     ]
   },
-  "notes": "Force-loop general default compute allowlist (operator may re-pin)."
+  "notes": "Force-loop default: local and free Kaggle CPU; preserve explicit operator compute policy."
 }

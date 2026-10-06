@@ -31,6 +31,8 @@ if str(PACK_DIR) not in sys.path:
 from apply_force_loop_defaults import (  # noqa: E402
     apply_compute_policy,
     apply_defaults,
+    _validated_policy_path,
+    _legacy_policy_preflight,
     verify_effective,
 )
 from force_loop_process import (  # noqa: E402
@@ -109,6 +111,11 @@ BASE_ENV_KEYS = frozenset(
         "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE",
         "AAS_ARL_BROKER_SOCKET", "AAS_ARL_BROKER_TOKEN", "AAS_ARL_COMPUTE_PROXY",
         "AAS_REMOTE_STRICT_NOTIFY_CHANNEL",
+        "AAS_AUTOLOOP_FORMAL_PROJECT", "AAS_AUTOLOOP_LAX_REQUEST",
+        "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND", "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST",
+        "AAS_AUTOLOOP_FORMAL_FORCE_CREDITS", "AAS_AUTOLOOP_FORMAL_FORCE",
+        "AAS_AUTOLOOP_FORMAL_ALLOW_PATH_STEAL", "AAS_AUTOLOOP_FORMAL_TYPECHECK_TIMEOUT",
+        "AAS_AUTOLOOP_PROVIDER_TRANSPORT",
         "AUTOLOOP_DISABLE", "CLAUDE_CONFIG_DIR", "CODEWHALE_HOME", "CODEX_HOME",
         "GEMINI_CONFIG_DIR", "GROK_CONFIG_DIR", "HOME", "KIMI_CONFIG_DIR",
         "LANG", "LC_ALL", "LOGNAME", "OPENCODE_CONFIG_DIR", "TZ", "USER",
@@ -307,6 +314,15 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
     policy_file = _policy_file_from_args(args)
+    # Reject an invalid external authority before bootstrap creates the loop.
+    try:
+        _validated_policy_path(loop, policy_file)
+        _legacy_policy_preflight(loop)
+        if policy_file.exists():
+            load_env_file(policy_file, forbidden_root=loop)
+    except (ValueError, EnvLoadError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 2
     need_init = not (loop / "loop_state.json").is_file()
     if need_init:
         if not (args.goal and args.success_criteria):
@@ -1026,6 +1042,12 @@ def cmd_start(args: argparse.Namespace) -> int:
     if not loop.is_dir():
         print(json.dumps({"ok": False, "error": f"loop not found: {loop}"}, indent=2))
         return 2
+    if (loop / "STOP_REQUESTED").exists() or (loop / "PAUSE").exists():
+        print(json.dumps({"ok": False, "error": "operator stop/pause is still active"}))
+        return 1
+    if (policy_file.parent / f".{policy_file.name}.defaults-pending.json").exists():
+        print(json.dumps({"ok": False, "error": "defaults publication is incomplete; rerun apply-defaults"}))
+        return 1
 
     # A second driver on one loop tree races every state transaction; refuse
     # unless the operator has confirmed the survivors are stale.
@@ -1092,10 +1114,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     extra: list[str] = []
     if args.panel:
         extra.extend(["--panel", args.panel])
-    if args.profile == "formal":
-        extra.extend(["--formal-policy", "on"])
-        if args.formal_typecheck:
-            extra.append("--formal-typecheck")
+    if args.profile == "formal" and args.formal_typecheck is True:
+        extra.append("--formal-typecheck")
+    elif args.formal_typecheck is False:
+        env["AAS_AUTOLOOP_FORMAL_TYPECHECK"] = "0"
     if args.drive_extra:
         extra.extend(args.drive_extra)
 
@@ -1338,6 +1360,9 @@ def _systemd_unit_name(loop: Path) -> str:
 
 def cmd_stop(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
+    if not getattr(args, "_replacement_stop", False):
+        from state_transaction import commit_transaction
+        commit_transaction(loop, text_files={"STOP_REQUESTED": "operator force-loop stop\n"})
     stopped = stop_loop_processes(loop)
     snap = status_snapshot(loop)
     survivors = bool(snap.get("pidfile_alive") or snap.get("matched_pids"))
@@ -1366,7 +1391,9 @@ def cmd_replace(args: argparse.Namespace) -> int:
     preflight_rc = cmd_start(preflight)
     if preflight_rc != 0:
         return preflight_rc
-    stop_rc = cmd_stop(args)
+    stopping = argparse.Namespace(**vars(args))
+    stopping._replacement_stop = True
+    stop_rc = cmd_stop(stopping)
     if stop_rc != 0:
         return stop_rc
     return cmd_start(args)
@@ -1595,8 +1622,16 @@ def _smoke_checks(
         str(os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") or "").strip().lower()
         == "allow"
     )
-    channels = _detect_notify_channels() if egress_allowed else None
-    if not egress_allowed:
+    notify_off = False
+    if policy_file is not None:
+        try:
+            notify_off = load_env_file(policy_file, forbidden_root=loop).get("AAS_AUTOLOOP_NOTIFY") in {"off", "none", "disabled"}
+        except EnvLoadError:
+            pass  # verify_effective already reports invalid policy.
+    channels = _detect_notify_channels() if egress_allowed and not notify_off else None
+    if notify_off:
+        notify_status = "disabled_by_policy"
+    elif not egress_allowed:
         notify_status = "blocked_no_consent"
         warnings.append(
             "AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS is not 'allow'; "
@@ -1737,8 +1772,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--formal-typecheck",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="pass --formal-typecheck when profile=formal (default: on)",
+        default=None,
+        help="explicitly enable typechecking; otherwise preserve the formal policy",
     )
     s.add_argument("--skip-defaults-check", action="store_true")
     s.add_argument(
@@ -1763,7 +1798,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--formal-typecheck",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
     )
     r.add_argument("--skip-defaults-check", action="store_true")
     r.add_argument("--force", action="store_true")

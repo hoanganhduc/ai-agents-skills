@@ -266,7 +266,7 @@ Use the local helpers as optional gates:
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --claim "..."
 ```
-Use `lax-formalization` for Mathlib-first discovery, independent Lax dependency verification and paper artifacts. Keep `zenodo-artifact` as the secondary archival route; publication is a separate authorized operation.
+Use the ordinary Lean/Lake verifier for formalization, including paper formalization. Lax discovery and artifact conversion are optional: `lax-paper-workflow` already supports `from-existing-lean`. Verify any selected Lax dependencies independently. Zenodo is an optional archive, and publication remains a separate authorized operation.
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \

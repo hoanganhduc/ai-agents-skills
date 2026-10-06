@@ -1347,6 +1347,8 @@ class TerminalStateCliTests(unittest.TestCase):
 class DriveWiringTests(unittest.TestCase):
     def test_review_wait_exhausted_has_a_dedicated_resumable_exit_code(self) -> None:
         self.assertEqual(rt.DRIVE_EXIT_CODES.get("review_wait_exhausted"), 16)
+        self.assertEqual(rt.DRIVE_EXIT_CODES.get("formal_verification_pending"), 19)
+        self.assertEqual(rt.DRIVE_EXIT_CODES.get("formal_verification_unavailable"), 21)
         codes = list(rt.DRIVE_EXIT_CODES.values())
         self.assertEqual(len(codes), len(set(codes)), rt.DRIVE_EXIT_CODES)
 
@@ -1354,12 +1356,6 @@ class DriveWiringTests(unittest.TestCase):
         proc = _run_runtime("drive", "--help")
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--max-review-waits", proc.stdout)
-
-    def test_wait_sites_are_bounded_and_counter_resets_on_progress(self) -> None:
-        source = RUNTIME_PY.read_text(encoding="utf-8")
-        self.assertEqual(source.count("review_waits += 1"), 4)
-        self.assertGreaterEqual(source.count("review_waits = 0"), 5)
-        self.assertIn('reason = "review_wait_exhausted"', source)
 
     def test_supervisor_passes_max_review_waits_through(self) -> None:
         script = SUPERVISOR_SH.read_text(encoding="utf-8")

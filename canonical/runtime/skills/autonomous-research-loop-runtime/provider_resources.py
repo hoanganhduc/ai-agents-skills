@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import os
+import base64
+import copy
+import hashlib
 import errno
 import json
 import re
@@ -44,6 +47,93 @@ class BoundedProcessResult(NamedTuple):
     oversized: bool
     capture_error: str | None
     cleanup_error: str | None
+    observed_return_code: int | None = None
+
+
+def process_evidence(result: BoundedProcessResult) -> dict[str, Any]:
+    """Encode captured process bytes independently of diagnostic presentation.
+
+    A partial capture is evidence of the captured prefix only. It is never
+    labelled a digest of the complete process stream.
+    """
+    partial = bool(result.oversized or result.capture_error or result.cleanup_error)
+    observed = getattr(result, "observed_return_code", None)
+    evidence: dict[str, Any] = {
+        "schema_version": "process_evidence.v1",
+        "return_code": observed if type(observed) is int else result.return_code,
+        "timed_out": bool(result.timed_out),
+        "oversized": bool(result.oversized),
+        "capture_error": result.capture_error,
+        "cleanup_error": result.cleanup_error,
+        "capture_complete": not partial,
+    }
+    for name in ("stdout", "stderr"):
+        raw = getattr(result, name)
+        evidence[name] = {
+            "state": "partial" if partial else "captured",
+            "bytes": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "base64": base64.b64encode(raw).decode("ascii"),
+        }
+    return evidence
+
+
+def withhold_process_evidence(evidence: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Discard byte content and its digest when confidentiality forbids export."""
+    filtered = copy.deepcopy(evidence)
+    for name in ("stdout", "stderr"):
+        filtered[name] = {"state": "withheld", "reason": reason}
+    filtered["capture_complete"] = False
+    return filtered
+
+
+def validate_process_evidence(evidence: Any, *, max_output_bytes: int = 16 * 1024 * 1024) -> list[str]:
+    """Check the versioned byte envelope before trusting transported evidence."""
+    if not isinstance(evidence, dict) or evidence.get("schema_version") != "process_evidence.v1":
+        return ["invalid process evidence schema"]
+    errors = []
+    expected = {"schema_version", "return_code", "timed_out", "oversized", "capture_error",
+                "cleanup_error", "capture_complete", "stdout", "stderr"}
+    if set(evidence) - (expected | {"execution_error"}) or expected - set(evidence):
+        errors.append("invalid process evidence fields")
+    for name in ("timed_out", "oversized", "capture_complete"):
+        if type(evidence.get(name)) is not bool:
+            errors.append(f"{name} must be boolean")
+    if evidence.get("return_code") is not None and type(evidence.get("return_code")) is not int:
+        errors.append("return_code must be integer or null")
+    for name in ("capture_error", "cleanup_error"):
+        if name not in evidence or evidence[name] is not None and not isinstance(evidence[name], str):
+            errors.append(f"invalid {name}")
+    total_bytes = 0
+    for name in ("stdout", "stderr"):
+        stream = evidence.get(name)
+        if not isinstance(stream, dict):
+            errors.append(f"missing {name}")
+            continue
+        if stream.get("state") == "withheld":
+            if set(stream) != {"state", "reason"} or not isinstance(stream.get("reason"), str):
+                errors.append(f"invalid withheld {name}")
+            if evidence.get("capture_complete"):
+                errors.append("withheld evidence cannot be complete")
+            continue
+        if stream.get("state") not in {"captured", "partial"} or set(stream) != {"state", "bytes", "sha256", "base64"}:
+            errors.append(f"invalid {name} capture")
+            continue
+        try:
+            encoded = stream["base64"]
+            if not isinstance(encoded, str) or len(encoded) > ((max_output_bytes + 2) // 3) * 4:
+                raise ValueError("invalid encoded length")
+            raw = base64.b64decode(encoded, validate=True)
+            total_bytes += len(raw)
+            if type(stream["bytes"]) is not int or stream["bytes"] != len(raw) or stream["sha256"] != hashlib.sha256(raw).hexdigest():
+                raise ValueError("digest or length mismatch")
+        except (ValueError, TypeError):
+            errors.append(f"invalid {name} bytes/digest")
+        if stream.get("state") == "partial" and evidence.get("capture_complete"):
+            errors.append("partial evidence cannot be complete")
+    if total_bytes > max_output_bytes:
+        errors.append("process evidence exceeds the admitted output bound")
+    return errors
 
 
 RESOURCE_ENV = {
@@ -293,8 +383,39 @@ _CONTROL_SOCKET_MASKS = (
     Path("/run/snapd.socket"),
 )
 
+_HOST_FORMAL_AUTHORITY_ROOTS: set[Path] = set()
 
-def provider_control_plane_mask_args() -> list[str]:
+
+def register_host_formal_authority_root(path: Path) -> None:
+    """Broker-only in-process registration; never a child-selected environment value."""
+    if not path.is_absolute():
+        raise ProviderResourceError("host formal authority root must be absolute")
+    _HOST_FORMAL_AUTHORITY_ROOTS.add(path)
+
+
+def formal_authority_mask_roots(*, prepare: bool = False) -> list[Path]:
+    candidates = {*_HOST_FORMAL_AUTHORITY_ROOTS,
+        Path.home() / ".codex/host-authority",
+        Path.home() / ".local/share/ai-agents-skills/host-authority"}
+    roots = []
+    for path in sorted(candidates):
+        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+            raise ProviderResourceError("host formal authority path traverses a link")
+        # Provision only an empty mountpoint before any provider starts. A
+        # later master registration may create authority; an already running
+        # broad-host child must still see the preinstalled empty mount.
+        if prepare:
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not path.exists():
+            continue
+        info = path.stat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ProviderResourceError("host formal authority root is not private")
+        roots.append(path)
+    return roots
+
+
+def provider_control_plane_mask_args(*, prepare_authority: bool = False) -> list[str]:
     """Hide host process-launch control planes from a trusted-local child.
 
     The outer host process must reach the user manager to create the resource
@@ -321,6 +442,8 @@ def provider_control_plane_mask_args() -> list[str]:
             "trusted-local user runtime directory is not a real directory"
         )
     args = ["--tmpfs", str(runtime_dir)]
+    for authority_root in formal_authority_mask_roots(prepare=prepare_authority):
+        args.extend(["--tmpfs", str(authority_root)])
     tmux_dir = Path("/tmp") / f"tmux-{os.getuid()}"
     try:
         tmux_info = os.lstat(tmux_dir)
@@ -455,7 +578,7 @@ def trusted_local_containment_command(
     bwrap = _trusted_host_binary(
         (Path("/usr/bin/bwrap"), Path("/bin/bwrap")), "bubblewrap"
     )
-    mask_args = provider_control_plane_mask_args()
+    mask_args = provider_control_plane_mask_args(prepare_authority=True)
     masked = containment_hidden_root(
         canonical_cwd, (*containment_mask_roots(mask_args), *CONTAINMENT_TAIL_MOUNT_MASKS)
     )
@@ -644,6 +767,11 @@ def brokered_provider_containment_command(
         if not stat.S_ISSOCK(os.lstat(socket_path).st_mode):
             raise ProviderResourceError("compute broker endpoint is not a socket")
         bind(socket_path, socket_path, read_only=True)
+    # These masks follow all candidate/dependency/config mounts, including a
+    # broad candidate root. No child can read the durable signing key.
+    for authority_root in formal_authority_mask_roots(prepare=True):
+        ensure_parents(authority_root)
+        args.extend(["--tmpfs", str(authority_root)])
     # The tail masks land after every bind above, so a project root under one
     # of them is bound and then hidden again before bubblewrap chdirs into it.
     masked = containment_hidden_root(canonical_cwd, CONTAINMENT_TAIL_MOUNT_MASKS)
@@ -1251,17 +1379,28 @@ def run_bounded_resource_process(
             selector.close()
 
     if execution_error is not None:
+        failure_evidence = process_evidence(BoundedProcessResult(
+            return_code if return_code is not None else 1,
+            bytes(stdout_data), bytes(stderr_data), timed_out, oversized,
+            capture_error or type(execution_error).__name__, cleanup_error,
+        ))
+        if process is None:
+            failure_evidence["return_code"] = None
         if cleanup_error is not None:
-            raise ProviderProcessError(
+            error = ProviderProcessError(
                 "provider execution failed and cleanup was not verified",
                 cleanup_error=cleanup_error,
-            ) from execution_error
+            )
+            error.process_evidence = failure_evidence
+            raise error from execution_error
+        execution_error.process_evidence = failure_evidence
         raise execution_error
 
     if stdin_delivery_failed or input_offset < len(input_data):
         capture_error = capture_error or (
             "provider exited before the complete prompt was delivered"
         )
+    observed_return_code = return_code
     if timed_out:
         return_code = 124
     elif oversized:
@@ -1276,6 +1415,7 @@ def run_bounded_resource_process(
         oversized,
         capture_error,
         cleanup_error,
+        observed_return_code,
     )
 
 

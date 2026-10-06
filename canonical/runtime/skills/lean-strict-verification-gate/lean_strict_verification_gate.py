@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -124,11 +125,19 @@ NON_MODULE_STEMS = {"lakefile"}
 SOURCE_UNREADABLE_PREFIX = "__AAS_SOURCE_UNREADABLE__:"
 
 
-class BoundedCommandResult(NamedTuple):
-    returncode: int
-    stdout: str
-    stderr: str
-    output_bytes: int
+class BoundedCommandResult(tuple):
+    """Preserve the four-field runner tuple while attaching optional evidence."""
+
+    def __new__(cls, returncode: int, stdout: str, stderr: str, output_bytes: int,
+                process_evidence: dict[str, Any] | None = None):
+        result = super().__new__(cls, (returncode, stdout, stderr, output_bytes))
+        result.process_evidence = process_evidence
+        return result
+
+    returncode = property(lambda self: self[0])
+    stdout = property(lambda self: self[1])
+    stderr = property(lambda self: self[2])
+    output_bytes = property(lambda self: self[3])
 
 
 class CommandOutputLimitExceeded(Exception):
@@ -1340,6 +1349,7 @@ def run_bounded_command(
     timeout: float,
     cwd: Path | None = None,
     max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+    capture_evidence: bool = False,
 ) -> BoundedCommandResult:
     """Run one isolated child while hard-capping combined stdout and stderr."""
 
@@ -1403,6 +1413,31 @@ def run_bounded_command(
         thread.start()
 
     timed_out = False
+    cleanup_error: str | None = None
+
+    def evidence() -> dict[str, Any] | None:
+        if not capture_evidence:
+            return None
+        with lock:
+            streams = {name: bytes(raw) for name, raw in buffers.items()}
+            capture_error = ", ".join(reader_errors) or None
+        partial = bool(timed_out or output_limit_hit.is_set() or capture_error or cleanup_error)
+        result: dict[str, Any] = {
+            "schema_version": "process_evidence.v1", "return_code": process.returncode,
+            "timed_out": timed_out, "oversized": output_limit_hit.is_set(),
+            "capture_error": capture_error, "cleanup_error": cleanup_error,
+            "capture_complete": not partial,
+        }
+        for name, raw in streams.items():
+            result[name] = {"state": "partial" if partial else "captured", "bytes": len(raw),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "base64": base64.b64encode(raw).decode("ascii")}
+        return result
+
+    def evidence_error(error: Exception) -> Exception:
+        error.process_evidence = evidence()
+        return error
+
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -1424,7 +1459,8 @@ def run_bounded_command(
         for thread in threads:
             thread.join(timeout=1)
     if any(thread.is_alive() for thread in threads):
-        raise OSError("child output pipes did not close after termination")
+        cleanup_error = "child output pipes did not close after termination"
+        raise evidence_error(OSError(cleanup_error))
     for stream in (process.stdout, process.stderr):
         try:
             stream.close()
@@ -1435,32 +1471,29 @@ def run_bounded_command(
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
-            raise OSError("child could not be reaped after termination") from exc
+            cleanup_error = "child could not be reaped after termination"
+            raise evidence_error(OSError(cleanup_error)) from exc
 
     stdout_bytes = bytes(buffers["stdout"])
     stderr_bytes = bytes(buffers["stderr"])
     stdout = stdout_bytes.decode("utf-8", errors="replace")
     stderr = stderr_bytes.decode("utf-8", errors="replace")
     if output_limit_hit.is_set():
-        raise CommandOutputLimitExceeded(
-            max_output_bytes,
-            stdout[-4000:],
-            stderr[-4000:],
-        )
+        raise evidence_error(CommandOutputLimitExceeded(
+            max_output_bytes, stdout[-4000:], stderr[-4000:],
+        ))
     if timed_out:
-        raise subprocess.TimeoutExpired(
-            command,
-            timeout,
-            output=stdout_bytes,
-            stderr=stderr_bytes,
-        )
+        raise evidence_error(subprocess.TimeoutExpired(
+            command, timeout, output=stdout_bytes, stderr=stderr_bytes,
+        ))
     if reader_errors:
-        raise OSError("could not capture child output: " + ", ".join(reader_errors))
+        raise evidence_error(OSError("could not capture child output: " + ", ".join(reader_errors)))
     return BoundedCommandResult(
         int(process.returncode or 0),
         stdout,
         stderr,
         total[0],
+        evidence(),
     )
 
 
@@ -1480,6 +1513,7 @@ def run_typecheck(
             timeout=timeout,
             cwd=cwd,
             max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
+            capture_evidence=True,
         )
     except subprocess.TimeoutExpired as exc:
         payload = command_failed(runner, command_label, str(cwd) if cwd else "", f"timeout after {timeout} seconds")
@@ -1487,6 +1521,8 @@ def run_typecheck(
         payload["tool_status"] = tool_status_payload
         if project_status_payload:
             payload["project_status"] = project_status_payload
+        if isinstance(getattr(exc, "process_evidence", None), dict):
+            payload["process_evidence"] = exc.process_evidence
         return payload
     except CommandOutputLimitExceeded as exc:
         payload = command_failed(runner, command_label, str(cwd) if cwd else "", str(exc))
@@ -1496,12 +1532,16 @@ def run_typecheck(
         payload["tool_status"] = tool_status_payload
         if project_status_payload:
             payload["project_status"] = project_status_payload
+        if isinstance(getattr(exc, "process_evidence", None), dict):
+            payload["process_evidence"] = exc.process_evidence
         return payload
     except OSError as exc:
         payload = command_failed(runner, command_label, str(cwd) if cwd else "", str(exc))
         payload["tool_status"] = tool_status_payload
         if project_status_payload:
             payload["project_status"] = project_status_payload
+        if isinstance(getattr(exc, "process_evidence", None), dict):
+            payload["process_evidence"] = exc.process_evidence
         return payload
     payload = {
         "lean_check_status": "typechecked" if completed.returncode == 0 else "typecheck_failed",
@@ -1514,6 +1554,8 @@ def run_typecheck(
     }
     if project_status_payload:
         payload["project_status"] = project_status_payload
+    if isinstance(getattr(completed, "process_evidence", None), dict):
+        payload["process_evidence"] = completed.process_evidence
     return payload
 
 
@@ -2179,16 +2221,25 @@ def axiom_audit_payload(
                 timeout=timeout,
                 cwd=root,
                 max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
+                capture_evidence=True,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload["process_evidence"] = exc.process_evidence
             return fail("audit_timeout", f"timeout after {timeout} seconds", "command_failed")
         except CommandOutputLimitExceeded as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload["process_evidence"] = exc.process_evidence
             payload["audit_stdout"] = exc.stdout
             payload["audit_stderr"] = (exc.stderr + "\n" + str(exc))[-4000:]
             return fail("audit_output_limit", str(exc), "command_failed")
         except OSError as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload["process_evidence"] = exc.process_evidence
             return fail("audit_failed", str(exc), "command_failed")
 
+    if isinstance(getattr(completed, "process_evidence", None), dict):
+        payload["process_evidence"] = completed.process_evidence
     evidence_after = project_evidence_snapshot(root, modules)
     payload["post_audit_evidence_fingerprint"] = evidence_after["fingerprint"]
     if (
@@ -2452,12 +2503,17 @@ def kernel_check_payload(
                 timeout=remaining,
                 cwd=root,
                 max_output_bytes=output_remaining,
+                capture_evidence=True,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload.setdefault("process_evidence", []).append({"module": module, "evidence": exc.process_evidence})
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
             payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
             return fail("kernel_check_timeout", f"{module}: timeout after {timeout} seconds", "command_failed")
         except CommandOutputLimitExceeded as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload.setdefault("process_evidence", []).append({"module": module, "evidence": exc.process_evidence})
             stdout_chunks.append(exc.stdout)
             stderr_chunks.append(exc.stderr)
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
@@ -2470,9 +2526,13 @@ def kernel_check_payload(
                 "command_failed",
             )
         except OSError as exc:
+            if isinstance(getattr(exc, "process_evidence", None), dict):
+                payload.setdefault("process_evidence", []).append({"module": module, "evidence": exc.process_evidence})
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
             payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
             return fail("kernel_check_failed", f"{module}: {exc}", "command_failed")
+        if isinstance(getattr(completed, "process_evidence", None), dict):
+            payload.setdefault("process_evidence", []).append({"module": module, "evidence": completed.process_evidence})
         output_remaining -= completed.output_bytes
         stdout_chunks.append(completed.stdout[-4000:])
         stderr_chunks.append(completed.stderr[-4000:])

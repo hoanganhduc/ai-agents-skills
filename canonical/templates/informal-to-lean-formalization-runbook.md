@@ -48,14 +48,14 @@ Apply every phase, in order.
 |---|---|---|---|---|---|
 | F1. Intake & suitability | Local-first decision on whether to formalize and at what granularity. | `lean-formalization-intake` |  |  |  |
 | F2. Declaration map | Map each informal step to a Lean declaration; search for reusable Mathlib results first. | `lean-explore-mcp` |  |  |  |
-| F2'. Reuse gate | Search Mathlib, then `lax-formalization search` per target. Independently rebuild/check exact Lax candidates and dependency closure; review the statement correspondence before reuse. | `lax-formalization` |  |  |  |
+| F2'. Reuse gate | Search pinned Mathlib. Lax discovery is optional; independently rebuild/check any Lax dependency actually selected and review its statement correspondence. | `lax-formalization` |  |  |  |
 | F3. Skeleton | Emit minimal statement stubs and namespace wrappers with explicit `sorry` placeholders. | `formal-skeleton-helper` |  |  |  |
 | F4a. Fill & track (agent/Mathlib) | Discharge each `sorry` via reuse and local proof work; track blockers. | `lean-explore-mcp` |  |  |  |
 | F4b. OpenGauss fill (optional) | When `opengauss doctor` is ready and live install exists, use guided `/prove` or `/draft` only; record `opengauss_run` provenance — never claim-support. | `opengauss` |  |  |  |
 | F5. Strict verify | Scanner-first verification; report typecheck status and claim-support status separately. | `lean-strict-verification-gate` |  |  |  |
 | F6. Fresh-context cross-check | A different context independently confirms both typecheck and claim support. | `cross-agent-delegation`, `decision-doubt-loop` |  |  |  |
 | F7. Acceptance | Decide `verified` or `not-ready`; both a clean typecheck and confirmed claim support are required. |  |  |  |  |
-| F7'. Artifact gate | Keep accepted results in the paper repository. Verify the exact source revision and record scope, dependencies, semantic review and open obligations. Prepare an optional secondary archive offline. No registration or publication in this workflow. | `lax-formalization`, `zenodo-artifact` |  |  |  |
+| F7'. Artifact gate | Keep accepted results in the paper repository. Verify the exact source revision and record scope, dependencies, semantic review and open obligations. Prepare an optional secondary archive offline. No registration or publication in this workflow. | Native Lean evidence; optional Lax/Zenodo |  |  |  |
 
 ## Intake and Suitability Gate (F1)
 
@@ -316,16 +316,25 @@ Acceptance decision (`verified` / `not-ready`):
 Recommended next action:
 
 
-## Paper-to-artifact pipeline (autonomous runs)
+## Native Lean and optional Lax artifacts
 
-For end-to-end "formalize this paper" requests, use a paper repository with
-Lax concepts/proofs packages and a fixed Lean/mathlib environment. Search Mathlib,
-then independently verified Lax candidates before writing new proofs. Preserve
-GitHub verification workflows and explicit archive preparation from
-`lax-paper-artifact`. Generic Lean projects keep their existing strict gate.
+A request to formalize a paper starts in an ordinary Lean/Lake repository. Its
+chosen Lean/Mathlib pins, definitions and target inventory determine the work;
+Lax layout, annotations, public Git origin and publication readiness are not
+prerequisites. Drafts keep an explicit open-obligation ledger. Verified claim
+support still requires actual checks and a statement-correspondence review.
 
-For ARL, provide an outside-project host-owned `AAS_AUTOLOOP_LAX_REQUEST`.
-Terminal acceptance requires fresh machine verification, closed dependencies and
-accepted semantic review over the exact target scope. Otherwise retain an honest
-open ledger or indeterminate status. There is no private-library intake step.
-Registration, GitHub releases and Zenodo publication remain outside this run.
+Execution is a separate choice: use local tools or an authorized remote lane,
+including Kaggle CPU with explicitly permitted Internet dependency setup.
+Missing local Lean does not prove the remote lane unavailable. Setup, build,
+axiom audit and optional kernel replay retain separate evidence. A remote
+receipt is never relabeled as local execution, and a successful build alone
+does not establish correspondence with the paper.
+
+When a Lax artifact is requested, use the existing `lax-paper-workflow` operation
+`from-existing-lean` and the `lax-paper-artifact` layout. Preserve the research
+repository, select/export the required source, adapt it to the qualified Lax
+environment and reverify the selected scope. For ARL Lax jobs, the request is
+host-owned and pinned outside the candidate. Existing Lax jobs retain their
+machine, dependency, correspondence and readiness gates. Zenodo is optional.
+Registration, submissions, GitHub releases and publication are separate actions.

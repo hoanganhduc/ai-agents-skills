@@ -19,6 +19,13 @@ STDLIB_ONLY_SKILLS = (
     "autonomous-research-loop-runtime",
 )
 
+# These lazy imports are repository-owned adapters, not third-party packages.
+# Their runtime dependency closure is checked by test_runtime_cross_skill_imports;
+# they execute only for an explicitly selected remote-formal job.
+OPTIONAL_REPOSITORY_IMPORTS = {
+    "autonomous-research-loop-runtime/remote_formal.py": {"kaggle_driver", "research_compute"},
+}
+
 
 def _imports(path: Path) -> list[tuple[int, str]]:
     imports = []
@@ -75,6 +82,8 @@ class StdlibOnlySkillsTests(unittest.TestCase):
             local = _local_modules(root) | _local_modules(shared)
             for path in sorted(paths):
                 for line_number, module in _imports(path):
+                    if module in OPTIONAL_REPOSITORY_IMPORTS.get(path.relative_to(SKILLS).as_posix() if path.is_relative_to(SKILLS) else "", set()):
+                        continue
                     if module not in sys.stdlib_module_names and module not in local:
                         failures.append(f"{path.relative_to(REPO)}:{line_number}: {module}")
         self.assertEqual(failures, [], "third-party imports in stdlib-only skills:\n" + "\n".join(failures))

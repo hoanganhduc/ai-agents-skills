@@ -428,6 +428,14 @@ def apply_json_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> 
         result["installed_signature"] = artifact_signature(path)
         if action.get("reason"):
             result["reason"] = action["reason"]
+        if action.get("operation") == "noop":
+            before, _existed = load_json_object(path)
+            _merged, changed, _created = merge_hook_entry(before, action["event"], action["entry"], action["managed_id"])
+            result["event"] = action["event"]
+            result["managed_id"] = action["managed_id"]
+            result["managed_entry"] = extract_hook_entry(before, action["event"], action["managed_id"])
+            if changed or result["managed_entry"] is None:
+                raise ValueError("managed hook changed after the no-op plan")
         return result
     before, _existed = load_json_object(path)
     merged, changed, created = merge_hook_entry(

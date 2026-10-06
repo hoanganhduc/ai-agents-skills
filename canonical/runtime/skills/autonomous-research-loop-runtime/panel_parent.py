@@ -16,6 +16,9 @@ See autonomous-research-loop skill docs: hybrid parent-owned panel model.
 from __future__ import annotations
 
 import concurrent.futures
+import base64
+import uuid
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -62,6 +65,10 @@ except ImportError:  # pragma: no cover - package-style import during tests
 try:
     from provider_resources import (  # type: ignore  # noqa: I001 — same-dir runtime import
         ProviderResourceError,
+        BoundedProcessResult,
+        process_evidence,
+        withhold_process_evidence,
+        validate_process_evidence,
         ProviderResourceCleanupError,
         brokered_provider_containment_command,
         CONTAINMENT_TAIL_MOUNT_MASKS,
@@ -80,6 +87,10 @@ try:
 except ImportError:  # pragma: no cover - package-style import during tests
     from .provider_resources import (  # type: ignore
         ProviderResourceError,
+        BoundedProcessResult,
+        process_evidence,
+        withhold_process_evidence,
+        validate_process_evidence,
         ProviderResourceCleanupError,
         brokered_provider_containment_command,
         CONTAINMENT_TAIL_MOUNT_MASKS,
@@ -144,6 +155,11 @@ DEFAULT_TIMEOUT_CALC: dict[str, Any] = {
     "hist_margin": 1.25,
     "history_n": 5,
 }
+
+try:
+    from state_transaction import commit_transaction, RevisionConflict
+except ImportError:  # package-style import
+    from .state_transaction import commit_transaction, RevisionConflict
 
 MIN_USABLE_CHARS = 8
 DEFAULT_MAX_ATTEMPTS = 3
@@ -1872,6 +1888,117 @@ def validate_result_review(data: Any) -> list[str]:
     return errors
 
 
+def validate_review_dispositions(
+    data: Any, *, primary_finding_ids: Iterable[str],
+) -> list[str]:
+    """Validate a review sidecar without granting new findings confirmed status."""
+    expected = list(primary_finding_ids)
+    if any(not _nonempty_string(value) for value in expected) or len(set(expected)) != len(expected):
+        return ["host primary finding identities are invalid"]
+    if not isinstance(data, dict):
+        return ["review dispositions must be an object"]
+    rows = data.get("dispositions")
+    if not isinstance(rows, list):
+        return ["dispositions must be a list"]
+    errors: list[str] = []
+    observed: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict) or not _nonempty_string(row.get("finding_id")):
+            errors.append("disposition requires finding_id")
+            continue
+        observed.append(row["finding_id"])
+        if row.get("status") not in {"confirmed", "rejected", "unresolved", "deferred", "duplicate"}:
+            errors.append("invalid finding disposition status")
+    if sorted(observed) != sorted(expected):
+        errors.append("exactly one disposition is required for every host primary finding")
+    additions = data.get("new_findings", [])
+    if not isinstance(additions, list):
+        errors.append("new_findings must be a list")
+        additions = []
+    new_ids: set[str] = set()
+    for row in additions:
+        if not isinstance(row, dict) or row.get("status") != "candidate":
+            errors.append("new validator findings must remain candidate")
+            continue
+        identity = row.get("finding_id")
+        if not _nonempty_string(identity) or identity in expected or identity in new_ids:
+            errors.append("new finding identity must be unique")
+        else:
+            new_ids.add(identity)
+    return errors
+
+
+def admit_host_panel_result(
+    receipt: Any, *, host_context: Mapping[str, Any], phase: str, response: str,
+    required_assurances: Iterable[str] = (),
+    host_contract: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Admit a native host callback against current, independently held host state.
+
+    ``host_context`` is supplied by the host transport adapter, never copied
+    from a worker receipt. This is validation, not authentication of a JSON
+    file. Callers must use their existing dispatch transaction/CAS when banking.
+    CLI executable attestation is deliberately inapplicable to this transport.
+    """
+    bindings = ("dispatch_id", "attempt_id", "owner_id", "host_task_id",
+                "host_session_id", "input_sha256", "transport")
+    errors: list[str] = []
+    allowed = {"schema_version", "output_sha256", "review_dispositions", *bindings}
+    if not isinstance(receipt, dict) or receipt.get("schema_version") != "host_panel_receipt.v1":
+        errors.append("invalid native host receipt schema")
+        receipt = {}
+    elif set(receipt) - allowed:
+        errors.append("native host receipt contains unrecognized fields")
+    for name in bindings:
+        if not _nonempty_string(host_context.get(name)) or receipt.get(name) != host_context.get(name):
+            errors.append(f"native host receipt disagrees with current {name}")
+    if host_context.get("transport") != "host-native":
+        errors.append("native host receipt requires host-native transport")
+    if not _attestation_sha256(host_context.get("input_sha256")):
+        errors.append("invalid native host input digest")
+    if receipt.get("output_sha256") != hashlib.sha256(response.encode("utf-8")).hexdigest():
+        errors.append("native host response digest mismatch")
+    parsed = parse_panel_response(phase, response) if phase in STRUCTURED_PHASE_SCHEMAS else {
+        "valid": usable_stdout(response), "errors": [], "payload": None,
+    }
+    errors.extend(parsed["errors"])
+    if "primary_finding_ids" in host_context:
+        errors.extend(validate_review_dispositions(receipt.get("review_dispositions"),
+            primary_finding_ids=host_context["primary_finding_ids"]))
+    # A separate host session establishes only session separation. Family
+    # identity must come from a trusted runtime observation held by the host.
+    identity = host_context.get("identity_observation")
+    family = primary_family = "unverified"
+    if isinstance(identity, dict) and identity.get("source") == "host-runtime" and identity.get("verified") is True:
+        family = str(identity.get("family") or "unverified")
+        primary_family = str(identity.get("primary_family") or "unverified")
+    assurances = {
+        "different_session": bool(host_context.get("primary_host_session_id"))
+            and host_context.get("primary_host_session_id") != host_context.get("host_session_id"),
+        "different_family": family != "unverified" and primary_family != "unverified" and family != primary_family,
+    }
+    contract_validation: dict[str, Any] = {"status": "unverified", "assurances": {
+        "source_coverage": False, "finding_coverage": False, "stream_complete": False}}
+    if host_contract is not None:
+        from workflow_state import validate_host_contract
+        contract_validation = validate_host_contract(host_contract, host_context=host_context,
+                                                     response=response, receipt=receipt)
+        errors.extend(contract_validation["errors"])
+    assurances.update(contract_validation["assurances"])
+    unmet = [name for name in required_assurances if assurances.get(name) is not True]
+    content_valid = not errors and parsed["valid"] is True
+    return {
+        "schema_version": "host_panel_admission.v1", "admitted": content_valid,
+        "content_valid": content_valid, "assurance_pass": content_valid and not unmet,
+        "unmet_assurances": unmet, "assurances": assurances, "errors": errors,
+        "provider_transport": "host-native", "provider_family": family,
+        "provider_execution_attestation": None, "parsed_response": parsed,
+        "lifecycle_status": "candidate" if content_valid else "rejected",
+        "publication_authorized": False,
+        "contract_validation": contract_validation,
+    }
+
+
 def _decode_json_response(text: str) -> tuple[Any, list[str]]:
     """Decode a pure JSON object, optionally enclosed in one Markdown fence."""
     body = (text or "").strip()
@@ -2322,9 +2449,9 @@ def build_cmd(
     raise ValueError(f"unknown provider {provider}")
 
 
-def classify_error(stderr: str, exit_code: int) -> str:
+def classify_error(stderr: str, exit_code: int, *, timed_out: bool | None = None) -> str:
     s = (stderr or "").lower()
-    if exit_code == 124 or "timeout" in s:
+    if timed_out is True or timed_out is None and (exit_code == 124 or "timeout" in s):
         return "timeout"
     if "read-only file system" in s or "erofs" in s or "os error 30" in s:
         return "read_only_filesystem"
@@ -2374,6 +2501,15 @@ def usable_stdout(stdout: str) -> bool:
     return len(body) >= MIN_USABLE_CHARS
 
 
+class PanelProcessResult(tuple):
+    """Three legacy presentation fields plus separately typed process evidence."""
+
+    def __new__(cls, return_code: int, stdout: str, stderr: str, evidence: dict[str, Any]):
+        result = super().__new__(cls, (return_code, stdout, stderr))
+        result.process_evidence = evidence
+        return result
+
+
 def _default_runner(
     cmd: list[str],
     env: dict[str, str],
@@ -2386,50 +2522,38 @@ def _default_runner(
 ) -> tuple[int, str, str]:
     try:
         result = run_bounded_resource_process(
-            cmd,
-            env=env,
-            cwd=Path(cwd),
-            timeout_s=timeout_s,
-            output_limit_bytes=output_limit_bytes,
-            scope_unit=scope_unit,
+            cmd, env=env, cwd=Path(cwd), timeout_s=timeout_s,
+            output_limit_bytes=output_limit_bytes, scope_unit=scope_unit,
             stdin_text=stdin_text,
         )
-    except FileNotFoundError as exc:
-        cleanup_error = (
-            cleanup_resource_scope(scope_unit) if scope_unit is not None else None
-        )
-        if cleanup_error is not None:
-            return 126, "", f"[resource-cleanup-failed] {cleanup_error}"
-        return 127, "", f"binary not found: {exc}"
-    except (OSError, ProviderResourceError) as exc:
+    except Exception as exc:  # cleanup and original exception stay separate
         prior_cleanup_error = getattr(exc, "cleanup_error", None)
-        retry_cleanup_error = (
-            cleanup_resource_scope(scope_unit) if scope_unit is not None else None
-        )
+        retry_cleanup_error = cleanup_resource_scope(scope_unit) if scope_unit is not None else None
         cleanup_error = prior_cleanup_error or retry_cleanup_error
+        rc = 127 if isinstance(exc, FileNotFoundError) else 1
+        evidence = getattr(exc, "process_evidence", None)
+        if not isinstance(evidence, dict):
+            evidence = process_evidence(BoundedProcessResult(
+                rc, b"", b"", False, False, type(exc).__name__, cleanup_error,
+            ))
+        evidence["execution_error"] = type(exc).__name__
+        evidence["cleanup_error"] = cleanup_error
         if cleanup_error is not None:
-            return 126, "", f"[resource-cleanup-failed] {cleanup_error}"
-        return 1, "", f"os error: {exc}"
-    except Exception as exc:  # noqa: BLE001 - cleanup status is the safety boundary
-        prior_cleanup_error = getattr(exc, "cleanup_error", None)
-        retry_cleanup_error = (
-            cleanup_resource_scope(scope_unit) if scope_unit is not None else None
-        )
-        cleanup_error = prior_cleanup_error or retry_cleanup_error
-        if cleanup_error is not None:
-            return 126, "", f"[resource-cleanup-failed] {cleanup_error}"
-        return 1, "", f"provider execution failed: {type(exc).__name__}"
+            return PanelProcessResult(126, "", f"[resource-cleanup-failed] {cleanup_error}", evidence)
+        message = f"binary not found: {exc}" if rc == 127 else f"provider execution failed: {type(exc).__name__}"
+        return PanelProcessResult(rc, "", message, evidence)
+    evidence = process_evidence(result)
     if result.cleanup_error is not None:
-        return 126, "", f"[resource-cleanup-failed] {result.cleanup_error}"
+        return PanelProcessResult(126, "", f"[resource-cleanup-failed] {result.cleanup_error}", evidence)
     if result.oversized:
-        return 126, "", "panel output was blocked before persistence because it was oversized"
+        return PanelProcessResult(126, "", "panel output was blocked before persistence because it was oversized", evidence)
     stdout = result.stdout.decode("utf-8", errors="replace")
     stderr = result.stderr.decode("utf-8", errors="replace")
     if result.timed_out:
         stderr = (stderr + "\n[panel_parent] hard timeout\n").strip()
     if result.capture_error is not None:
-        return 126, stdout, result.capture_error
-    return result.return_code, stdout, stderr
+        return PanelProcessResult(126, stdout, result.capture_error, evidence)
+    return PanelProcessResult(result.return_code, stdout, stderr, evidence)
 
 
 def _panel_private_prompt_transport(
@@ -2856,6 +2980,7 @@ def run_one(
     resource_scope: str | None = None
     resource_cleanup_failed = False
     sensitive_output_findings: list[str] = []
+    execution_evidence: dict[str, Any] | None = None
     try:
         if runner is None and transport_mode != TRUSTED_LOCAL_TRANSPORT:
             # A real provider process is an untrusted confidentiality and
@@ -2960,10 +3085,17 @@ def run_one(
                     rc = int(broker_response.get("returncode", 126))
                     stdout = str(broker_response.get("stdout") or "")
                     stderr = str(broker_response.get("stderr") or "")
+                    execution_evidence = broker_response.get("process_evidence")
+                    if validate_process_evidence(execution_evidence):
+                        raise CredentialBrokerError("missing or invalid broker process evidence")
+                    resource_scope = broker_response.get("resource_scope")
+                    resource_limits = broker_response.get("resource_limits")
+                    if not isinstance(resource_scope, str) or not isinstance(resource_limits, dict):
+                        raise CredentialBrokerError("missing broker resource scope evidence")
                 except (CredentialBrokerError, OSError, ValueError) as exc:
                     rc, stdout, stderr = 126, "", f"credential broker failed: {exc}"
             else:
-                rc, stdout, stderr = _default_runner(
+                captured_result = _default_runner(
                     execution_cmd,
                     env,
                     str(work),
@@ -2972,17 +3104,45 @@ def run_one(
                     output_limit_bytes=resource_limits["output_max_bytes"],
                     scope_unit=resource_scope,
                 )
+                rc, stdout, stderr = captured_result
+                execution_evidence = getattr(captured_result, "process_evidence", None)
         else:
-            rc, stdout, stderr = run(execution_cmd, env, str(work), timeout_s)
-        resource_cleanup_failed = stderr.startswith("[resource-cleanup-failed]")
+            captured_result = run(execution_cmd, env, str(work), timeout_s)
+            rc, stdout, stderr = captured_result
+            execution_evidence = getattr(captured_result, "process_evidence", None)
+            # Merely finding an installed CLI does not attest the fake runner.
+            executable_attestation = None
+        if execution_evidence is not None and validate_process_evidence(execution_evidence):
+            execution_evidence = None
+            rc, stdout, stderr = 126, "", "invalid process evidence"
+        resource_cleanup_failed = (
+            bool(execution_evidence.get("cleanup_error")) if execution_evidence is not None
+            else stderr.startswith("[resource-cleanup-failed]")
+        )
+        evidence_text = ""
+        if execution_evidence is not None:
+            evidence_text += json.dumps({name: execution_evidence.get(name) for name in
+                ("capture_error", "cleanup_error", "execution_error")})
+            for stream in ("stdout", "stderr"):
+                data = execution_evidence.get(stream) or {}
+                if data.get("state") in {"captured", "partial"}:
+                    evidence_text += base64.b64decode(data["base64"]).decode("utf-8", errors="replace") + "\n"
         sanitized_output, sensitive_output_findings = redact_sensitive_panel_output(
-            stdout + "\n" + stderr
+            stdout + "\n" + stderr + "\n" + evidence_text
         )
         if sensitive_output_findings:
             rc = 126
             stdout = ""
             stderr = sanitized_output
-        # Persist raw output for audit, but bind all decisions to the exact
+            if execution_evidence is not None:
+                execution_evidence = withhold_process_evidence(execution_evidence, "sensitive_output")
+                for name in ("capture_error", "cleanup_error", "execution_error"):
+                    if isinstance(execution_evidence.get(name), str):
+                        execution_evidence[name], _ = redact_sensitive_panel_output(execution_evidence[name])
+        evidence_path = raw_dir / f"{provider}_{phase}_process.json"
+        if execution_evidence is not None:
+            _secure_write_text(evidence_path, json.dumps(execution_evidence, sort_keys=True) + "\n")
+        # Persist text views for audit, but bind all decisions to the exact
         # in-memory response below. A workspace process can replace the audit
         # copy after this point without changing semantic parsing.
         _secure_write_text(stdout_path, stdout, errors="replace")
@@ -3001,11 +3161,19 @@ def run_one(
         if ok
         else "isolation_unavailable"
         if isolation_error is not None
-        else classify_error(stderr, rc)
+        else "resource_cleanup_unverified"
+        if execution_evidence and execution_evidence.get("cleanup_error")
+        else "capture_failed"
+        if execution_evidence and execution_evidence.get("capture_error")
+        else "output_oversized"
+        if execution_evidence and execution_evidence.get("oversized")
+        else classify_error(stderr, rc, timed_out=execution_evidence.get("timed_out") if execution_evidence else None)
     )
     return {
         "provider": provider,
         "phase": phase,
+        "process_evidence": execution_evidence,
+        "process_evidence_path": str(evidence_path) if execution_evidence is not None else None,
         "cmd_bin": cmd[0],
         "provider_family": (
             str(executable_attestation.get("family") or "unverified")
@@ -3018,7 +3186,7 @@ def run_one(
         "resource_limits": public_resource_limits(resource_limits),
         "resource_scope": resource_scope,
         "resource_cleanup_verified": (
-            False if resource_cleanup_failed else True if resource_scope else None
+            False if resource_cleanup_failed else True if resource_scope and execution_evidence is not None else None
         ),
         "read_only_sandbox": read_only_sandbox,
         "isolation_mode": (
@@ -3247,6 +3415,29 @@ def compute_provider_timeouts(
     return out
 
 
+def _remaining_panel_wall_budget(run_dir: Path | None) -> int | None:
+    if run_dir is None:
+        return None
+    raw = _workspace_optional_text(run_dir, run_dir / "budget.json")
+    if raw is None:
+        return None
+    try:
+        budget = json.loads(raw)
+        cap = budget.get("max_wall_time_seconds", 0)
+        if type(cap) not in {int, float} or not math.isfinite(cap) or cap < 0:
+            raise ValueError("invalid wall budget")
+        if not cap:
+            return None
+        state = json.loads(_workspace_read_text(run_dir, run_dir / "loop_state.json"))
+        started = datetime.fromisoformat(state["created_at"].replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        return max(0, math.floor(cap - max(0, elapsed) - 60))
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise PanelArtifactError("panel wall-budget evidence is invalid") from exc
+
+
 def dispatch_phase(
     iter_dir: Path,
     phase: str,
@@ -3260,6 +3451,8 @@ def dispatch_phase(
     run_dir: Path | None = None,
 ) -> dict[str, Any]:
     phase = _artifact_component(phase, label="phase")
+    cfg = panel_cfg if panel_cfg is not None else {}
+    providers = filter_panel_providers({**cfg, "providers": providers})
     if not providers or len(providers) > MAX_PANEL_PROVIDERS:
         raise PanelIsolationError(
             f"panel roster must contain between 1 and {MAX_PANEL_PROVIDERS} providers"
@@ -3269,6 +3462,13 @@ def dispatch_phase(
     ]
     if len(set(providers)) != len(providers):
         raise PanelIsolationError("panel roster must not contain duplicate providers")
+    wall_remaining = _remaining_panel_wall_budget(run_dir)
+    if wall_remaining == 0:
+        return {"schema_version": "panel_parent.v1", "phase": phase,
+                "panel_content_pass": False, "usable_providers": [],
+                "dispatch_skipped": True, "error_class": "wall_budget_exhausted"}
+    if wall_remaining is not None:
+        timeout_s = min(timeout_s or DEFAULT_TIMEOUT_S.get(phase, 600), wall_remaining)
     if runner is None:
         if str(os.environ.get("AAS_AUTOLOOP_EXTERNAL_PANEL_EGRESS") or "").strip().lower() != "allow":
             raise PanelIsolationError(
@@ -3303,13 +3503,14 @@ def dispatch_phase(
                 "trusted-local panel resource backend is unavailable"
             ) from exc
     out_dir, raw_dir = phase_dirs(iter_dir, phase)
-    cfg = panel_cfg if panel_cfg is not None else {}
-    try:
-        max_attempts = max(1, int(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)))
-    except (TypeError, ValueError):
-        max_attempts = DEFAULT_MAX_ATTEMPTS
+    max_attempts = _panel_attempt_limit(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
+    dispatch_context = {
+        "dispatch_id": str(uuid.uuid4()), "owner_id": str(os.getpid()),
+        "input_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
     attempt_number, attempt_allowed = reserve_panel_attempt(
-        iter_dir, phase, max_attempts=max_attempts
+        iter_dir, phase, max_attempts=max_attempts, run_dir=run_dir,
+        dispatch_context=dispatch_context,
     )
     if not attempt_allowed:
         previous_path = iter_dir / "data" / f"panel_dispatch_{phase}.json"
@@ -3334,11 +3535,17 @@ def dispatch_phase(
         previous.setdefault("providers_invited", list(providers))
         previous.setdefault("usable_providers", [])
         previous.setdefault("panel_content_pass", False)
+        prior_context = previous.get("dispatch_context") or {}
+        if prior_context.get("input_sha256") != dispatch_context["input_sha256"]:
+            previous["panel_content_pass"] = False
+            previous["independent_review_pass"] = False
+            previous["error_class"] = "attempt_cap_with_changed_input"
         return previous
+    # Attempt-specific evidence never overwrites an earlier failed invocation.
+    raw_dir = _ensure_real_directory(raw_dir / f"attempt-{attempt_number}-{dispatch_context['dispatch_id']}")
+    publication_files: dict[Path, str] = {}
     if runner is not None:
-        _secure_write_text(
-            out_dir / "prompt.md", prompt if prompt.endswith("\n") else prompt + "\n"
-        )
+        publication_files[out_dir / "prompt.md"] = prompt if prompt.endswith("\n") else prompt + "\n"
 
     history_root = run_dir
     if history_root is None:
@@ -3356,6 +3563,14 @@ def dispatch_phase(
         run_dir=history_root,
         explicit_timeout_s=timeout_s if timeout_s and timeout_s > 0 else None,
     )
+    wall_remaining = _remaining_panel_wall_budget(run_dir)
+    if wall_remaining == 0:
+        return {"schema_version": "panel_parent.v1", "phase": phase,
+                "panel_content_pass": False, "usable_providers": [],
+                "dispatch_skipped": True, "error_class": "wall_budget_exhausted"}
+    if wall_remaining is not None:
+        for budget in budgets.values():
+            budget["timeout_s"] = min(budget["timeout_s"], wall_remaining)
 
     results: dict[str, Any] = {}
     workers = max(1, len(providers))
@@ -3442,30 +3657,21 @@ def dispatch_phase(
 
     for p, meta in results.items():
         md_path = out_dir / f"{p}.md"
+        body = response_bodies.get(p, "")
         if meta.get("usable") and meta.get("stdout_path"):
-            body = response_bodies.get(p, "")
-            _secure_write_text(
-                md_path,
-                f"# {p} — {phase}\n\nStatus: ok\n\n{body.strip()}\n",
-            )
+            publication_files[md_path] = f"# {p} — {phase}\n\nStatus: ok\n\n{body.strip()}\n"
         elif meta.get("transport_usable") and meta.get("stdout_path"):
-            body = response_bodies.get(p, "")
             errors = meta.get("structured_errors") or ["invalid structured response"]
-            _secure_write_text(
-                md_path,
-                f"# {p} — {phase}\n\n"
-                "Status: invalid_response (`invalid_structured_response`).\n\n"
-                "Validation errors:\n"
+            publication_files[md_path] = (
+                f"# {p} — {phase}\n\nStatus: invalid_response (`invalid_structured_response`).\n\n"
                 + "".join(f"- {error}\n" for error in errors)
-                + f"\n## Raw response\n\n{body.strip()}\n",
+                + f"\n## Response text\n\n{body.strip()}\n"
             )
         else:
-            _secure_write_text(
-                md_path,
-                f"# {p} — {phase}\n\n"
-                f"Status: unavailable (`{meta.get('error_class')}`).\n\n"
+            publication_files[md_path] = (
+                f"# {p} — {phase}\n\nStatus: unavailable (`{meta.get('error_class')}`).\n\n"
                 f"exit_code: {meta.get('exit_code')}\n"
-                f"stderr: see `raw/{p}_{phase}_stderr.txt`\n",
+                f"stderr: `{meta.get('stderr_path', '')}`\n"
             )
 
     usable = [p for p, m in results.items() if m.get("usable")]
@@ -3562,51 +3768,105 @@ def dispatch_phase(
         "results": results,
         "generated_unix": time.time(),
     }
-    _secure_write_text(
-        out_dir / "dispatch_summary.json", json.dumps(summary, indent=2) + "\n"
-    )
-    data = iter_dir / "data"
-    _ensure_real_directory(data)
-    _secure_write_text(
-        data / f"panel_dispatch_{phase}.json", json.dumps(summary, indent=2) + "\n"
-    )
+    summary["dispatch_context"] = {**dispatch_context, "attempt_number": attempt_number}
+    body = json.dumps(summary, indent=2) + "\n"
+    # Always retain the historical completion, even if a newer attempt owns admission.
+    _secure_write_text(raw_dir / "completion.json", body)
+    publication_files[out_dir / "dispatch_summary.json"] = body
+    publication_files[iter_dir / "data" / f"panel_dispatch_{phase}.json"] = body
+    if not _publish_panel_attempt(iter_dir, phase, attempt_number, dispatch_context,
+                                  publication_files, run_dir=run_dir):
+        summary["obsolete_completion"] = True
+        summary["panel_content_pass"] = False
+        summary["independent_review_pass"] = False
+        summary["dispatch_skipped"] = True
     return summary
 
 
-def reserve_panel_attempt(
-    iter_dir: Path, phase: str, *, max_attempts: int = DEFAULT_MAX_ATTEMPTS
-) -> tuple[int, bool]:
-    """Reserve one persistent panel-phase attempt for a pending iteration.
+def _panel_run_root(iter_dir: Path, run_dir: Path | None = None) -> Path:
+    root = run_dir or (iter_dir.parent.parent if iter_dir.parent.name == "iterations" else iter_dir)
+    root = Path(os.path.abspath(root))
+    try:
+        Path(os.path.abspath(iter_dir)).relative_to(root)
+    except ValueError as exc:
+        raise PanelArtifactError("panel iteration escapes the transaction run root") from exc
+    return root
 
-    A drive process can restart or rotate providers while the same iteration is
-    pending. Persisting this count prevents each fresh process from restarting
-    panel dispatch indefinitely.
-    """
-    limit = max(1, int(max_attempts))
-    data_dir = iter_dir / "data"
+
+def _read_panel_attempts(path: Path) -> tuple[dict[str, Any], str | None]:
+    try:
+        text = _secure_read_text(path)
+    except FileNotFoundError:
+        return {"schema_version": "panel_attempts.v1", "phases": {}}, None
+    try:
+        state = json.loads(text)
+    except (ValueError, UnicodeError) as exc:
+        raise PanelArtifactError("panel attempt evidence is corrupt") from exc
+    if (not isinstance(state, dict) or state.get("schema_version") != "panel_attempts.v1"
+            or not isinstance(state.get("phases"), dict)
+            or any(type(value) is not int or value < 0 for value in state["phases"].values())
+            or not isinstance(state.get("owners", {}), dict)):
+        raise PanelArtifactError("panel attempt counters are invalid")
+    return state, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _panel_attempt_limit(value: Any) -> int:
+    if type(value) is not int or value < 1:
+        raise PanelArtifactError("max_attempts must be a positive integer")
+    return value
+
+
+def reserve_panel_attempt(
+    iter_dir: Path, phase: str, *, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    run_dir: Path | None = None, dispatch_context: dict[str, Any] | None = None,
+) -> tuple[int, bool]:
+    """Reserve a persistent attempt using the existing run-root transaction CAS."""
+    phase = _artifact_component(phase, label="phase")
+    limit = _panel_attempt_limit(max_attempts)
+    root = _panel_run_root(iter_dir, run_dir)
+    data_dir = Path(os.path.abspath(iter_dir)) / "data"
     _ensure_real_directory(data_dir)
     path = data_dir / "panel_attempts.json"
-    state: dict[str, Any] = {"schema_version": "panel_attempts.v1", "phases": {}}
-    try:
-        loaded = json.loads(_secure_read_text(path))
-        if isinstance(loaded, dict):
-            state.update(loaded)
-    except (OSError, json.JSONDecodeError):
-        pass
-    phases = state.get("phases")
-    if not isinstance(phases, dict):
-        phases = {}
-        state["phases"] = phases
-    try:
-        count = max(0, int(phases.get(phase, 0)))
-    except (TypeError, ValueError):
-        count = 0
-    if count >= limit:
-        return limit, False
-    count += 1
-    phases[phase] = count
-    _secure_write_text(path, json.dumps(state, indent=2) + "\n")
-    return count, True
+    relative = path.relative_to(root)
+    for _ in range(64):
+        state, preimage = _read_panel_attempts(path)
+        count = state["phases"].get(phase, 0)
+        if count >= limit:
+            return count, False
+        count += 1
+        state["phases"][phase] = count
+        if dispatch_context is not None:
+            state.setdefault("owners", {})[phase] = {**dispatch_context, "attempt_number": count}
+        try:
+            commit_transaction(root, json_files={relative: state},
+                expected_absent=[relative] if preimage is None else [],
+                expected_hashes={relative: preimage} if preimage is not None else {})
+            return count, True
+        except RevisionConflict:
+            continue
+    raise PanelArtifactError("panel attempt reservation remained contended")
+
+
+def _publish_panel_attempt(
+    iter_dir: Path, phase: str, attempt_number: int, dispatch_context: dict[str, Any],
+    text_files: dict[Path, str], *, run_dir: Path | None = None,
+) -> bool:
+    root = _panel_run_root(iter_dir, run_dir)
+    path = Path(os.path.abspath(iter_dir)) / "data/panel_attempts.json"
+    relative = path.relative_to(root)
+    for _ in range(64):
+        state, preimage = _read_panel_attempts(path)
+        expected_owner = {**dispatch_context, "attempt_number": attempt_number}
+        if state["phases"].get(phase) != attempt_number or state.get("owners", {}).get(phase) != expected_owner:
+            return False
+        try:
+            commit_transaction(root,
+                text_files={Path(os.path.abspath(p)).relative_to(root): body for p, body in text_files.items()},
+                expected_hashes={relative: preimage})
+            return True
+        except RevisionConflict:
+            continue
+    raise PanelArtifactError("panel publication remained contended")
 
 
 def _normalize_name_list(raw: object) -> list[str]:
@@ -3631,7 +3891,7 @@ def filter_panel_providers(cfg: dict[str, Any]) -> list[str]:
     runs (see load_panel_config). Exclusions still apply unless the env list
     was the only source and the operator intentionally re-listed someone.
     """
-    providers = [str(p).strip() for p in (cfg.get("providers") or DEFAULT_PROVIDERS) if str(p).strip()]
+    providers = _normalize_name_list(cfg["providers"] if "providers" in cfg else DEFAULT_PROVIDERS)
     excluded = set(_normalize_name_list(cfg.get("exclude_until_credit")))
     excluded |= set(_normalize_name_list(cfg.get("exclude_providers")))
     if not excluded:
@@ -3641,6 +3901,17 @@ def filter_panel_providers(cfg: dict[str, Any]) -> list[str]:
 
 def load_panel_config(run_dir: Path) -> dict[str, Any]:
     """Load panel config from panel.json and/or loop_state standing_orders.panel."""
+    def policy_object(path: Path) -> dict[str, Any] | None:
+        raw = _workspace_optional_text(run_dir, path)
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, UnicodeError) as exc:
+            raise PanelArtifactError("panel policy evidence is unreadable") from exc
+        if not isinstance(data, dict):
+            raise PanelArtifactError("panel policy evidence must be an object")
+        return data
     cfg: dict[str, Any] = {
         "enabled": False,
         "providers": list(DEFAULT_PROVIDERS),
@@ -3651,10 +3922,10 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
         "anti_deadlock_math_without_panel": True,
         "max_attempts": DEFAULT_MAX_ATTEMPTS,
     }
-    data = _workspace_optional_object(run_dir, run_dir / "panel.json")
+    data = policy_object(run_dir / "panel.json")
     if isinstance(data, dict):
         cfg.update({k: v for k, v in data.items() if v is not None})
-    state = _workspace_optional_object(run_dir, run_dir / "loop_state.json")
+    state = policy_object(run_dir / "loop_state.json")
     if isinstance(state, dict):
         so = state.get("standing_orders")
         panel = so.get("panel") if isinstance(so, dict) else None
@@ -3669,17 +3940,12 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
     elif env_flag in ("0", "off", "false", "no"):
         cfg["enabled"] = False
     env_prov = os.environ.get("AAS_AUTOLOOP_PANEL_PROVIDERS", "").strip()
-    if env_prov:
+    if "AAS_AUTOLOOP_PANEL_PROVIDERS" in os.environ:
         cfg["providers"] = [p.strip() for p in env_prov.split(",") if p.strip()]
     # Normalize invite list after merges so dispatch never sees excluded names.
     cfg["providers"] = filter_panel_providers(cfg)
     cfg["exclude_until_credit"] = _normalize_name_list(cfg.get("exclude_until_credit"))
-    try:
-        cfg["max_attempts"] = max(
-            1, int(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
-        )
-    except (TypeError, ValueError):
-        cfg["max_attempts"] = DEFAULT_MAX_ATTEMPTS
+    cfg["max_attempts"] = _panel_attempt_limit(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
     return cfg
 
 
@@ -4460,7 +4726,7 @@ def smoke(
     *,
     runner: Runner | None = None,
 ) -> dict[str, Any]:
-    providers = providers or list(DEFAULT_PROVIDERS)
+    providers = list(DEFAULT_PROVIDERS) if providers is None else providers
     prompt = (
         "Reply with exactly one line: PANEL_SMOKE_OK. "
         "Do not use tools. Do not read files."
@@ -4495,18 +4761,9 @@ def run_panel_phase_for_drive(
 ) -> dict[str, Any]:
     """High-level entry used by drive_command."""
     cfg = load_panel_config(run_dir)
-    # load_panel_config already substituted DEFAULT_PROVIDERS for a config that
-    # names none, then applied exclude_until_credit / exclude_providers. An
-    # empty roster here therefore means every candidate reviewer is withdrawn,
-    # and falling back to the built-in defaults would invite exactly the
-    # providers that were excluded. Report the withdrawal instead so the caller
-    # stops rather than spending the run on invites that cannot be answered.
-    configured = list(cfg.get("providers") or [])
-    if providers:
-        prov = list(providers)
-    elif configured:
-        prov = configured
-    else:
+    selected = cfg.get("providers", []) if providers is None else providers
+    prov = filter_panel_providers({**cfg, "providers": selected})
+    if not prov:
         return {
             "phase": phase,
             "panel_roster_withdrawn": True,
@@ -4551,7 +4808,7 @@ def run_panel_phase_for_drive(
         panel_cfg=cfg,
         run_dir=run_dir,
     )
-    if summary.get("fatal_resource_cleanup_failure"):
+    if summary.get("fatal_resource_cleanup_failure") or summary.get("obsolete_completion"):
         summary["iter_dir"] = str(idir)
         if strategy_snapshot is not None:
             summary["authority_snapshot"] = strategy_snapshot

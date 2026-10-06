@@ -1293,7 +1293,7 @@
       ]
     },
     "kaggle-research-compute": {
-      "description": "Route heavy compute to free Kaggle Kernels through the local broker, with agent-driven push, poll, fetch, and a multi-run resume loop across concurrent kernels; free CPU (quota-free) and GPU under a self-imposed weekly GPU-hour cap.",
+      "description": "Use when a research or engineering task needs automatic heavy-compute routing to free Kaggle Kernels through the local broker, with exact-version CPU push, poll and fetch, explicit Internet policy, and resumable host evidence; live GPU and multi-run remain disabled.",
       "profiles": [
         "full-research"
       ],
@@ -1791,7 +1791,7 @@
       ]
     },
     "lax-formalization": {
-      "description": "Formalize paper results in the Lax format with independently checked reuse, isolated replay and source-bound evidence; no publication.",
+      "description": "Formalize mathematical results as Lax submissions, find reusable declarations, and independently verify selected Lax dependencies. Use for a selected Lax artifact or Lax reuse; ordinary Lean formalization does not require this lane.",
       "profiles": [
         "formal-research",
         "formal-research-remote",

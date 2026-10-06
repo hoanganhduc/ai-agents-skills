@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.config import load_config, default_workspace
 from lib.zotero_client import ZoteroClient
 
+_OUTPUT_EXIT_STATUS = 0
 
 LOCAL_ZOTERO_DB_RELATIVE_PATHS = [
     ("Zotero", "zotero.sqlite"),
@@ -276,7 +277,7 @@ def _is_pdf_file(path):
 
 def _find_local_attachment_pdf(config, attachment):
     att_key = attachment.get("key")
-    if not att_key:
+    if not isinstance(att_key, str) or not att_key.isascii() or not att_key.replace('_', '').replace('-', '').isalnum():
         return None
     att_data = attachment.get("data", {})
     names = _safe_attachment_names(att_data)
@@ -285,18 +286,32 @@ def _find_local_attachment_pdf(config, attachment):
         folder = os.path.join(storage_dir, att_key)
         if not os.path.isdir(folder):
             continue
-        for name in names:
-            candidate = os.path.join(folder, name)
-            if _is_pdf_file(candidate):
-                return {"path": candidate, "storage_dir": storage_dir, "attachment_key": att_key}
         try:
-            for name in sorted(os.listdir(folder)):
-                candidate = os.path.join(folder, name)
-                if _is_pdf_file(candidate):
-                    return {"path": candidate, "storage_dir": storage_dir, "attachment_key": att_key}
+            candidates = [os.path.join(folder, name) for name in names
+                          if name.lower().endswith('.pdf') and os.path.isfile(os.path.join(folder, name))]
+            if not candidates and not att_data.get('filename'):
+                candidates = [os.path.join(folder, name) for name in sorted(os.listdir(folder))
+                              if name.lower().endswith('.pdf') and os.path.isfile(os.path.join(folder, name))]
+            # Listing metadata is allowed; sniff only the selected file's bytes.
+            if len(candidates) == 1 and not os.path.islink(candidates[0]) and not os.path.islink(folder):
+                if _is_pdf_file(candidates[0]):
+                    return {"path": candidates[0], "storage_dir": storage_dir, "attachment_key": att_key}
         except OSError:
             continue
     return None
+
+
+def serialize_bibtex(value):
+    """Serialize pyzotero's BibDatabase, never its Python object repr."""
+    import re
+    if isinstance(value, bytes):
+        value = value.decode('utf-8')
+    elif not isinstance(value, str) and isinstance(getattr(value, 'entries', None), list):
+        import bibtexparser
+        value = bibtexparser.dumps(value)
+    if not isinstance(value, str) or not re.search(r'@\w+\s*[\{(]', value):
+        raise ValueError('Zotero returned no usable BibTeX entries')
+    return value
 
 
 def cmd_search(args):
@@ -319,13 +334,17 @@ def cmd_search(args):
 
         if args.bibtex:
             items = client.search(args.query, limit=args.limit)
+            errors = 0
             for item in items:
                 key = item["key"]
                 try:
                     bib = client.zot.item(key, format="bibtex")
-                    print(bib)
+                    print(serialize_bibtex(bib))
                 except Exception as e:
-                    print(f"% Error fetching bibtex for {key}: {e}", file=sys.stderr)
+                    errors += 1
+                    print(f"% Error fetching bibtex for {key}: {type(e).__name__}", file=sys.stderr)
+            if errors:
+                return 1
             return
 
         # Try API first, fall back to cache
@@ -1287,7 +1306,12 @@ def cmd_get(args):
         return
 
     # Search for the paper
-    items = client.search(args.query, limit=25)
+    try:
+        items = client.search(args.query, limit=25)
+    except Exception as exc:
+        _output({"status": "error", "action": "get", "code": "LIBRARY_LOOKUP_FAILED",
+                 "message": "Library lookup did not complete: " + type(exc).__name__})
+        return 1
     if not items:
         _output({
             "status": "error",
@@ -1347,10 +1371,23 @@ def cmd_get(args):
                   "message": "No PDF attached. Want me to try downloading it now?"})
         return
 
+    selected_attachment = getattr(args, "attachment_key", None)
+    if selected_attachment:
+        attachments = [item for item in attachments if item.get("key") == selected_attachment]
+        if not attachments:
+            _output({"status": "error", "action": "get", "code": "ATTACHMENT_NOT_SELECTED",
+                     "message": "The selected PDF attachment does not belong to this item"})
+            return 1
+    if len(attachments) != 1:
+        _output({"status": "multiple_attachments", "action": "get", "key": parent_key,
+                 "attachments": [{"key": item["key"], "filename": item["data"].get("filename"),
+                                  "title": item["data"].get("title")} for item in attachments],
+                 "message": "Select an attachment with --attachment-key before reading PDF content"})
+        return
     att = attachments[0]
     att_key = att["key"]
 
-    if getattr(args, "local_storage", True):
+    if getattr(args, "local_storage", True) and not getattr(args, "archive_member", None):
         local_pdf = _find_local_attachment_pdf(config, att)
         if local_pdf:
             _output_get_success(
@@ -1375,7 +1412,8 @@ def cmd_get(args):
     os.makedirs(staging, exist_ok=True)
 
     try:
-        pdf_path = webdav.download(att_key, staging)
+        member = getattr(args, "archive_member", None) or att["data"].get("filename")
+        pdf_path = webdav.download(att_key, staging, expected_member=member)
     except Exception as e:
         _output({"status": "error", "action": "get", "message": f"WebDAV download failed: {e}", "code": "WEBDAV_ERROR"})
         return
@@ -2002,6 +2040,7 @@ def cmd_notes(args):
 
 
 def cmd_clean_staging(args):
+    import re
     config = load_config()
     staging = config["staging_dir"]
     if not os.path.exists(staging):
@@ -2012,9 +2051,21 @@ def cmd_clean_staging(args):
     removed = 0
     for f in os.listdir(staging):
         fp = os.path.join(staging, f)
+        if os.path.islink(fp):
+            continue
         if os.path.isfile(fp) and (now - os.path.getmtime(fp)) > 86400:
             os.remove(fp)
             removed += 1
+        elif os.path.isdir(fp) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}-[a-f0-9]{20}', f):
+            # Only the content-addressed download layout created by WebDAV;
+            # unrelated directories and links in staging remain untouched.
+            for name in os.listdir(fp):
+                child = os.path.join(fp, name)
+                if not os.path.islink(child) and os.path.isfile(child) and now - os.path.getmtime(child) > 86400:
+                    os.remove(child)
+                    removed += 1
+            if not os.listdir(fp):
+                os.rmdir(fp)
     print(f"Removed {removed} orphaned file(s) older than 24h.")
 
 
@@ -2051,10 +2102,15 @@ def _print_collection_tree(nodes, indent=0):
 
 
 def _output(data):
+    global _OUTPUT_EXIT_STATUS
+    if isinstance(data, dict) and data.get('status') == 'error':
+        _OUTPUT_EXIT_STATUS = 1
     print(json.dumps(data, ensure_ascii=False))
 
 
 def main():
+    global _OUTPUT_EXIT_STATUS
+    _OUTPUT_EXIT_STATUS = 0
     # Common args shared across all subcommands
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="Output JSON")
@@ -2103,6 +2159,8 @@ def main():
     p_get.add_argument("query", help="Search query")
     p_get.add_argument("--link", action="store_true", help="Get Google Drive share link")
     p_get.add_argument("--index", type=int, help="Select from multiple results")
+    p_get.add_argument("--attachment-key", help="Select one PDF attachment by its exact Zotero key")
+    p_get.add_argument("--archive-member", help="Select the exact PDF member of the selected WebDAV attachment")
     p_get.add_argument("--no-local-storage", action="store_false", dest="local_storage",
                        help="Skip local Zotero storage lookup and download from WebDAV")
     p_get.add_argument("--send", nargs=2, metavar=("CHANNEL", "TARGET"),
@@ -2192,7 +2250,11 @@ def main():
 
     handler = dispatch.get(args.command)
     if handler:
-        handler(args)
+        result = handler(args)
+        if isinstance(result, int) and result:
+            sys.exit(result)
+        if _OUTPUT_EXIT_STATUS:
+            sys.exit(_OUTPUT_EXIT_STATUS)
     else:
         _output({"status": "error", "message": f"Unknown command: {args.command}", "code": "NOT_IMPLEMENTED"})
         sys.exit(1)

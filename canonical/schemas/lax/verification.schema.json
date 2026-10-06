@@ -118,7 +118,18 @@
       "items": {
         "type": "string"
       },
-      "minItems": 1
+      "minItems": 0
+    },
+    "verification_kind": {
+      "enum": [
+        "theorems",
+        "definitions-only"
+      ]
+    },
+    "compile_timeout_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 3600
     }
   },
   "required": [
@@ -148,5 +159,59 @@
     "dependency_digests",
     "limitations",
     "targets"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "verification_kind"
+        ],
+        "properties": {
+          "verification_kind": {
+            "const": "definitions-only"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "targets": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "targets": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "verification_kind"
+                ]
+              },
+              {
+                "required": [
+                  "compile_timeout_seconds"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "verification_kind",
+            "compile_timeout_seconds"
+          ]
+        }
+      ]
+    }
   ]
 }

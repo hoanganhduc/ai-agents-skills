@@ -27,7 +27,7 @@ def body(*args, **kwargs):
     try:
         os.kill(os.getpid(), signal.SIGTERM)
     finally:
-        Path(sys.argv[2]).write_text('cleanup-ran')
+        Path(sys.argv[2]).write_text('cleanup-ran', encoding='utf-8')
 executor._verify = body
 executor.verify(None, None)
 """

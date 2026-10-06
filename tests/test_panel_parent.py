@@ -678,7 +678,7 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertFalse(hard)
 
     @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
-    def test_panel_artifact_write_replaces_symlink_without_touching_target(self) -> None:
+    def test_panel_attempt_artifact_does_not_follow_legacy_symlink(self) -> None:
         def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
             return 0, "PANEL_SMOKE_OK", ""
 
@@ -705,6 +705,8 @@ class PanelParentUnitTests(unittest.TestCase):
 
             self.assertTrue(summary["panel_content_pass"])
             self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite")
+            self.assertTrue(output.is_symlink())
+            output = Path(summary["results"]["claude"]["stdout_path"])
             self.assertFalse(output.is_symlink())
             self.assertEqual(output.read_text(encoding="utf-8"), "PANEL_SMOKE_OK")
 
@@ -1500,7 +1502,7 @@ class PanelParentUnitTests(unittest.TestCase):
             )
             self.assertEqual(summary["primary_provider"], "claude")
             self.assertEqual(summary["primary_family"], "anthropic")
-            self.assertTrue(summary["independent_review_pass"])
+            self.assertFalse(summary["independent_review_pass"])  # injected execution is test-only
 
     def test_result_review_banking_invariants_are_validated(self) -> None:
         data = json.loads(result_review())
@@ -1625,7 +1627,7 @@ class PanelParentUnitTests(unittest.TestCase):
                 },
             )
             self.assertEqual(summary["usable_providers"], ["claude"])
-            self.assertTrue(summary["independent_review_pass"])
+            self.assertFalse(summary["independent_review_pass"])  # injected execution is test-only
             self.assertTrue(
                 (iter_dir / "panel" / "00_strategy_review" / "claude.md").is_file()
             )
@@ -2025,7 +2027,7 @@ class PanelParentUnitTests(unittest.TestCase):
                 },
             )
             self.assertTrue(summary["panel_content_pass"])
-            self.assertTrue(summary["independent_review_pass"])
+            self.assertFalse(summary["independent_review_pass"])  # injected execution is test-only
             self.assertIn("codex", summary["usable_providers"])
             self.assertNotIn("claude", summary["usable_providers"])
 

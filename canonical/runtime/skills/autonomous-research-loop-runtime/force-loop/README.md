@@ -4,12 +4,19 @@
 
 ## Defaults applied on bootstrap / apply-defaults
 
+Defaults fill absent settings. Explicit monitor/off, notification, compute,
+formal, and panel choices remain in force. Invalid proposed settings publish
+nothing. Run-local files commit together under the existing transaction lock
+and byte CAS. The external host policy has its own recoverable transaction and
+private pending intent; interrupted publication blocks start until apply-defaults
+reconciles it. Stop and pause markers are never cleared by start or replace.
+
 | Pin | Value |
 |-----|--------|
 | Goal Focus | `enforce` |
 | goal_priority | `enabled=true`, `discipline_mode=hard` (warnings + panel goal-EV block; the host path rewrite is inactive under the Goal Focus `enforce` pin above) |
 | Notify | `AAS_AUTOLOOP_NOTIFY=auto` (+ standing_orders) |
-| Compute (default profiles) | allow `local,kaggle,modal`; forbid `hetzner,github-actions` |
+| Compute (default profiles) | allow `local,kaggle`; forbid `modal,hetzner,github-actions` |
 | Compute secret lanes | `AAS_FORCE_LOOP_COMPUTE_LANES` (host policy; selects accepted secret names) |
 | Formal profile | `formal_policy=on`, typecheck on |
 

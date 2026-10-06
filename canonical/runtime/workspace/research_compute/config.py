@@ -104,6 +104,7 @@ class BrokerConfig:
     # KAGGLE_API_TOKEN environment projection -- never a pathname-read token file, the legacy
     # KAGGLE_USERNAME + KAGGLE_KEY pair, or this TOML.
     kaggle_enabled: bool = False
+    kaggle_allow_internet: bool = False
     kaggle_weekly_gpu_hours_cap: float = 18.0
     kaggle_max_runs: int = 5
     kaggle_concurrency: int = 5
@@ -242,6 +243,7 @@ def load_config(path: Path | None = None) -> BrokerConfig:
             hetzner.get("reaper_lease_max_age_seconds", 900)
         ),
         kaggle_enabled=bool(kaggle.get("enabled", False)),
+        kaggle_allow_internet=kaggle.get("allow_internet", False),
         kaggle_weekly_gpu_hours_cap=float(kaggle.get("weekly_gpu_hours_cap", 18.0)),
         kaggle_max_runs=int(kaggle.get("max_runs", 5)),
         kaggle_concurrency=int(kaggle.get("concurrency", 5)),

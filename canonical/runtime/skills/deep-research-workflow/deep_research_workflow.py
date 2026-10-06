@@ -548,7 +548,7 @@ def write_text(path: Path, text: str, *, force: bool) -> Path:
     return path
 
 
-def validate_directory(root: Path, schema_version: str | None = None) -> dict[str, Any]:
+def validate_directory(root: Path, schema_version: str | None = None, *, remote_authority_verifier: Any = None) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     sources = read_jsonl(root / "sources.jsonl", "sources", errors)
@@ -604,6 +604,7 @@ def validate_directory(root: Path, schema_version: str | None = None) -> dict[st
             review_map,
             root,
             errors,
+            remote_authority_verifier=remote_authority_verifier,
         )
         if not v2_mode:
             add_error(errors, "FORMAL_REQUIRES_V2", root / "formal", "formal lane artifacts require v2 structured validation")
@@ -1167,6 +1168,7 @@ def validate_formal_targets(
     review_map: dict[str, dict[str, Any]],
     root: Path,
     errors: list[dict[str, Any]],
+    *, remote_authority_verifier: Any = None,
 ) -> dict[str, dict[str, Any]]:
     ids: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -1202,7 +1204,8 @@ def validate_formal_targets(
         for review_id in review_ids:
             if review_id not in review_map:
                 add_error(errors, "UNKNOWN_STATEMENT_REVIEW_ID", path, f"line {line}: unknown statement_equivalence_review_id {review_id}")
-        validate_formal_target_state(row, review_ids, review_map, evidence_map, path, errors, line)
+        validate_formal_target_state(row, review_ids, review_map, evidence_map, path, errors, line, root=root,
+                                    remote_authority_verifier=remote_authority_verifier)
     return ids
 
 
@@ -1235,6 +1238,7 @@ def validate_formal_target_state(
     path: Path,
     errors: list[dict[str, Any]],
     line: int | None,
+    *, root: Path | None = None, remote_authority_verifier: Any = None,
 ) -> None:
     stage = row.get("artifact_stage")
     support = row.get("claim_support_status")
@@ -1268,8 +1272,8 @@ def validate_formal_target_state(
         evidence = evidence_map.get(evidence_id, {})
         if evidence.get("verification_source") == "fake_transport":
             add_error(errors, "FAKE_TRANSPORT_CANNOT_PROMOTE_FORMAL_SUPPORT", path, f"line {line}: fake transport cannot promote formal support")
-    if not has_local_formal_check_evidence(row, evidence_map):
-        add_error(errors, "LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", path, f"line {line}: promoted formal support requires local formal_check evidence")
+    if not has_local_formal_check_evidence(row, evidence_map) and not has_remote_formal_check_evidence(row, evidence_map, root or path.parent, authority_verifier=remote_authority_verifier):
+        add_error(errors, "LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", path, f"line {line}: promoted formal support requires local or host-validated remote formal_check evidence")
 
 
 def has_matching_statement_review(
@@ -1307,6 +1311,44 @@ def has_local_formal_check_evidence(target: dict[str, Any], evidence_map: dict[s
             and evidence.get("inspection_status") == "checked"
         ):
             return True
+    return False
+
+
+def has_remote_formal_check_evidence(
+    target: dict[str, Any], evidence_map: dict[str, dict[str, Any]], root: Path,
+    *, authority_verifier: Any = None,
+) -> bool:
+    """Resolve a host receipt sidecar; a source-kind string cannot certify Lean."""
+    for evidence_id in target.get("verification_evidence_ids", []):
+        evidence = evidence_map.get(evidence_id) or {}
+        if evidence.get("evidence_type") != "formal_check" or evidence.get("verification_source") != "host_verified_remote_lean" or evidence.get("inspection_status") != "checked":
+            continue
+        try:
+            errors: list[dict[str, Any]] = []
+            reference = validate_artifact_ref(evidence.get("artifact_ref"), root, root / "evidence.jsonl", errors, None, "artifact_ref")
+            if errors or reference is None:
+                continue
+            runtime = Path(__file__).resolve().parent.parent / "autonomous-research-loop-runtime"
+            if str(runtime) not in sys.path:
+                sys.path.insert(0, str(runtime))
+            import remote_formal
+            descriptor = json.loads(remote_formal.regular_bytes(reference, limit=1024 * 1024))
+            if set(descriptor) != {"schema_version", "receipt_path", "receipt_sha256", "project_root"} or descriptor["schema_version"] != "host_remote_lean_reference.v1":
+                continue
+            project = Path(descriptor["project_root"])
+            ref, declaration = split_artifact_fragment(str(target.get("lean_statement_ref") or ""))
+            source = (root / ref).resolve()
+            if not declaration or not source.is_relative_to(project.resolve()):
+                continue
+            receipt = remote_formal.validate_host_receipt(Path(descriptor["receipt_path"]), descriptor["receipt_sha256"],
+                project=project, targets=[declaration], authority_verifier=authority_verifier)
+            manifest = json.loads(remote_formal.regular_bytes(Path(receipt["bundle_path"]) / "manifest.json"))
+            relative = source.relative_to(project.resolve()).as_posix()
+            expected = manifest["formal_request"]["source_files"].get(relative)
+            if expected == remote_formal.digest(remote_formal.regular_bytes(source)):
+                return True
+        except (ImportError, OSError, ValueError, KeyError, TypeError, RuntimeError):
+            continue
     return False
 
 

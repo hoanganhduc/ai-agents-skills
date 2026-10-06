@@ -230,7 +230,7 @@ Evidence inspected:
 | `python-pptx` | `pptx` | python-pptx>=1.0 | `linux`, `windows` | `slides-to-video` |
 | `pyzotero` | `pyzotero` | pyzotero>=1.10.0 | `linux`, `windows` | `zotero` |
 | `rapidocr` | `rapidocr` | docling[rapidocr] extra | `windows` | `docling OCR` |
-| `requests` | `requests` | requests>=2.28.0 | `linux`, `windows` | `zotero`, `calibre`, `research-digest-wrapper` |
+| `requests` | `requests` | requests>=2.28.0 | `linux`, `windows` | `zotero`, `calibre`, `research-digest-wrapper`, `kaggle-research-compute` |
 | `responses` | `responses` | responses>=0.23.0 | `linux`, `windows` | `zotero test suite` |
 | `shapely` | `shapely` | shapely==2.1.2 for TikZ semantic verifier | `linux`, `windows` | `tikz-draw` |
 | `soundfile` | `soundfile` | soundfile>=0.12 | `linux`, `windows` | `slides-to-video` |

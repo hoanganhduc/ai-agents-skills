@@ -298,3 +298,16 @@ Only route to `getscipapers-requester` if:
 - the user explicitly says not to check/use the library, or confirms external
   retrieval after the library-first result is reported
 - or the Zotero workflow clearly cannot satisfy the request
+
+## Exact attachment selection
+
+A parent item with multiple PDF children returns metadata and requires an exact
+`get --attachment-key KEY` selection before content access. `--archive-member NAME`
+selects one exact PDF inside that attachment and bypasses a different local cache
+file. Other archive members are not extracted. Ambiguous archives require a
+selection; operational errors are distinct from an empty successful search.
+
+BibTeX output serializes the API database object, and a failed export exits
+nonzero. WebDAV staging preserves the PDF filename in a content-addressed
+attachment directory; `clean-staging` handles that layout without traversing
+unrelated directories or symlinks.

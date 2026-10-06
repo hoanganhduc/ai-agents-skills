@@ -344,7 +344,7 @@ load_excluded() {
     if [[ "$stamp" == "$line" || ! "$stamp" =~ ^[0-9]+$ ]]; then
       stamp="$now"
     fi
-    if (( EXCLUDE_TTL_S > 0 && now - stamp > EXCLUDE_TTL_S )); then
+    if (( stamp > 0 && EXCLUDE_TTL_S > 0 && now - stamp > EXCLUDE_TTL_S )); then
       continue
     fi
     EXCLUDED+=("$name")
@@ -373,13 +373,18 @@ is_excluded() {
 
 session_exclude() {
   local p="$1"
+  local permanent="${2:-0}"
   if is_excluded "$p"; then
     return 0
   fi
   EXCLUDED+=("$p")
-  EXCLUDED_AT+=("$(date -u +%s)")
+  if [[ "$permanent" == "1" ]]; then
+    EXCLUDED_AT+=("0")
+  else
+    EXCLUDED_AT+=("$(date -u +%s)")
+  fi
   save_excluded
-  if [[ "$SYNC_PANEL" == "1" && -f "$SYNC_PANEL_PY" ]]; then
+  if [[ "$permanent" == "1" && "$SYNC_PANEL" == "1" && -f "$SYNC_PANEL_PY" ]]; then
     # Keep helper output suppressed — notify() is the pack's redaction-aware
     # channel — but do not let the one silent rotation-path failure stay silent.
     if ! python3 "$SYNC_PANEL_PY" --dir "$LOOP_DIR" --provider "$p" >/dev/null 2>&1; then
@@ -396,7 +401,17 @@ first_available_provider() {
   local n=${#PRIMARY_ORDER[@]}
   (( n == 0 )) && return 1
   for cand in "${PRIMARY_ORDER[@]}"; do
-    if ! is_excluded "$cand"; then
+    if ! is_excluded "$cand" && python3 - "$SUPERVISOR_DIR" "$LOOP_DIR" "$cand" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from autonomous_research_loop_runtime import provider_excluded
+try:
+    raise SystemExit(1 if provider_excluded(Path(sys.argv[2]), sys.argv[3]) else 0)
+except (OSError, ValueError):
+    raise SystemExit(1)
+PY
+    then
       printf '%s' "$cand"
       return 0
     fi
@@ -424,9 +439,28 @@ while :; do
     notify "STOP_REQUESTED present; supervisor exiting."
     exit 0
   fi
+  if [[ -f "$LOOP_DIR/PAUSE" ]]; then
+    sleep 1
+    continue
+  fi
   if loop_is_done; then
     notify "stop condition met; supervisor exiting."
     exit 0
+  fi
+  if [[ -f "$LOOP_DIR/formal/legacy_verification_pending.json" ]]; then
+    # Verification is host work and needs no available agent-provider primary.
+    # One bounded poll per start; resume later if the remote operation is pending.
+    python3 "$RUNTIME_PY" resume-legacy-verification --dir "$LOOP_DIR"
+    verification_rc=$?
+    if [[ "$verification_rc" != "0" ]]; then
+      notify "saved legacy formal append could not be reverified; producer remains blocked."
+      exit 21
+    fi
+    if [[ -f "$LOOP_DIR/formal/legacy_verification_pending.json" ]]; then
+      notify "saved legacy formal append still awaits host verification; resume without rerunning the producer."
+      exit 19
+    fi
+    continue
   fi
 
   provider="$(first_available_provider || true)"
@@ -471,6 +505,15 @@ while :; do
   fi
 
   case "$rc" in
+    18|20)
+      notify "provider hard credit or user exclusion is active; no retry or automatic expiry."
+      session_exclude "$provider" 1
+      consecutive_failures=0
+      ;;
+    19|21)
+      notify "formal verification remains pending or unavailable; saved append is preserved, producer restart is blocked."
+      exit "$rc"
+      ;;
     0)
       notify "driver exited 0 under $provider but loop not done; restarting same primary."
       consecutive_failures=0

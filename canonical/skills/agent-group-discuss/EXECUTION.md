@@ -1,6 +1,6 @@
 # Codex Execution Guide
 
-This file is the execution reference for running the six imported research templates with Codex agent tools.
+This file is the execution reference for running the seven imported research templates with Codex agent tools.
 Read this when the user triggers a multi-agent research or review run.
 Template definitions live in `TEMPLATES.md`.
 

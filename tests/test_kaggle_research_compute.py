@@ -955,6 +955,9 @@ class KaggleDriverTests(unittest.TestCase):
         self.cfg_dir = self.tmp / "kaggle-cfg"; self.cfg_dir.mkdir()
         self._prev_runner = kaggle_driver.COMMAND_RUNNER
         kaggle_driver.COMMAND_RUNNER = _FakeRunner()
+        self._prev_provider = kaggle_driver.PROVIDER_RUNNER
+        self.provider_calls = []
+        kaggle_driver.PROVIDER_RUNNER = self._provider
         self._prev_validate = kaggle_backend.KAGGLEHUB_VALIDATE
         # Mock the kagglehub-validate hook: valid token -> authenticated username "tester". No
         # live call; the driver resolves the kernel/dataset owner from this.
@@ -968,6 +971,7 @@ class KaggleDriverTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         kaggle_driver.COMMAND_RUNNER = self._prev_runner
+        kaggle_driver.PROVIDER_RUNNER = self._prev_provider
         kaggle_backend.KAGGLEHUB_VALIDATE = self._prev_validate
         for name, prev in self._prev_env.items():
             if prev is not None:
@@ -984,6 +988,36 @@ class KaggleDriverTests(unittest.TestCase):
 
     def _creds(self) -> None:
         os.environ["KAGGLE_API_TOKEN"] = DRIVER_TOKEN
+
+    def _provider(self, operation, **kwargs):
+        self.provider_calls.append((operation, kwargs))
+        if operation == "push":
+            return {"kernel_id": 101, "version_number": 2, "ref": "/code/" + kwargs["kernel"],
+                    "url": "https://www.kaggle.com/code/" + kwargs["kernel"], "error": ""}
+        if operation == "status":
+            return {"status": "complete"}
+        if operation == "list":
+            return {"files": ["out/unit-0000.json", "out/result.json"], "next_page_token": None}
+        if operation == "download":
+            sha = kaggle_driver.COMMAND_RUNNER.manifest_sha256
+            row = {"status": "PASS", "manifest_sha256": sha}
+            if kwargs["file_path"] == "out/result.json":
+                row.update(verified=True, units=1)
+            else:
+                row["unit"] = 0
+            return kwargs["consume"]([json.dumps(row).encode()])
+        raise AssertionError("unmocked provider operation: " + operation)
+
+    def _intent(self, bundle, kernel="tester/aas-jobx-r0-c0"):
+        path = self.tmp / "accepted-intent.json"
+        response = {"kernel_id": 101, "version_number": 2, "ref": "/code/" + kernel,
+                    "url": "https://www.kaggle.com/code/" + kernel, "error": ""}
+        intent = {"schema": "ai-agents-skills.kaggle-submission-intent.v2", "state": "submitted",
+                  "kernel": kernel, "attempt_id": "fixture-attempt", "enable_internet": False,
+                  "bundle_sha256": kaggle_driver.bundle_sha256(bundle), "provider_response": response}
+        intent["accepted_identity"] = kaggle_driver._bind_saved_response(intent)
+        kaggle_driver._write_submission_intent(path, intent, create=True)
+        return path
 
     def test_kernel_code_file_embeds_portable_bundle(self) -> None:
         bundle = self._bundle()
@@ -1052,7 +1086,8 @@ class KaggleDriverTests(unittest.TestCase):
         self._creds()
         out = kaggle_driver.preflight(job_dir=self._bundle(), config=self.config, state_root=self.state)
         self.assertEqual(out["kind"], "cpu")
-        self.assertEqual(out["budget_verdict"], "free_cpu")
+        self.assertEqual(out["budget_verdict"], "blocked")
+        self.assertEqual(out["account_status"], "not_checked")
         self.assertEqual(out["total_units"], 6)
         self.assertRegex(out["bundle_sha256"], r"^[0-9a-f]{64}$")
         self.assertFalse(out["provisioned"])
@@ -1231,6 +1266,8 @@ class KaggleDriverTests(unittest.TestCase):
         # The API token travelled only in the env, never on argv.
         self.assertTrue(all(DRIVER_TOKEN not in c["joined"] for c in runner.calls))
         self.assertTrue(all(c["env_has_token"] for c in runner.calls))
+        self.assertEqual([op for op, _ in self.provider_calls], ["push"])
+        self.assertNotIn(DRIVER_TOKEN, repr(self.provider_calls))
         intent = json.loads(Path(out["submission_intent"]).read_text(encoding="utf-8"))
         self.assertEqual(intent["state"], "submitted")
         self.assertEqual(intent["bundle_sha256"], digest)
@@ -1297,12 +1334,13 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertEqual(kaggle_driver.wait(kernel=ref, config=self.config)["status"], "complete")
         dest = self.tmp / "out"
         fetched = kaggle_driver.fetch(
-            kernel=ref, config=self.config, job_dir=bundle, dest=dest
+            kernel=ref, config=self.config, job_dir=bundle, dest=dest,
+            submission_intent=self._intent(bundle, ref),
         )
         self.assertEqual(fetched["fetched_to"], str(dest))
         self.assertTrue(fetched["verification"]["verified"])
-        output_call = next(call for call in runner.calls if "output" in call["argv"])
-        self.assertIn("--file-pattern", output_call["argv"])
+        self.assertEqual(fetched["host_provenance"]["download_version_number"], 2)
+        self.assertFalse(any("output" in call["argv"] for call in runner.calls))
 
     def test_fetch_refuses_a_nonempty_destination(self) -> None:
         runner = _FakeRunner()
@@ -1311,6 +1349,7 @@ class KaggleDriverTests(unittest.TestCase):
         dest = self.tmp / "existing-output"
         dest.mkdir()
         (dest / "user-file.txt").write_text("preserve\n", encoding="utf-8")
+        bundle = self._bundle(total_units=1)
 
         with self.assertRaisesRegex(
             kaggle_driver.KaggleDriverError,
@@ -1319,8 +1358,9 @@ class KaggleDriverTests(unittest.TestCase):
             kaggle_driver.fetch(
                 kernel="tester/aas-jobx-r0-c0",
                 config=self.config,
-                job_dir=self._bundle(total_units=1),
+                job_dir=bundle,
                 dest=dest,
+                submission_intent=self._intent(bundle),
             )
 
         self.assertEqual(runner.calls, [])
@@ -1344,6 +1384,7 @@ class KaggleDriverTests(unittest.TestCase):
                 config=self.config,
                 job_dir=bundle,
                 dest=self.tmp / "unverified-output",
+                submission_intent=self._intent(bundle),
             )
 
     def test_run_kaggle_uses_the_selected_python_module_not_path(self) -> None:

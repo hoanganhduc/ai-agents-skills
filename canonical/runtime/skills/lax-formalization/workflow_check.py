@@ -92,6 +92,21 @@ def independent_review(record: dict, schema: str, producer: str) -> bool:
             and bounded_string(record.get("reviewer_run")) and record["reviewer_run"] != producer)
 
 
+def verification_kind(report: dict, *, dependency: bool = False) -> str:
+    """Accept legacy/current receipts without weakening theorem readiness."""
+    extension = {"verification_kind", "compile_timeout_seconds"}
+    present = extension.intersection(report)
+    if present and present != extension:
+        raise ValueError("incomplete-verification-extension")
+    kind = report.get("verification_kind", "theorems")
+    timeout = report.get("compile_timeout_seconds", 1200)
+    if not isinstance(kind, str) or kind not in {"theorems", "definitions-only"} or type(timeout) is not int or not 60 <= timeout <= 3600:
+        raise ValueError("invalid-verification-extension")
+    if kind == "definitions-only" and (not dependency or report.get("targets") != []):
+        raise ValueError("definitions-only-cannot-certify-theorems")
+    return kind
+
+
 def check_readiness(path: Path) -> dict:
     result = {"schema_version": "lax-workflow-readiness.v1", "policy_version": POLICY,
               "status": "blocked", "publication_enabled": False, "issues": []}
@@ -113,6 +128,7 @@ def check_readiness(path: Path) -> dict:
         if hashlib.sha256(paper_raw).hexdigest() != paper["sha256"]:
             raise ValueError("paper-bytes-changed")
         report = controller_json(control, job["verification"], project)
+        verification_kind(report)
         expected_source = {"repository": job["public_origin"], "commit": commit}
         if report.get("schema_version") != "lax-verification.v1" or report.get("backend") != "lax":
             raise ValueError("unsupported-verification-report")
@@ -225,6 +241,7 @@ def render_papers(registry: dict, reviews: list[dict] | None = None) -> str:
 def public_summary(report: dict) -> dict:
     if not isinstance(report, dict) or not isinstance(report.get("source"), dict):
         raise ValueError("invalid-report-shape")
+    verification_kind(report)
     if report.get("schema_version") != "lax-verification.v1" or any(report.get(k) != v for k, v in {
             "status": "passed", "machine_status": "passed", "closure_status": "closed"}.items()):
         raise ValueError("no-passing-machine-report")
@@ -262,7 +279,8 @@ def public_bundle_check(bundle: Path) -> dict:
                "source", "source_digest", "scope_digest", "targets", "challenge_digest", "request_digest",
                "database_commit", "database_digest", "tools", "capture", "phases", "coverage", "verified_proofs",
                "dependency_digests", "limitations"}
-    if set(receipt) != allowed: raise ValueError("unreviewed-receipt-fields")
+    if set(receipt) not in (allowed, allowed | {"verification_kind", "compile_timeout_seconds"}):
+        raise ValueError("unreviewed-receipt-fields")
     def exact_keys(value, keys):
         if not isinstance(value, dict) or set(value) != set(keys): raise ValueError("unreviewed-nested-receipt-fields")
     def names(value):

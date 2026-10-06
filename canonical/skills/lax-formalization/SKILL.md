@@ -1,9 +1,13 @@
 ---
 name: lax-formalization
-description: Formalize mathematical results as Lax submissions, find reusable declarations, and independently verify selected Lax dependencies. Use for explicit paper-formalization work, not ordinary paper lookup or review.
+description: Formalize mathematical results as Lax submissions, find reusable declarations, and independently verify selected Lax dependencies. Use for a selected Lax artifact or Lax reuse; ordinary Lean formalization does not require this lane.
 ---
 
 # Lax formalization
+
+Ordinary Lean/Lake projects use the native verification workflow. Select this
+lane when a Lax artifact or Lax dependency is requested; later conversion uses
+the existing `from-existing-lean` operation, without rewriting the research repo.
 
 Use the official Lax layout and validator while keeping independent verification
 separate from archive registration. A registered result is a candidate, not a

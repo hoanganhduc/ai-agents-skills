@@ -1386,10 +1386,9 @@ class DriveIntegrityTests(unittest.TestCase):
             self.assertIn("lakefile.lean", integrity["build_config_changes"][0]["path"])
             self.assertIs(integrity["clean"], False)
 
-    def test_graceful_stop_reports_a_computed_formal_verdict(self) -> None:
-        # drive_stop's formal_terminal_state must be a host-computed verdict;
-        # the empty string only ever comes from the shutdown exception
-        # fallback, which a green suite would otherwise never distinguish.
+    def test_user_stop_does_not_launch_or_persist_a_new_formal_check(self) -> None:
+        # Operator stop preserves existing evidence. With no prior verdict,
+        # reporting indeterminate must not launch a new build at shutdown.
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             loop, reg = base / "loop", base / "reg"
@@ -1432,14 +1431,8 @@ class DriveIntegrityTests(unittest.TestCase):
             self.assertIn(
                 stops[0].get("formal_terminal_state"), fp.TERMINAL_STATES, stops[0]
             )
-            self.assertEqual(stops[0].get("formal_terminal_state"), "open_ledger")
-            verdict = json.loads(
-                (proj / "terminal_state.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(verdict["terminal_state"], "open_ledger")
-            self.assertIn(
-                "active_placeholder", {o["kind"] for o in verdict["obligations"]}
-            )
+            self.assertEqual(stops[0].get("formal_terminal_state"), "indeterminate")
+            self.assertFalse((proj / "terminal_state.json").exists())
 
     def test_failure_exit_reports_a_computed_formal_verdict(self) -> None:
         # The graceful-stop twin above covers reason="done". A failure exit

@@ -1399,6 +1399,14 @@ def _title_text(event: Mapping[str, Any]) -> str:
     research = event.get("research") if isinstance(event.get("research"), Mapping) else {}
     iteration = event.get("iteration") if isinstance(event.get("iteration"), Mapping) else {}
     title = _text(research.get("title"), "Research")
+    milestone = {
+        "synthesis_started": "Synthesis started", "synthesis_start": "Synthesis started",
+        "synthesis_completed": "Synthesis completed", "synthesis_complete": "Synthesis completed",
+        "loop_completed": "Loop completed", "run_completed": "Run completed",
+        "completed": "Run completed",
+    }.get(_text(event.get("event")))
+    if milestone:
+        return f"{title} — {milestone}"
     status = _text(iteration.get("status"), "not_applicable")
     number = _integer(iteration.get("number"))
     subject = f"Iteration {number}" if number is not None else _text(event.get("event"), "Update")

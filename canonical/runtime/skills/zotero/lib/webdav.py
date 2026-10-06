@@ -10,6 +10,9 @@ Zotero WebDAV format:
 import os
 import io
 import hashlib
+import re
+import stat
+from pathlib import Path
 import zipfile
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
@@ -111,7 +114,7 @@ class WebDAVClient:
 
         return True
 
-    def download(self, attachment_key, output_dir):
+    def download(self, attachment_key, output_dir, *, expected_member=None):
         """Download and extract a zip from WebDAV.
 
         Args:
@@ -121,6 +124,8 @@ class WebDAVClient:
         Returns:
             Path to the extracted PDF, or None if not found.
         """
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", attachment_key):
+            raise ValueError("invalid attachment key")
         url = f"{self.zotero_url}/{attachment_key}.zip"
         r = self._request("GET", url, timeout=60)
 
@@ -129,17 +134,44 @@ class WebDAVClient:
         if r.status_code != 200:
             raise RuntimeError(f"WebDAV download failed: HTTP {r.status_code} for {url}")
 
-        os.makedirs(output_dir, exist_ok=True)
-        zf = zipfile.ZipFile(io.BytesIO(r.content))
-        names = zf.namelist()
-        if not names:
-            return None
-
-        # Extract the first (and typically only) file
-        pdf_name = names[0]
-        extracted_path = os.path.join(output_dir, pdf_name)
-        zf.extract(pdf_name, output_dir)
-        return extracted_path
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            infos = zf.infolist()
+            names = [entry.filename for entry in infos]
+            if len(names) > 256 or len(names) != len(set(names)):
+                raise ValueError("ambiguous or oversized attachment archive")
+            candidates = [entry for entry in infos if not entry.is_dir()
+                          and entry.filename.lower().endswith('.pdf')]
+            if expected_member is not None:
+                candidates = [entry for entry in candidates if entry.filename == expected_member]
+            if not candidates and not names:
+                return None
+            if len(candidates) != 1:
+                raise ValueError("select one exact PDF archive member before content access")
+            entry = candidates[0]
+            name = entry.filename
+            mode = entry.external_attr >> 16
+            if (name in {'.', '..'} or '/' in name or '\\' in name or ':' in name
+                    or '\x00' in name or stat.S_ISLNK(mode) or entry.file_size > 128 * 1024**2):
+                raise ValueError("unsafe or oversized selected attachment member")
+            raw = zf.read(entry)
+        root = Path(output_dir).absolute()
+        if root.is_symlink() or root.resolve() != root:
+            raise ValueError("attachment staging root must not traverse symlinks")
+        root.mkdir(parents=True, exist_ok=True)
+        directory = root / (attachment_key + '-' + hashlib.sha256(raw).hexdigest()[:20])
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if directory.is_symlink():
+            raise ValueError("attachment destination must not be a symlink")
+        target = directory / name
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        except FileExistsError:
+            if target.is_symlink() or not target.is_file() or target.read_bytes() != raw:
+                raise ValueError("existing attachment does not match the selected member")
+        else:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(raw)
+        return str(target)
 
     def delete(self, attachment_key):
         """Delete attachment zip and property sidecar from WebDAV."""

@@ -16,6 +16,8 @@ POLICY_KEYS = frozenset(
         "AAS_AUTOLOOP_NOTIFY",
         "AAS_AUTOLOOP_FORMAL_POLICY",
         "AAS_AUTOLOOP_FORMAL_TYPECHECK",
+        "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND",
+        "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST",
         "AAS_FORCE_LOOP_COMPUTE_LANES",
     }
 )
@@ -31,6 +33,7 @@ COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
 # empty credential projection at start time.
 _VALUE_CHOICES: dict[str, frozenset[str]] = {
     "AAS_FORCE_LOOP_COMPUTE_LANES": frozenset(COMPUTE_LANE_KEYS),
+    "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND": frozenset({"local", "kaggle-cpu"}),
 }
 WINDOWS_PROJECTION_ENV = "AAS_FORCE_LOOP_POLICY_PROJECTED"
 WINDOWS_PROJECTION_SOURCE_ENV = "AAS_FORCE_LOOP_POLICY_SOURCE"
@@ -62,8 +65,10 @@ def parse_env_text(
         choices = _VALUE_CHOICES.get(key)
         if choices is not None:
             members = [member.strip().lower() for member in value.split(",")]
-            if not all(members) or any(member not in choices for member in members):
-                raise EnvLoadError(f"{source}:{lineno}: unsupported compute lane")
+            if (key != "AAS_FORCE_LOOP_COMPUTE_LANES" and len(members) != 1) or not all(members) or any(member not in choices for member in members):
+                raise EnvLoadError(f"{source}:{lineno}: unsupported compute lane or execution backend")
+        if key == "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST" and not (value.startswith("/") or re.match(r"^[A-Za-z]:/", value)):
+            raise EnvLoadError(f"{source}:{lineno}: remote request must be an absolute host path")
         out[key] = value
     return out
 

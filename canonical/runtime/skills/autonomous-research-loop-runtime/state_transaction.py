@@ -855,7 +855,7 @@ def jsonl_text(records: Sequence[Mapping[str, Any]]) -> str:
 
 def _jsonl_postimage(path: Path, records: Sequence[Mapping[str, Any]]) -> bytes:
     existing_lines: list[str] = []
-    existing_keys: set[str] = set()
+    existing_events: dict[str, str] = {}
     if _lstat_nofollow(path) is not None:
         try:
             text = _read_bytes_nofollow(path).decode("utf-8")
@@ -865,19 +865,30 @@ def _jsonl_postimage(path: Path, records: Sequence[Mapping[str, Any]]) -> bytes:
                 value = json.loads(raw)
                 if not isinstance(value, dict):
                     raise TransactionError(f"{path.name} line {index} is not a JSON object")
-                existing_lines.append(json.dumps(value, sort_keys=True))
-                existing_keys.add(_event_key(value))
+                canonical = json.dumps(value, sort_keys=True)
+                key = _event_key(value)
+                comparison = dict(value)
+                if not any(comparison.get(name) for name in ("event_id", "decision_id", "candidate_id")):
+                    comparison["transaction_event_id"] = key
+                comparison_text = json.dumps(comparison, sort_keys=True)
+                if key in existing_events and existing_events[key] != comparison_text:
+                    raise TransactionError(f"conflicting event identity in {path.name}: {key}")
+                existing_lines.append(canonical)
+                existing_events[key] = comparison_text
         except json.JSONDecodeError as exc:
             raise TransactionError(f"invalid JSONL target {path}: {exc}") from exc
     for raw_record in records:
         record = dict(raw_record)
         key = _event_key(record)
-        if key in existing_keys:
-            continue
         if not any(record.get(name) for name in ("event_id", "decision_id", "candidate_id")):
             record["transaction_event_id"] = key
-        existing_lines.append(json.dumps(record, sort_keys=True))
-        existing_keys.add(key)
+        canonical = json.dumps(record, sort_keys=True)
+        if key in existing_events:
+            if existing_events[key] != canonical:
+                raise TransactionError(f"event identity reused with different content in {path.name}: {key}")
+            continue
+        existing_lines.append(canonical)
+        existing_events[key] = canonical
     text = "\n".join(existing_lines)
     return ((text + "\n") if text else "").encode("utf-8")
 

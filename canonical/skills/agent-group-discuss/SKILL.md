@@ -7,7 +7,13 @@ metadata:
 
 # Agent Group Discuss
 
-This imports the OpenClaw multi-agent discussion and research-review templates into Codex and adapts them to Codex agent tools.
+These multi-agent discussion and review templates share a host-neutral parent
+contract. Select native participants or external CLI adapters from the actual
+host capabilities; never infer availability, model family or quota from a brand
+name. Codex tool names in the host-specific examples below are one adapter,
+not a requirement for other agents. The legacy participant label
+`codex_spawned` denotes a native participant on that adapter; other hosts use
+their actual native tools and record the transport honestly.
 
 ## When to use
 
@@ -664,6 +670,14 @@ Also include a compact run summary:
 - whether recovery was needed
 - whether any responses were truncated or models were swapped
 - which progress checkpoint files were written
+
+## Purpose and execution choices
+
+Use the [research-job-presets template](../../templates/research-job-presets.md) to compose research, review or ordinary
+Lean work with an authorized executor and optional artifact format. Agent/session,
+model-family and quota identities remain separate; no unavailable assurance is
+silently waived. Lax is optional and its existing `from-existing-lean` workflow
+handles later conversion. Presets do not override explicit task policy.
 
 ## Recommended templates
 

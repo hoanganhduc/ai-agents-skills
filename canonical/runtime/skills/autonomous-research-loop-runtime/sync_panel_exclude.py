@@ -55,87 +55,60 @@ def _panel_json_excludes(panel_path: Path) -> list[Any]:
 
 
 def sync_exclude(run_dir: Path, provider: str) -> dict[str, Any]:
+    """Persist one hard-credit exclusion without losing concurrent controls."""
+    import hashlib
+    from state_transaction import RevisionConflict, commit_transaction, _read_bytes_nofollow
+
     prov = _norm(provider)
     if not prov:
         return {"ok": False, "error": "empty provider"}
     run_dir = run_dir.expanduser().resolve()
-    state_path = run_dir / "loop_state.json"
-    panel_path = run_dir / "panel.json"
-    updated: list[str] = []
-
-    # Prefer standing_orders.panel when present (it overwrites panel.json).
-    if state_path.is_file():
+    for _ in range(3):
+        before: dict[str, bytes] = {}
+        data: dict[str, dict[str, Any]] = {}
         try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            return {"ok": False, "error": f"loop_state read: {exc}"}
-        if not isinstance(state, dict):
-            return {"ok": False, "error": "loop_state not an object"}
-        so = state.get("standing_orders")
-        if not isinstance(so, dict):
-            so = {}
-            state["standing_orders"] = so
-        panel = so.get("panel")
-        if isinstance(panel, dict):
-            # Seed from the set that is actually in force. load_panel_config
-            # merges panel.json first and then lets standing_orders.panel
-            # replace whole values, so when the standing-orders block carries no
-            # list of its own it is panel.json's list that is in force. Seeding
-            # from the block alone wrote a one-name list into the store that
-            # outranks panel.json, and every provider parked for being out of
-            # credit was invited again on the next iteration.
-            excl = panel.get("exclude_until_credit")
-            if not isinstance(excl, list):
-                excl = _panel_json_excludes(panel_path)
-            names: list[str] = []
-            for item in excl:
-                name = _norm(str(item))
-                if name and name not in names:
-                    names.append(name)
+            for name in ("loop_state.json", "panel.json"):
+                try:
+                    raw = _read_bytes_nofollow(run_dir / name)
+                except FileNotFoundError:
+                    continue
+                value = json.loads(raw)
+                if not isinstance(value, dict):
+                    raise ValueError(f"{name} must contain an object")
+                before[name] = raw
+                data[name] = value
+            state = data.get("loop_state.json", {})
+            so = state.get("standing_orders") or {}
+            standing = so.get("panel")
+            panel = data.get("panel.json", {})
+            effective = dict(panel)
+            if isinstance(standing, dict):
+                effective.update(standing)
+            raw_names = effective.get("exclude_until_credit", [])
+            if not isinstance(raw_names, list):
+                raise ValueError("exclude_until_credit must be a list")
+            names = list(dict.fromkeys(_norm(str(n)) for n in raw_names if str(n).strip()))
             if prov not in names:
                 names.append(prov)
-            panel["exclude_until_credit"] = names
-            so["panel"] = panel
-            _atomic_write_json(state_path, state)
-            updated.append("standing_orders.panel")
-            # Mirror into panel.json when it exists so both stay aligned.
-            if panel_path.is_file():
-                try:
-                    pdata = json.loads(panel_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    pdata = {}
-                if not isinstance(pdata, dict):
-                    pdata = {}
-                pexcl = pdata.get("exclude_until_credit")
-                if not isinstance(pexcl, list):
-                    pexcl = []
-                pnames = [_norm(str(x)) for x in pexcl if str(x).strip()]
-                if prov not in pnames:
-                    pnames.append(prov)
-                pdata["exclude_until_credit"] = pnames
-                _atomic_write_json(panel_path, pdata)
+            updates: dict[str, dict[str, Any]] = {}
+            updated = []
+            if isinstance(standing, dict):
+                standing["exclude_until_credit"] = names
+                updates["loop_state.json"] = state
+                updated.append("standing_orders.panel")
+            if "panel.json" in data or not isinstance(standing, dict):
+                panel["exclude_until_credit"] = names
+                updates["panel.json"] = panel
                 updated.append("panel.json")
+            commit_transaction(run_dir, json_files=updates,
+                expected_hashes={name: hashlib.sha256(raw).hexdigest() for name, raw in before.items()},
+                expected_absent=[name for name in ("loop_state.json", "panel.json") if name not in before])
             return {"ok": True, "provider": prov, "updated": updated}
-
-    # No standing_orders.panel: update or create panel.json.
-    pdata: dict[str, Any] = {}
-    if panel_path.is_file():
-        try:
-            loaded = json.loads(panel_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                pdata = loaded
-        except (OSError, json.JSONDecodeError):
-            pdata = {}
-    excl = pdata.get("exclude_until_credit")
-    if not isinstance(excl, list):
-        excl = []
-    names = [_norm(str(x)) for x in excl if str(x).strip()]
-    if prov not in names:
-        names.append(prov)
-    pdata["exclude_until_credit"] = names
-    _atomic_write_json(panel_path, pdata)
-    updated.append("panel.json")
-    return {"ok": True, "provider": prov, "updated": updated}
+        except RevisionConflict:
+            continue
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+    return {"ok": False, "error": "concurrent exclusion changes; retry required"}
 
 
 def main(argv: list[str] | None = None) -> int:

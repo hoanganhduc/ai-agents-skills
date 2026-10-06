@@ -43,7 +43,7 @@ Open these only when relevant:
 - Explicit TikZ drawing, refactoring, extraction, compile, or diagram-review requests route to `tikz-draw`.
 - Small graph-theoretic verification routes to `graph-verifier`.
 - Mathematical research tasks that need heavy graph-theoretic, combinatorial, algebraic, or spectral computation route to `sagemath`.
-Formal candidates that pass intake search Mathlib, then `lax-formalization search`. Lax hits remain unverified candidates until independent verification and semantic review pass.
+Formal candidates that pass intake use an ordinary Lean/Lake project by default and search pinned Mathlib first. Lax discovery is optional; any Lax result actually reused needs independent dependency verification and semantic review. When a Lax artifact is requested later, reuse `lax-paper-workflow` with `from-existing-lean`.
 
 ## Default workflow
 

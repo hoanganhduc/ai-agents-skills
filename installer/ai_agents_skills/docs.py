@@ -2383,8 +2383,11 @@ Related pages: [OpenClaw Integration Plan](openclaw-integration-plan.md),
 def lax_formalization_text() -> str:
     return r"""# Lax Formalization And Zenodo Archival
 
-Keep a separate Git repository for each paper's formalization. Search pinned
-Mathlib first, then look for reusable Lax declarations. Independently rebuild
+Ordinary Lean/Lake formalization does not require Lax. This page applies when
+a Lax artifact or optional archive is selected. The existing `from-existing-lean`
+workflow adapts selected source from a normal Lean repository later.
+Keep artifacts per paper. Search pinned Mathlib first; Lax discovery is optional
+outside a selected Lax workflow. Independently rebuild
 the selected Lax results, close their actual proof dependencies, and review
 whether the formal statements match the paper. Registration alone is not proof
 evidence. Zenodo is the secondary archive; no personal Lean library is required.
@@ -2675,11 +2678,12 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
-- **Paper formalization:** search pinned Mathlib, then independently verify
-  relevant Lax results before reuse. Keep source and evidence per paper, use
-  CI for machine checks, and prepare Zenodo as a secondary archive. Follow
-  [Lax Formalization And Zenodo Archival](lax-formalization.md); publication
-  requires a separate request after local verification.
+- **Paper formalization:** use ordinary Lean/Lake and pinned Mathlib by default.
+  Lax discovery is optional; independently verify any selected Lax dependency.
+  Local or authorized remote execution keeps proof evidence separate from
+  paper correspondence. For later Lax delivery, reuse the existing
+  `from-existing-lean` workflow in [Lax Formalization And Zenodo Archival](lax-formalization.md).
+  Archival and publication remain optional, separately authorized operations.
 - **Reusable workflow improvement:** `self-improving-agent` records local
   `.learnings/` entries, then proposes repo-first changes across `canonical/`,
   `manifest/`, generated docs, runtime helpers, and tests with explicit

@@ -195,10 +195,6 @@ _allow(_S + "hetzner-research-compute/hetzner_driver.py", "render_cloud_init", "
        "main() calls every subcommand function with (args, config)")
 _allow(_S + "kaggle-research-compute/kaggle_driver.py", "status", "config",
        "main() calls every subcommand function with (args, config)")
-_allow(_S + "kaggle-research-compute/kaggle_driver.py", "wait", "config",
-       "main() calls every subcommand function with (args, config)")
-_allow(_S + "kaggle-research-compute/kaggle_driver.py", "fetch", "config",
-       "main() calls every subcommand function with (args, config)")
 _allow(_S + "kaggle-research-compute/kaggle_driver.py", "run", "confirm dest",
        "the CLI contract retains these live-run options while multi-run execution is fail-closed")
 _allow(_W + "research_compute/cli.py", "command_wait", "config",

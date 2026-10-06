@@ -1043,7 +1043,11 @@ def load_notify_v2_module() -> Any:
             continue
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        # Execute the selected source bytes directly: SourceFileLoader would
+        # otherwise write __pycache__ into a managed runtime when the caller
+        # has bytecode enabled. Preserve module metadata without changing the
+        # process-wide bytecode setting.
+        exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
         _NOTIFY_V2_MODULE = module
         return module
     raise RuntimeError(
@@ -1203,7 +1207,8 @@ def summarize_delivery(
     ]
     return {
         "ok": bool(succeeded),
-        "delivered": bool(succeeded) and not dry_run,
+        "delivered": any(not results[channel].get("deduplicated") for channel in succeeded) and not dry_run,
+        "deduplicated": bool(succeeded) and all(results[channel].get("deduplicated") for channel in succeeded),
         "dry_run": bool(dry_run),
         "channel": succeeded[0] if succeeded else None,
         "attempted_channels": list(results),
@@ -1321,7 +1326,7 @@ def _secure_notification_registry_read(
         try:
             before = os.lstat(path)
         except FileNotFoundError:
-            return None
+            return _notification_registry_missing(mailbox)
         if stat.S_ISLNK(before.st_mode):
             raise OSError(f"notification registry leaf is unsafe: {path}")
         file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
@@ -1345,9 +1350,7 @@ def _secure_notification_registry_read(
             value = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise OSError(f"notification registry is invalid: {exc}") from exc
-        if not isinstance(value, dict):
-            raise OSError("notification registry must contain one object")
-        return value
+        return _validate_notification_registry(value)
     parent_fd = _open_notify_directory_nofollow(path.parent, create=True)
     try:
         for protected in (mailbox.root, mailbox.bridge_dir):
@@ -1359,7 +1362,7 @@ def _secure_notification_registry_read(
                 dir_fd=parent_fd,
             )
         except FileNotFoundError:
-            return None
+            return _notification_registry_missing(mailbox)
         try:
             _validate_notify_registry_file(file_fd, path)
             info = os.fstat(file_fd)
@@ -1376,9 +1379,51 @@ def _secure_notification_registry_read(
         value = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise OSError(f"notification registry is invalid: {exc}") from exc
-    if not isinstance(value, dict):
-        raise OSError("notification registry must contain one object")
+    return _validate_notification_registry(value)
+
+
+def _validate_notification_registry(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schema_version") != "1.0" or not isinstance(value.get("deliveries"), dict):
+        raise OSError("notification registry schema is missing or invalid")
+    for key in ("retry_deliveries", "intents"):
+        if key in value and not isinstance(value[key], dict):
+            raise OSError("notification registry map is invalid")
     return value
+
+
+def _notification_registry_marker(mailbox: Mailbox, *, initialize: bool = False) -> bool:
+    """Keep initialization continuity in the existing persistent registry lock."""
+    path = mailbox.bridge_dir / "notify_locks" / "delivery-registry.lock"
+    _ensure_notify_directory_chain(path.parent, create=initialize)
+    flags = os.O_RDWR if initialize else os.O_RDONLY
+    if initialize:
+        flags |= os.O_CREAT
+    try:
+        descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except FileNotFoundError:
+        return False
+    try:
+        _validate_notify_registry_file(descriptor, path)
+        marker = os.read(descriptor, 16)
+        if marker not in {b"", b"0", b"1"}:
+            raise OSError("notification registry continuity marker is invalid")
+        if initialize:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            os.write(descriptor, b"1")
+            os.fsync(descriptor)
+        return marker == b"1"
+    finally:
+        os.close(descriptor)
+
+
+def _notification_registry_missing(mailbox: Mailbox) -> None:
+    try:
+        initialized = _notification_registry_marker(mailbox)
+    except FileNotFoundError:
+        initialized = False
+    if initialized:
+        raise OSError("initialized notification registry is missing; reconcile retained state before sending")
+    return None
 
 
 def _secure_notification_registry_write(mailbox: Mailbox, data: dict[str, Any]) -> None:
@@ -1386,6 +1431,10 @@ def _secure_notification_registry_write(mailbox: Mailbox, data: dict[str, Any]) 
     payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(payload) > 2_000_000:
         raise OSError("notification registry post-image is oversized")
+    _validate_notification_registry(data)
+    # Mark before publication of the registry: a crash cannot silently turn an
+    # initialized outbox into a fresh one. No transport starts before this write.
+    _notification_registry_marker(mailbox, initialize=True)
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
         _ensure_notify_directory_chain(path.parent, create=True)
         for protected in (mailbox.root, mailbox.bridge_dir):
@@ -1666,6 +1715,57 @@ def notification_was_delivered(
     return -5.0 <= age < NOTIFY_RETRY_DEDUPE_SECONDS
 
 
+def notification_intent(
+    key: str, payload_hash: str, mailbox: Mailbox, *, text: str = "",
+    html: str | None = None, outcome: str | None = None,
+    remote_ids: list[int | str] | None = None,
+) -> dict[str, Any]:
+    """Reserve/reconcile one immutable sanitized delivery before transport.
+
+    An interrupted attempted send has unknown acceptance, never an automatic
+    retry. The existing private registry and lock protect the complete update.
+    Registry capacity fails visibly rather than evicting unknown outcomes.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", key) or not re.fullmatch(r"[0-9a-f]{64}", payload_hash):
+        raise ValueError("invalid notification intent digest")
+    with NotificationDeliveryLock("0" * 64, mailbox, lock_name="delivery-registry"):
+        data = _secure_notification_registry_read(mailbox) or {"schema_version": "1.0", "deliveries": {}}
+        intents = data.setdefault("intents", {})
+        if not isinstance(intents, dict):
+            raise ValueError("invalid notification intent registry")
+        previous = intents.get(key)
+        if previous is not None and (not isinstance(previous, dict) or previous.get("semantic_sha256") != payload_hash):
+            raise ValueError("notification identity was reused with different content")
+        if previous is not None:
+            if (previous.get("state") not in {"attempted", "acknowledged", "outcome_unknown", "definitely_not_sent"}
+                    or type(previous.get("attempts")) is not int or not 1 <= previous["attempts"] <= 3
+                    or not isinstance(previous.get("text"), str)
+                    or previous.get("body_sha256") != hashlib.sha256(previous["text"].encode()).hexdigest()):
+                raise ValueError("notification intent is corrupt")
+        if outcome is not None:
+            if outcome not in {"acknowledged", "outcome_unknown", "definitely_not_sent"} or previous is None:
+                raise ValueError("invalid notification outcome")
+            if previous.get("state") == "acknowledged" and outcome != "acknowledged":
+                raise ValueError("acknowledged delivery cannot be reopened")
+            record = {**previous, "state": outcome, "updated_at": utc_now()}
+            if remote_ids:
+                record["remote_ids"] = [v for v in remote_ids if type(v) is int or isinstance(v, str) and len(v) <= 128]
+        elif previous is not None and previous.get("state") != "definitely_not_sent":
+            return dict(previous)
+        else:
+            attempts = int(previous.get("attempts", 0)) if previous else 0
+            if attempts >= 3:
+                raise ValueError("notification retry budget exhausted")
+            record = {"semantic_sha256": payload_hash, "state": "attempted",
+                      "attempts": attempts + 1, "updated_at": utc_now(),
+                      "text": previous["text"] if previous else text,
+                      "html": previous.get("html") if previous else html}
+            record["body_sha256"] = hashlib.sha256(record["text"].encode("utf-8")).hexdigest()
+        intents[key] = record
+        _secure_notification_registry_write(mailbox, data)
+        return {**record, "reserved": outcome is None}
+
+
 def remember_notification_delivery(
     fingerprint_value: str,
     *,
@@ -1835,7 +1935,9 @@ def zulip_send(cfg: BridgeConfig, *, stream: str, topic: str, content: str, dry_
         auth=(email, api_key),
         form=True,
     )
-    return {"ok": result.get("result") == "success", "channel": "zulip", "result": result}
+    return {"ok": result.get("result") == "success", "channel": "zulip", "result": result,
+            "outcome": "acknowledged" if result.get("result") == "success" else
+                       "definitely_not_sent" if result.get("result") == "error" else "outcome_unknown"}
 
 
 def _telegram_html_to_plain(text: str) -> str:
@@ -1906,25 +2008,29 @@ def telegram_send(
         }
         if parse_mode:
             data["parse_mode"] = parse_mode
-        result = http_json(
-            "POST",
-            url,
-            data=data,
-            form=True,
-        )
-        # If HTML/Markdown fails (bad entities), retry once as plain text.
-        if not result.get("ok") and parse_mode:
-            data.pop("parse_mode", None)
-            if parse_mode.upper() == "HTML":
-                data["text"] = _telegram_html_to_plain(chunk)
+        try:
             result = http_json("POST", url, data=data, form=True)
+            # Only an explicit provider rejection authorizes a plain-text retry.
+            # An empty/malformed response does not establish nonacceptance.
+            if result.get("ok") is False and parse_mode:
+                data.pop("parse_mode", None)
+                if parse_mode.upper() == "HTML":
+                    data["text"] = _telegram_html_to_plain(chunk)
+                result = http_json("POST", url, data=data, form=True)
+        except Exception as exc:
+            return {"ok": False, "channel": "telegram", "results": results,
+                    "outcome": "outcome_unknown", "error": safe_redaction_error(exc, cfg),
+                    "chunks_acknowledged": len(results)}
         results.append(result)
         if not result.get("ok"):
-            return {"ok": False, "channel": "telegram", "result": result}
+            return {"ok": False, "channel": "telegram", "result": result, "results": results,
+                    "outcome": "definitely_not_sent" if len(results) == 1 and result.get("ok") is False
+                               else "outcome_unknown"}
     return {
         "ok": True,
         "channel": "telegram",
         "results": results,
+        "outcome": "acknowledged",
         "html_fallback_to_plain": html_fallback_to_plain,
     }
 
@@ -2022,6 +2128,7 @@ def notify_channels(
     html: str | None = None,
     stop_on_first_success: bool = True,
     environ: Mapping[str, str] | None = None,
+    intent_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Send notify text.
 
@@ -2056,7 +2163,20 @@ def notify_channels(
             chans = list(cfg.notify_channels) or [cfg.default_channel]
     results: dict[str, Any] = {}
     for ch in chans:
+        reserved: dict[str, Any] = {}
+        key = ""
         try:
+            if intent_context is not None and not dry_run:
+                destination = notification_destination(cfg, ch, safe_job_id)
+                key = hashlib.sha256(json.dumps([intent_context["logical_id"], destination], sort_keys=True).encode()).hexdigest()
+                reserved = notification_intent(key, intent_context["payload_hash"], intent_context["mailbox"],
+                                               text=safe_text, html=safe_html)
+                if reserved.get("state") == "acknowledged":
+                    results[ch] = {"ok": True, "outcome": "acknowledged", "deduplicated": True}
+                    break
+                if not reserved.get("reserved"):
+                    results[ch] = {"ok": False, "outcome": "outcome_unknown", "error": "prior channel delivery needs reconciliation"}
+                    break
             if ch == "zulip":
                 stream = redact_notify_text(
                     str(cfg.zulip.get("control_stream") or "aas-remote"), cfg
@@ -2079,7 +2199,7 @@ def notify_channels(
             elif ch == "telegram":
                 chats = _as_str_list(cfg.telegram.get("allowed_chat_ids"))
                 if not chats:
-                    results[ch] = {"ok": False, "error": "no allowed_chat_ids"}
+                    results[ch] = {"ok": False, "error": "no allowed_chat_ids", "outcome": "definitely_not_sent"}
                     continue
                 # Prefer HTML when provided (richer mobile formatting).
                 body = safe_html if safe_html else safe_text
@@ -2092,16 +2212,52 @@ def notify_channels(
                     parse_mode=parse_mode,
                 )
             else:
-                results[ch] = {"ok": False, "error": f"unknown channel {ch}"}
+                results[ch] = {"ok": False, "error": f"unknown channel {ch}", "outcome": "definitely_not_sent"}
         except Exception as exc:  # noqa: BLE001
             results[ch] = {
                 "ok": False,
                 "error": safe_redaction_error(exc, cfg),
+                "outcome": "outcome_unknown",
             }
+        if isinstance(results.get(ch), dict):
+            results[ch].setdefault("outcome", "acknowledged" if results[ch].get("ok") is True else "outcome_unknown")
+        if key and reserved.get("reserved"):
+            notification_intent(key, intent_context["payload_hash"], intent_context["mailbox"],
+                                outcome=results[ch]["outcome"], remote_ids=_notification_remote_ids({ch: results[ch]}))
+        if isinstance(results.get(ch), dict) and results[ch].get("outcome") == "outcome_unknown":
+            break  # A fallback could duplicate an accepted but unacknowledged send.
         # Primary/fallback: do not dual-send on success
         if stop_on_first_success and isinstance(results.get(ch), dict) and results[ch].get("ok"):
             break
     return results
+
+
+def notification_destination(cfg: BridgeConfig, channel: str, job_id: str | None) -> dict[str, Any]:
+    """Canonical actual recipient, independent of aliases and unused fallbacks."""
+    if channel == "zulip":
+        stream = redact_notify_text(str(cfg.zulip.get("control_stream") or "aas-remote"), cfg)
+        prefix = redact_notify_text(str(cfg.zulip.get("topic_prefix") or "job/"), cfg)
+        topic = redact_notify_text(f"{prefix}{job_id or 'general'}".replace("//", "/"), cfg)
+        return {"channel": channel, "site": str(cfg.zulip.get("site") or "").rstrip("/"),
+                "stream": stream, "topic": topic}
+    if channel == "telegram":
+        return {"channel": channel, "chat_id": (_as_str_list(cfg.telegram.get("allowed_chat_ids")) or [None])[0]}
+    return {"channel": channel}
+
+
+def _notification_remote_ids(results: dict[str, Any]) -> list[int | str]:
+    ids = []
+    for value in results.values():
+        if not isinstance(value, dict):
+            continue
+        for reply in [value.get("result"), *(value.get("results") or [])]:
+            if isinstance(reply, dict):
+                raw_id = reply.get("id")
+                if raw_id is None and isinstance(reply.get("result"), dict):
+                    raw_id = reply["result"].get("message_id")
+                if raw_id is not None and raw_id not in ids:
+                    ids.append(raw_id)
+    return ids
 
 
 # ---------------------------------------------------------------------------
@@ -2487,6 +2643,17 @@ def cmd_send(args: argparse.Namespace) -> int:
     else:
         channels = [args.channel]
 
+    destination = notification_destination(cfg, channels[0] if channels else "unavailable", job_id)
+    destination_hash = hashlib.sha256(json.dumps(destination, sort_keys=True).encode()).hexdigest()
+    if event is None:
+        event_retry_fingerprint = hashlib.sha256(json.dumps([text, html], ensure_ascii=False).encode()).hexdigest()
+        event_fingerprint = event_retry_fingerprint
+    payload_hash = event_retry_fingerprint
+    logical_id = str(event.get("event_id")) if event else str(getattr(args, "event_id", None) or payload_hash)
+    intent_key = hashlib.sha256((logical_id + "\n" + destination_hash).encode()).hexdigest()
+    event_fingerprint = hashlib.sha256((event_fingerprint + destination_hash).encode()).hexdigest()
+    event_retry_fingerprint = hashlib.sha256((event_retry_fingerprint + destination_hash).encode()).hexdigest()
+
     def attempt(delivery_mailbox: Mailbox | None = None) -> int:
         if (
             event is not None
@@ -2513,19 +2680,42 @@ def cmd_send(args: argparse.Namespace) -> int:
                     "channel": None,
                 },
             )
+        reserved: dict[str, Any] = {}
+        if not args.dry_run:
+            assert delivery_mailbox is not None
+            try:
+                reserved = notification_intent(intent_key, payload_hash, delivery_mailbox, text=text, html=html)
+            except (OSError, ValueError) as exc:
+                return _fail("send", "intent_refused", safe_redaction_error(exc, cfg))
+            if reserved.get("state") == "acknowledged":
+                return _ok("send", topic=job_id, deduplicated=True, results={},
+                           delivery={"ok": True, "delivered": False, "deduplicated": True,
+                                     "dry_run": False, "reason": "already_delivered"})
+            if not reserved.get("reserved"):
+                return _fail("send", "acceptance_unknown", "prior delivery needs reconciliation; no resend attempted")
         try:
             results = notify_channels(
                 cfg,
-                text=text,
+                text=reserved.get("text", text),
                 job_id=job_id,
                 channels=channels,
                 dry_run=args.dry_run,
-                html=html,
+                html=reserved.get("html", html),
                 stop_on_first_success=True,
+                intent_context={"logical_id": logical_id, "payload_hash": payload_hash, "mailbox": delivery_mailbox}
+                               if not args.dry_run else None,
             )
         except Exception as exc:  # noqa: BLE001
+            if not args.dry_run:
+                notification_intent(intent_key, payload_hash, delivery_mailbox, outcome="outcome_unknown")
             return _fail("send", "send_failed", safe_redaction_error(exc, cfg))
         delivery = summarize_delivery(results, dry_run=bool(args.dry_run))
+        if not args.dry_run:
+            unknown = any(not isinstance(v, dict) or (v.get("ok") is not True
+                          and v.get("outcome") != "definitely_not_sent") for v in results.values())
+            outcome = "acknowledged" if delivery["delivered"] or delivery["deduplicated"] else "outcome_unknown" if unknown else "definitely_not_sent"
+            notification_intent(intent_key, payload_hash, delivery_mailbox, outcome=outcome,
+                                remote_ids=_notification_remote_ids(results))
         if delivery["ok"]:
             if event is not None and delivery["delivered"]:
                 remember_notification_delivery(
@@ -2553,13 +2743,14 @@ def cmd_send(args: argparse.Namespace) -> int:
             topic=job_id,
         )
 
-    if event is not None and not args.dry_run:
+    if not args.dry_run:
         # A rebuilt retry can have a new event ID and timestamps, so serialize
         # on material semantics rather than the exact delivery fingerprint.
-        with NotificationDeliveryLock(
-            event_retry_fingerprint or event_fingerprint
-        ) as delivery_mailbox:
-            return attempt(delivery_mailbox)
+        try:
+            with NotificationDeliveryLock(event_retry_fingerprint or event_fingerprint) as delivery_mailbox:
+                return attempt(delivery_mailbox)
+        except (OSError, ValueError) as exc:
+            return _fail("send", "registry_refused", safe_redaction_error(exc, cfg))
     return attempt()
 
 
@@ -2925,6 +3116,8 @@ def build_parser() -> argparse.ArgumentParser:
     stt.set_defaults(func=cmd_status)
 
     send = sub.add_parser("send")
+    send.add_argument("--event-id", default=None,
+                      help="stable plaintext transition ID; omitted uses sanitized content identity")
     send_body = send.add_mutually_exclusive_group()
     send_body.add_argument("--text", default=None)
     send_body.add_argument(

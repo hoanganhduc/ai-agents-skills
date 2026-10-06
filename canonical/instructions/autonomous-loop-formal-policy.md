@@ -35,12 +35,20 @@ Env: `AAS_AUTOLOOP_FORMAL_POLICY`, `AAS_AUTOLOOP_FORMAL_PROJECT`,
 CLI: `init|drive --formal-policy … --formal-project … --formal-force-after-iteration
 --formal-typecheck --formal-force-credits …`.
 
+Execution and artifact format are independent. `execution_backend` defaults to
+`local`; `kaggle-cpu` requires a host-owned pinned `remote_request`. Host env keys
+are `AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND` and
+`AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST`. The existing runtime skill's
+`references/native-lean-remote.md` defines the request and pending/reverification
+contract. A job may request Internet within host policy for dependency setup;
+this never implies Lax readiness or authorizes a paid fallback.
+
 Legacy: `standing_orders.formalization` merges into `status` / project only —
 never silently escalates to `force`.
 
 ## Binding rules (when policy ≠ `off`)
 
-1. Formal-track positions: intake → Mathlib/Lax search → independent dependency
+1. Formal-track positions: intake → Mathlib search (Lax optional) → independent dependency
    verification → skeleton/proofs → strict gate → semantic review → artifact evidence.
    Registered Lax entries are unverified candidates until this workflow checks them.
    Lax layouts require a host-owned outside-project request via

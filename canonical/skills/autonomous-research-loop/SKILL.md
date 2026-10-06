@@ -242,7 +242,7 @@ Env: `AAS_AUTOLOOP_FORMAL_POLICY`, `AAS_AUTOLOOP_FORMAL_PROJECT`,
 `<loop>/formal/formal_policy.json` or `loop_state.standing_orders.formal`.
 
 When the committed path is **formal-track**, use positions F1–F7' from
-`informal-to-lean-formalization-runbook` (intake → Mathlib/Lax discovery →
+`informal-to-lean-formalization-runbook` (intake → Mathlib discovery (Lax optional) →
 independent dependency verification → skeleton → proof → strict verification →
 fresh semantic review → paper artifact evidence). Lax projects require a host-pinned
 `AAS_AUTOLOOP_LAX_REQUEST`; only explicit terminal verification can complete them.
@@ -690,6 +690,14 @@ For finalizable prose artifacts created during the loop, record
 artifact-adjacent style record. Do not
 count a bare `style_applied: true` value as force-use evidence.
 
+## Purpose and execution choices
+
+Use the `research-job-presets` template to compose research, review or ordinary
+Lean work with an authorized executor and optional artifact format. Agent/session,
+model-family and quota identities remain separate; no unavailable assurance is
+silently waived. Lax is optional and its existing `from-existing-lean` workflow
+handles later conversion. Presets do not override explicit task policy.
+
 ## Recommended templates
 
 When this skill is involved, consider these workflow templates (install via
@@ -703,4 +711,4 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 - `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
 - `sample-arl-headless-driver-with-formal` -- thin formal-env layer only (not the force-loop default).
 
-When `formal_policy` is `auto`, `on`, or `force`, use Mathlib > independently verified Lax > new proofs. Keep artifacts per paper. `zenodo-artifact` only prepares offline bundles; no registration, push, release or publication runs from the loop.
+When `formal_policy` is `auto`, `on`, or `force`, ordinary Lean/Lake is the default. Search pinned Mathlib; Lax discovery is optional, and any selected Lax dependency requires independent verification. A later Lax artifact uses the existing `from-existing-lean` workflow. Keep artifacts per paper. `zenodo-artifact` only prepares optional offline bundles; no registration, push, release or publication runs from the loop.

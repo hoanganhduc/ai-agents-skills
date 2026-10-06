@@ -4765,8 +4765,9 @@ class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
             _initialize(root)
             result = self._bank(
                 root,
-                lambda _root: {"status": "reverified", "ok": True},
-                formal_terminal_state={"terminal_state": "sorry_free_artifact"},
+                lambda _root: {"status": "reverified", "ok": True,
+                    "staged": {"source_digest": "a" * 64}, "observed": {"source_digest": "a" * 64}},
+                formal_terminal_state={"terminal_state": "sorry_free_artifact", "source_digest": "a" * 64},
             )
             self.assertEqual(
                 result["record"]["host_reverification"]["status"], "reverified"

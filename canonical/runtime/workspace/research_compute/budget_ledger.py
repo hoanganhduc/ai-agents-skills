@@ -1,13 +1,14 @@
 """File-backed reservation ledger for remote-compute budgets (GitHub Actions minutes,
-Modal dollars). The ledger is the *live* gate: reservations are written BEFORE dispatch
-and reconciled to actuals on completion, so concurrent submits can never collectively
-exceed a budget even while an external billing API lags (see the experiment-runner plan).
+Modal dollars). Reservations are written BEFORE dispatch and reconciled to observed
+actuals. They bound admitted exposure only when each executor enforces the reserved
+upper bound; they do not control unrelated account activity or provider billing.
 
 Generic over the unit: GHA reserves in "minutes", Modal in "usd".
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -712,19 +713,32 @@ def reserve(state_root: Path, backend: str, job_id: str, amount: float, unit: st
         _write(path, rows, directory_fd=directory_fd)
 
 
-def reconcile(state_root: Path, backend: str, job_id: str, actual: float | None = None) -> None:
+def reconcile(state_root: Path, backend: str, job_id: str, actual: float | None = None,
+              *, outcome: str = "known") -> None:
     """Reconcile one matching reservation.
 
     Reservation identifiers are expected to be attempt-unique. Reconciling at most one row
     is a defensive backstop for legacy callers that reused a job id: one completed attempt
     must never release another attempt's still-active reservation.
     """
+    # Legacy callers pass None only after confirming resource destruction/no
+    # acceptance. Ambiguous completion must explicitly retain its exposure.
+    if outcome not in {"known", "unknown"}:
+        raise ValueError("invalid reservation outcome")
+    if actual is not None and (type(actual) not in {int, float} or not math.isfinite(actual) or actual < 0):
+        raise ValueError("actual charge must be finite and nonnegative")
+    if outcome == "unknown" and actual is not None:
+        raise ValueError("unknown exposure cannot claim an actual charge")
     path = _ledger_path(state_root, backend)
     with _lock(path) as directory_fd:
         rows = _read(path, directory_fd=directory_fd)
         for row in rows:
             if row.get("job_id") == job_id and row.get("state") == "reserved":
+                if outcome == "unknown":
+                    row["exposure"] = "unknown"
+                    break
                 row["reconciled_at"] = time.time()
+                row["exposure"] = "known"
                 if actual is not None:
                     row["state"] = "accrued"
                     row["actual"] = float(actual)
@@ -740,13 +754,30 @@ def check_and_reserve(
     available: float, unit: str,
 ) -> dict[str, Any]:
     """Atomic gate: refuse if worst_case + outstanding would exceed `available`; else
-    reserve worst_case. Returns {"ok": bool, "reserved": float, "outstanding": float,
-    "available": float, "reason": str|None}."""
+    reserve worst_case. An idempotent result acknowledges an existing reservation,
+    never grants authority for another dispatch. Unknown/unbounded estimates are
+    refused; callers remain responsible for enforcing the supplied upper bound.
+    """
+    if not isinstance(job_id, str) or not job_id.strip() or len(job_id) > 200:
+        raise ValueError("an attempt-unique reservation ID is required")
+    if not isinstance(unit, str) or not unit.strip():
+        raise ValueError("reservation unit is required")
+    for value in (worst_case, available):
+        if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
+            raise ValueError("reservation requires a finite nonnegative upper bound")
     path = _ledger_path(state_root, backend)
     with _lock(path) as directory_fd:
         rows = _read(path, directory_fd=directory_fd)
         cycle = _current_cycle()
         out = sum(_committed_amount(row, cycle) for row in rows)
+        existing = [row for row in rows if row.get("job_id") == job_id]
+        if existing:
+            if len(existing) != 1 or existing[0].get("amount") != worst_case or existing[0].get("unit") != unit:
+                raise ValueError("reservation ID was reused with different or ambiguous terms")
+            active = existing[0].get("state") == "reserved"
+            return {"ok": active, "reserved": float(worst_case) if active else 0.0,
+                    "outstanding": out, "available": available, "idempotent": True,
+                    "reason": None if active else "attempt already reconciled; a new attempt requires a new ID"}
         if worst_case + out > available:
             return {"ok": False, "reserved": 0.0, "outstanding": out, "available": available,
                     "reason": f"worst_case {worst_case} + outstanding {out} > available {available} {unit}"}

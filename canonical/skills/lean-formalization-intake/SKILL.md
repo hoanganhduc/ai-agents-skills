@@ -88,7 +88,7 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 ## Lax cooperation
 
-Search Mathlib, then use `lax-formalization search` before proving new results.
+Ordinary Lean/Lake formalization is the default and does not require Lax. Search pinned Mathlib before proving new results; Lax catalog discovery is optional.
 Search hits and registered entries are candidates, not accepted proof evidence.
 Independently verify exact sources, dependency closure and semantic correspondence.
 Keep results in the paper repository; use `zenodo-artifact` for optional offline

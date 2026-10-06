@@ -49,6 +49,7 @@ PENDING_CANDIDATE_FILE = "iteration_candidate.json"
 CANDIDATE_QUARANTINE_FILE = "candidate_quarantine.json"
 ITERATION_DISPATCH_FILE = "iteration_dispatch.json"
 MIGRATION_CLAIM_FILE = ".goal_focus_migration.claim"
+PENDING_FORMAL_REVIEW_FILE = ".goal_focus/pending-formal-review.json"
 MIGRATION_BACKUP_SCHEMA = "goal_focus_migration_backup.v1"
 
 LEGACY_MIGRATION_SOURCE_FILES = (
@@ -5741,6 +5742,7 @@ def _require_host_reverification(
     reverifier: Any | None = None,
     pin: Mapping[str, Any] | None = None,
     require_verdict: bool = False,
+    expected_formal_stamp: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Re-run the host formal checks before a certified proof claim banks.
 
@@ -5785,13 +5787,68 @@ def _require_host_reverification(
             "host re-verification gate: the staged row was admitted on a host "
             f"formal verdict, but none is there to re-check: {detail}"
         )
+    if status == "verification_pending":
+        return dict(result)
     if status != "reverified":
         detail = _clean_text(result.get("detail"))
         raise ValueError(
             f"host re-verification gate: {status or 'no_status'}"
             + (f": {detail}" if detail else "")
         )
+    stamp = expected_formal_stamp or {}
+    if not isinstance(stamp, Mapping):
+        raise ValueError("host re-verification gate: candidate formal stamp must be an object")
+    field = "source_digest" if stamp.get("source_digest") else "coverage_digest"
+    expected_digest = stamp.get(field)
+    if not isinstance(expected_digest, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_digest):
+        raise ValueError("host re-verification gate: candidate formal stamp has no source binding")
+    for phase in ("staged", "observed"):
+        binding = result.get(phase)
+        if not isinstance(binding, Mapping) or binding.get(field) != expected_digest:
+            raise ValueError("host re-verification gate: candidate formal source differs from " + phase)
     return dict(result)
+
+
+def _formal_pin_fingerprint(pin: Mapping[str, Any] | None) -> str:
+    return _object_fingerprint({key: value for key, value in (pin or {}).items()
+                                if key not in {"pinned_at", "pin_source"}})
+
+
+def pending_formal_review(
+    run_dir: str | Path, candidate: Mapping[str, Any], *, formal_pin: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Reuse an exact review while its separate formal check is pending.
+
+    Finalization still revalidates every review boundary. This cache grants no
+    acceptance authority and cannot transfer a review to a different candidate.
+    """
+    root = Path(run_dir)
+    cached, _ = _read_object_snapshot(root / PENDING_FORMAL_REVIEW_FILE, required=False)
+    if not cached:
+        return None
+    required_fields = {"schema_version", "candidate_fingerprint", "formal_pin_fingerprint",
+                       "authority_hashes", "review", "review_fingerprint", "formal_terminal_sha256"}
+    authority_names = {PENDING_CANDIDATE_FILE, CURRENT_PLAN_FILE, GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE}
+    if (set(cached) != required_fields or not isinstance(cached.get("authority_hashes"), dict)
+            or set(cached["authority_hashes"]) != authority_names):
+        raise ValueError("invalid pending formal review contract")
+    if (cached.get("schema_version") != "pending_formal_review.v1"
+            or cached.get("candidate_fingerprint") != candidate_fingerprint(candidate)
+            or cached.get("formal_pin_fingerprint") != _formal_pin_fingerprint(formal_pin)):
+        return None
+    for name, expected_hash in cached.get("authority_hashes", {}).items():
+        if name not in {PENDING_CANDIDATE_FILE, CURRENT_PLAN_FILE, GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE}:
+            raise ValueError("invalid cached review authority")
+        _, actual_hash = _read_object_snapshot(root / name, required=True)
+        if actual_hash != expected_hash:
+            return None
+    _, terminal_hash = _read_object_snapshot(root / "formal/terminal_state.json", required=False)
+    if terminal_hash != cached["formal_terminal_sha256"]:
+        return None
+    review = cached.get("review")
+    if not isinstance(review, dict) or cached.get("review_fingerprint") != _object_fingerprint(review):
+        raise ValueError("cached formal review changed")
+    return copy.deepcopy(review)
 
 
 def finalize_candidate(
@@ -5811,6 +5868,9 @@ def finalize_candidate(
 ) -> dict[str, Any]:
     root = Path(run_dir)
     recover_transactions(root)
+    control_files = ["STOP_REQUESTED", "PAUSE", "BLOCKED"]
+    if any(_path_present_nofollow(root / name) for name in control_files):
+        return {"status": "control_wait", "reason": "operator_control_active"}
     if load_candidate_quarantine(root):
         raise RevisionConflict(
             "cannot finalize while a failed completion is quarantined"
@@ -5835,7 +5895,7 @@ def finalize_candidate(
         GOAL_CONTRACT_FILE: str(contract_hash),
         APPROACH_REGISTRY_FILE: str(registry_hash),
     }
-    expected_absent: list[str] = [CANDIDATE_QUARANTINE_FILE]
+    expected_absent: list[str] = [CANDIDATE_QUARANTINE_FILE, *control_files]
     expected = _require_nonnegative_int(
         expected_plan_revision
         if expected_plan_revision is not None
@@ -5945,7 +6005,20 @@ def finalize_candidate(
             # That is the one case where "nothing staged" means the evidence
             # was removed rather than never produced.
             require_verdict=bool(record.get("formal_terminal_state")),
+            expected_formal_stamp=record.get("formal_terminal_state"),
         )
+        if reverification.get("status") == "verification_pending" and record.get("formal_terminal_state"):
+            _, terminal_hash = _read_object_snapshot(root / "formal/terminal_state.json", required=False)
+            cached = {"schema_version": "pending_formal_review.v1",
+                      "candidate_fingerprint": candidate_fingerprint(candidate),
+                      "formal_pin_fingerprint": _formal_pin_fingerprint(formal_pin),
+                      "authority_hashes": expected_hashes,
+                      "review": dict(review), "review_fingerprint": _object_fingerprint(review),
+                      "formal_terminal_sha256": terminal_hash}
+            commit_transaction(root, json_files={PENDING_FORMAL_REVIEW_FILE: cached},
+                               expected_hashes=expected_hashes, expected_absent=expected_absent)
+            return {"status": "verification_pending", "candidate_id": candidate["candidate_id"],
+                    "formal_reverification": reverification}
         reverification_policy = reverification.get("policy")
         formal_run = isinstance(reverification_policy, Mapping) and _clean_text(
             reverification_policy.get("policy")
@@ -6217,7 +6290,7 @@ def finalize_candidate(
         json_files=json_files,
         text_files=text_files,
         jsonl_appends=jsonl_appends,
-        deletes=[PENDING_CANDIDATE_FILE],
+        deletes=[PENDING_CANDIDATE_FILE, PENDING_FORMAL_REVIEW_FILE],
         expected_revisions={
             CURRENT_PLAN_FILE: ("plan_revision", expected),
             GOAL_CONTRACT_FILE: ("goal_revision", current_contract.get("goal_revision")),

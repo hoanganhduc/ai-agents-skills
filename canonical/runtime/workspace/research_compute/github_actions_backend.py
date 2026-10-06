@@ -405,6 +405,8 @@ def budget_gate(*, job_id: str, repo_cfg: dict[str, Any], config: Any, state_roo
         state_root=state_root, backend="gha", job_id=job_id,
         worst_case=wc, available=available, unit="minutes",
     )
+    if res.get("idempotent"):
+        raise GhaBudgetError("attempt already reserved; reconcile existing execution before any new dispatch")
     res.update({
         "included": inc,
         "used_equiv": round(used, 1),

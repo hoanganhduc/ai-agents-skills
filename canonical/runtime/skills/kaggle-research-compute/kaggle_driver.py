@@ -8,9 +8,9 @@ resume loop that pushes a chunk-batch across up to ~5 concurrent kernels, polls 
 their checkpoints, and re-pushes the remaining work with the checkpoints re-attached until the
 job is DONE (bounded by max_runs).
 
-Planning verbs (bootstrap, doctor, preflight) are free and never push a kernel. Lifecycle
-verbs (push, status, wait, fetch, run) submit real kernels and require a guarded
-KAGGLE_API_TOKEN environment projection plus an explicit confirm.
+Doctor, preflight and dry-run are offline. Bootstrap explicitly validates an account.
+Push is the only enabled kernel submission path and requires explicit confirmation.
+Status/fetch use a saved accepted identity; an unversioned status is diagnostic only.
 
 Auth uses Kaggle's current "API Tokens (Recommended)" single token, NOT the legacy
 KAGGLE_USERNAME + KAGGLE_KEY pair and NOT a kaggle.json. bootstrap validates/primes via
@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -47,9 +48,11 @@ import stat
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
 
 from research_compute import kaggle_backend
 from research_compute.config import default_config_path, load_config, workspace_root
@@ -70,7 +73,234 @@ DENIED_UPLOAD_SUFFIXES = frozenset({".key", ".pem", ".p12", ".pfx"})
 
 
 class KaggleDriverError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, evidence: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.evidence = evidence or {}
+
+
+def internet_policy(manifest: dict[str, Any], config: Any) -> bool:
+    """A job may request Internet, but cannot grant itself that authority."""
+    requested = manifest.get("enable_internet", False)
+    allowed = getattr(config, "kaggle_allow_internet", False)
+    if type(requested) is not bool or type(allowed) is not bool:
+        raise KaggleDriverError("Internet request and host policy must be booleans")
+    if requested and not allowed:
+        raise KaggleDriverError("job Internet request is not permitted by host policy")
+    return requested
+
+
+def _kernel_parts(kernel: str) -> tuple[str, str]:
+    if not isinstance(kernel, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,49}/[a-z0-9][a-z0-9-]{0,99}", kernel) is None:
+        raise KaggleDriverError("invalid exact kernel owner/slug")
+    owner, slug = kernel.split("/")
+    return owner, slug
+
+
+def accepted_identity(reply: dict[str, Any], expected_kernel: str) -> dict[str, Any]:
+    """Validate observed SDK save fields, never a worker's execution claim."""
+    owner, slug = _kernel_parts(expected_kernel)
+    if not isinstance(reply, dict) or reply.get("error") not in (None, ""):
+        raise KaggleDriverError("provider save response contains an error")
+    for key in ("kernel_id", "version_number"):
+        if type(reply.get(key)) is not int or reply[key] <= 0:
+            raise KaggleDriverError("provider response lacks a positive kernel ID/version")
+    version = reply["version_number"]
+    if reply.get("ref") not in {expected_kernel, f"{expected_kernel}/{version}", f"/code/{expected_kernel}"}:
+        raise KaggleDriverError("provider reference differs from reviewed owner/slug/version")
+    url = urlsplit(str(reply.get("url") or ""))
+    if (url.scheme != "https" or url.netloc not in {"kaggle.com", "www.kaggle.com"}
+            or url.fragment or url.path not in {f"/code/{expected_kernel}", f"/code/{expected_kernel}/{version}"}):
+        raise KaggleDriverError("provider URL differs from reviewed identity")
+    query = parse_qs(url.query, keep_blank_values=True)
+    if query and (set(query) != {"scriptVersionId"} or len(query["scriptVersionId"]) != 1
+                  or re.fullmatch(r"[1-9][0-9]*", query["scriptVersionId"][0]) is None):
+        raise KaggleDriverError("unsupported provider version URL")
+    return {"kernel": expected_kernel, "owner": owner, "slug": slug,
+            "kernel_id": reply["kernel_id"], "version_number": version}
+
+
+def version_selector(identity: dict[str, Any], operation: str) -> str | int:
+    version = identity.get("version_number")
+    if type(version) is not int or version <= 0:
+        raise KaggleDriverError("accepted numeric version is required")
+    if operation == "download":
+        return version
+    if operation in {"status", "list"}:
+        return f"v{version}"
+    raise KaggleDriverError("unsupported version-selected operation")
+
+
+class _DiscardProviderConsole:
+    def write(self, text: str) -> int:
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+PROVIDER_OPERATION_TIMEOUTS = {"push": 300.0, "status": 120.0, "list": 120.0,
+                               "download": 600.0, "whoami": 120.0}
+
+
+class _ProviderDeadline(BaseException):
+    """Escape SDK Exception/SystemExit retry handlers without masking user interrupts."""
+
+
+@contextlib.contextmanager
+def _bounded_provider_io(operation: str, *, timeout_seconds: float | None = None):
+    """Bound all requests, including Kaggle's import-time authentication.
+
+    This qualified path runs in the POSIX main thread. It creates no watchdog
+    threads, and restores any caller timer/handler with elapsed time accounted.
+    Other threads' HTTP calls retain their original transport settings.
+    """
+    import math
+    import signal
+    import threading
+
+    if os.name != "posix" or not hasattr(signal, "setitimer") or threading.current_thread() is not threading.main_thread():
+        raise KaggleDriverError("bounded provider IO requires a POSIX main-thread controller")
+    budget = PROVIDER_OPERATION_TIMEOUTS[operation]
+    if timeout_seconds is not None:
+        if type(timeout_seconds) not in {int, float} or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise KaggleDriverError("provider operation timeout must be positive and finite")
+        budget = min(budget, float(timeout_seconds))
+    import requests
+
+    owner_thread = threading.get_ident()
+    original_send = requests.Session.send
+    original_handler = signal.getsignal(signal.SIGALRM)
+    remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+    deadline = started + budget
+    previous_due = started + remaining if remaining else None
+    if previous_due is not None and original_handler == signal.SIG_DFL:
+        raise KaggleDriverError("cannot safely nest provider IO under a default SIGALRM handler")
+
+    def arm():
+        due = min(deadline, previous_due) if previous_due is not None else deadline
+        signal.setitimer(signal.ITIMER_REAL, max(0.000001, due - time.monotonic()))
+
+    def expired(signum, frame):
+        nonlocal previous_due
+        now = time.monotonic()
+        if previous_due is not None and now >= previous_due:
+            previous_due = previous_due + interval if interval else None
+            if previous_due is not None:
+                while previous_due <= now:
+                    previous_due += interval
+            # Rearm before calling a caller handler: an SDK may catch the
+            # handler's ordinary Exception, but cannot remove our wall bound.
+            arm()
+            if callable(original_handler):
+                original_handler(signum, frame)
+        if time.monotonic() >= deadline:
+            raise _ProviderDeadline()
+        arm()
+
+    def send(session, request, **options):
+        if threading.get_ident() != owner_thread:
+            return original_send(session, request, **options)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise _ProviderDeadline()
+        requested = options.get("timeout")
+        components = requested if isinstance(requested, tuple) else (requested, requested)
+        if len(components) != 2:
+            raise KaggleDriverError("invalid HTTP timeout shape")
+        bounded = []
+        for value, maximum in zip(components, (10.0, 60.0)):
+            if value is not None and (type(value) not in {int, float} or not math.isfinite(value) or value <= 0):
+                raise KaggleDriverError("invalid HTTP timeout value")
+            bounded.append(min(maximum, left, value if value is not None else maximum))
+        options["timeout"] = tuple(bounded)
+        return original_send(session, request, **options)
+
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        requests.Session.send = send
+        arm()
+        try:
+            yield
+        except _ProviderDeadline as exc:
+            raise KaggleDriverError(f"provider {operation} overall deadline exceeded; acceptance may be unknown") from exc
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        requests.Session.send = original_send
+        signal.signal(signal.SIGALRM, original_handler)
+        signal.setitimer(signal.ITIMER_REAL,
+                        max(0.000001, previous_due - time.monotonic()) if previous_due is not None else 0,
+                        interval if previous_due is not None else 0)
+
+
+def _sdk_provider_operation(operation: str, **kwargs: Any) -> Any:
+    """Lazy official SDK boundary. Importing this driver never authenticates.
+
+    Session responses do not echo immutable identity. Their explicitly selected
+    version is recorded as request provenance, not invented server attestation.
+    """
+    owner, slug = _kernel_parts(kwargs["kernel"])
+    if not token_present():
+        raise KaggleDriverError("guarded Kaggle token required")
+    with _bounded_provider_io(operation, timeout_seconds=kwargs.get("timeout_s")), \
+         contextlib.redirect_stdout(_DiscardProviderConsole()), contextlib.redirect_stderr(_DiscardProviderConsole()):
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        from kagglesdk.kernels.types.kernels_api_service import (
+            ApiGetKernelSessionStatusRequest, ApiListKernelSessionOutputRequest,
+            ApiDownloadKernelOutputRequest,
+        )
+        api = KaggleApi()
+        try:
+            api.authenticate()
+        except SystemExit as exc:
+            raise KaggleDriverError("official SDK authentication refused") from exc
+        if (api.config_values.get(api.CONFIG_NAME_AUTH_METHOD) != "ACCESS_TOKEN"
+                or api.config_values.get(api.CONFIG_NAME_TOKEN) != _token()
+                or api.config_values.get(api.CONFIG_NAME_USER) != owner):
+            raise KaggleDriverError("official account does not match reviewed owner/token authority")
+        if operation == "push":
+            reply = api.kernels_push(str(kwargs["kernel_dir"]), timeout="41000")
+            return {key: getattr(reply, key, None) for key in ("kernel_id", "version_number", "ref", "url", "error")}
+        with api.build_kaggle_client() as client:
+            service = client.kernels.kernels_api_client
+            identity = kwargs["identity"]
+            if operation == "download":
+                request = ApiDownloadKernelOutputRequest()
+                request.owner_slug = owner
+                request.kernel_slug = slug
+                request.version_number = version_selector(identity, "download")
+                request.file_path = kwargs["file_path"]
+                response = service.download_kernel_output(request)
+                try:
+                    return kwargs["consume"](response.iter_content(1024 * 1024))
+                finally:
+                    close = getattr(response, "close", None)
+                    if close:
+                        close()
+            cls = ApiGetKernelSessionStatusRequest if operation == "status" else ApiListKernelSessionOutputRequest
+            request = cls()
+            request.user_name = owner
+            request.kernel_slug = slug
+            request.version_label = version_selector(identity, operation)
+            if operation == "status":
+                reply = service.get_kernel_session_status(request)
+                return {"status": reply.status.name.lower(), "failure_message": _redact(reply.failure_message)}
+            request.page_size = 200
+            request.page_token = kwargs.get("page_token")
+            reply = service.list_kernel_session_output(request)
+            return {"files": [item.file_name for item in reply.files or []],
+                    "next_page_token": reply.next_page_token or None}
+
+
+def _official_provider_operation(operation: str, **kwargs: Any) -> Any:
+    try:
+        return _sdk_provider_operation(operation, **kwargs)
+    except Exception as exc:
+        # Do not surface signed URLs, response bodies or SDK configuration.
+        raise KaggleDriverError(f"official provider {operation} failed ({type(exc).__name__})") from exc
+
+
+PROVIDER_RUNNER: Callable[..., Any] = _official_provider_operation
 
 
 # --- API token + redaction (env-first, never argv, never logged) --------------
@@ -101,9 +331,10 @@ def _redact(text: str | None) -> str:
 
 # --- authenticated username via kagglehub (mockable through the backend hook) --
 
-def _whoami(config: Any | None) -> dict[str, Any]:
+def _whoami(config: Any | None, *, timeout_s: float | None = None) -> dict[str, Any]:
     """Validate the token and return {usable, username, reason} via the mockable kagglehub hook."""
-    return kaggle_backend.KAGGLEHUB_VALIDATE(config)
+    with _bounded_provider_io("whoami", timeout_seconds=timeout_s):
+        return kaggle_backend.KAGGLEHUB_VALIDATE(config)
 
 
 def _resolve_username(config: Any | None, *, required: bool) -> str | None:
@@ -439,10 +670,20 @@ def bundle_sha256(job_dir: str | Path) -> str:
     return hashlib.sha256(_zip_job_bytes(Path(job_dir))).hexdigest()
 
 
+def _bundle_manifest(bundle: bytes) -> dict[str, Any]:
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+        value = json.loads(archive.read("manifest.json"))
+    if not isinstance(value, dict):
+        raise KaggleDriverError("bundle manifest must be an object")
+    return value
+
+
 def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                      num_chunks: int, gpu: bool, checkpoints_dir: str | Path | None,
                      dest_root: str | Path, username: str | None = None,
-                     bundle_zip: bytes | None = None) -> Path:
+                     bundle_zip: bytes | None = None, enable_internet: bool = False) -> Path:
     """Assemble a kernel working directory: embed-zip code_file + metadata.
 
     Kaggle script kernels only upload the code_file; nested bundle/ is not
@@ -451,6 +692,9 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
     dest = Path(dest_root) / f"kernel-r{round_idx}-c{chunk_idx}"
     dest.mkdir(parents=True, exist_ok=True)
     bundle_zip = bytes(bundle_zip) if bundle_zip is not None else _zip_job_bytes(Path(job_dir))
+    requested = _bundle_manifest(bundle_zip).get("enable_internet", False)
+    if type(enable_internet) is not bool or type(requested) is not bool or requested != enable_internet:
+        raise KaggleDriverError("Internet metadata differs from approved bundle")
     bundle_digest = hashlib.sha256(bundle_zip).hexdigest()
     zip_b64 = base64.b64encode(bundle_zip).decode("ascii")
     code_file = f"run-r{round_idx}-c{chunk_idx}.py"
@@ -480,7 +724,7 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
         "kernel_type": "script",
         "is_private": True,
         "enable_gpu": bool(gpu),
-        "enable_internet": False,
+        "enable_internet": enable_internet,
         "dataset_sources": dataset_sources,
         "competition_sources": [],
         "kernel_sources": [],
@@ -565,9 +809,14 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     """The plan the router consumes: kind (cpu/gpu), estimated resume rounds and kernel count,
     concurrency, session cap, GPU-hour estimate vs the weekly cap, adequacy, availability, and
     a budget verdict. No kernel is pushed and nothing is reserved."""
-    manifest = _read_manifest(job_dir)
+    bundle = _zip_job_bytes(Path(job_dir))
+    manifest = _bundle_manifest(bundle)
+    enable_internet = internet_policy(manifest, config)
+    output_allowlist(manifest)
     estimate = estimate_from_manifest(manifest)
-    probe = kaggle_backend.probe(estimate, config=config, resources=None, state_root=state_root)
+    probe = kaggle_backend.probe(estimate, config=config,
+        resources={"liveness": {"kaggle": {"usable": False, "reason": "account_not_checked_offline"}}},
+        state_root=state_root)
     gpu = bool(estimate.get("gpu"))
 
     if not probe["adequate"]:
@@ -583,7 +832,10 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     return {
         "backend": "kaggle",
         "job_id": manifest.get("job_id"),
-        "bundle_sha256": bundle_sha256(job_dir),
+        "bundle_sha256": hashlib.sha256(bundle).hexdigest(),
+        "enable_internet": enable_internet,
+        "internet_scope": "kernel-wide" if enable_internet else "disabled",
+        "account_status": "not_checked",
         "kind": probe["kind"],
         "total_units": _total_units(manifest),
         "est_rounds": probe["est_runs"],
@@ -616,18 +868,27 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
 def _push_kernel(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                  num_chunks: int, gpu: bool, checkpoints_dir: Path | None,
                  work_root: Path, username: str | None = None,
-                 bundle_zip: bytes | None = None) -> dict[str, Any]:
+                 bundle_zip: bytes | None = None, enable_internet: bool = False) -> dict[str, Any]:
     kdir = build_kernel_dir(job_id=job_id, job_dir=job_dir, round_idx=round_idx,
                             chunk_idx=chunk_idx, num_chunks=num_chunks, gpu=gpu,
                             checkpoints_dir=checkpoints_dir, dest_root=work_root,
-                            username=username, bundle_zip=bundle_zip)
-    run_kaggle(["kernels", "push", "-p", str(kdir)], timeout=300.0)
+                            username=username, bundle_zip=bundle_zip, enable_internet=enable_internet)
+    metadata_path = kdir / "kernel-metadata.json"
+    metadata_raw = metadata_path.read_bytes()
+    code_path = kdir / json.loads(metadata_raw)["code_file"]
+    code_raw = code_path.read_bytes()
+    reply = PROVIDER_RUNNER("push", kernel=kernel_ref(job_id, round_idx, chunk_idx, username=username),
+                            kernel_dir=kdir)
+    if metadata_path.read_bytes() != metadata_raw or code_path.read_bytes() != code_raw:
+        raise KaggleDriverError("kernel source changed during provider save; acceptance remains unknown")
     return {"kernel": kernel_ref(job_id, round_idx, chunk_idx, username=username), "dir": str(kdir),
-            "gpu": gpu, "round": round_idx, "chunk": chunk_idx}
+            "gpu": gpu, "round": round_idx, "chunk": chunk_idx, "provider_response": reply,
+            "submitted_source": {"code_sha256": hashlib.sha256(code_raw).hexdigest(),
+                                 "metadata_sha256": hashlib.sha256(metadata_raw).hexdigest()}}
 
 
-def _kernel_status(kernel: str) -> str:
-    result = run_kaggle(["kernels", "status", kernel])
+def _kernel_status(kernel: str, *, timeout_s: float = 120.0) -> str:
+    result = run_kaggle(["kernels", "status", kernel], timeout=timeout_s)
     text = (result.get("stdout") or "").lower()
     for state in ("complete", "error", "cancelAcknowledged".lower(), "running", "queued"):
         if state in text:
@@ -637,14 +898,23 @@ def _kernel_status(kernel: str) -> str:
 
 def _wait_kernel(kernel: str, *, timeout: float | None = None, interval: float = 20.0,
                  max_polls: int = 100000) -> dict[str, Any]:
-    start = time.time()
+    start = time.monotonic()
     for poll in range(int(max_polls)):
-        state = _kernel_status(kernel)
+        remaining = None if timeout is None else timeout - (time.monotonic() - start)
+        if remaining is not None and remaining <= 0:
+            return {"kernel": kernel, "status": "timeout", "polls": poll}
+        try:
+            state = _kernel_status(kernel, timeout_s=min(120.0, remaining) if remaining is not None else 120.0)
+        except Exception:
+            if timeout is not None and time.monotonic() - start >= timeout:
+                return {"kernel": kernel, "status": "timeout", "polls": poll + 1}
+            raise
         if state in ("complete", "error"):
             return {"kernel": kernel, "status": state, "polls": poll + 1}
-        if timeout is not None and time.time() - start > timeout:
+        remaining = None if timeout is None else timeout - (time.monotonic() - start)
+        if remaining is not None and remaining <= 0:
             return {"kernel": kernel, "status": "timeout", "polls": poll + 1}
-        time.sleep(interval)
+        time.sleep(min(interval, remaining) if remaining is not None else interval)
     return {"kernel": kernel, "status": "timeout", "polls": int(max_polls)}
 
 
@@ -704,23 +974,90 @@ def _prepare_fetch_destination(dest: Path, *, allow_existing: bool) -> Path:
     return dest
 
 
-def _fetch_kernel(kernel: str, *, dest: Path, allow_existing: bool = False) -> dict[str, Any]:
-    dest = _prepare_fetch_destination(Path(dest), allow_existing=allow_existing)
-    run_kaggle(
-        [
-            "kernels",
-            "output",
-            kernel,
-            "-p",
-            str(dest),
-            "--file-pattern",
-            SAFE_OUTPUT_PATTERN,
-        ],
-        timeout=600.0,
-    )
-    expected_log_name = kernel.rsplit("/", 1)[-1] + ".log"
-    validation = _validate_fetched_tree(dest, expected_log_name=expected_log_name)
-    return {"kernel": kernel, "fetched_to": str(dest), "validation": validation}
+def output_allowlist(manifest: dict[str, Any]) -> set[str]:
+    required = {f"out/unit-{index:04d}.json" for index in range(_total_units(manifest))} | {"out/result.json"}
+    extra = manifest.get("output_files", [])
+    if not isinstance(extra, list) or len(extra) > 256 or len(set(map(str, extra))) != len(extra):
+        raise KaggleDriverError("output_files must be a bounded unique exact allowlist")
+    for name in extra:
+        if not isinstance(name, str) or re.fullmatch(r"out/[A-Za-z0-9][A-Za-z0-9_.-]{0,119}\.(?:json|log|txt)", name) is None:
+            raise KaggleDriverError("unsafe output_files path")
+    return required | set(extra)
+
+
+def _fetch_kernel(kernel: str, *, dest: Path, identity: dict[str, Any],
+                  allowed: set[str], max_pages: int = 50) -> dict[str, Any]:
+    dest = _prepare_fetch_destination(Path(dest), allow_existing=False)
+    (dest / "out").mkdir(mode=0o700)
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    tokens: set[str] = set()
+    token = None
+    total = 0
+    result: dict[str, Any] = {"kernel": kernel, "fetched_to": str(dest), "output_manifest": records,
+        "host_provenance": {"source": "official-sdk-version-selected-output", "accepted_identity": identity,
+            "session_version_label": version_selector(identity, "list"),
+            "download_version_number": version_selector(identity, "download"),
+            "server_echoed_identity": False,
+            "limitation": "session/output replies do not echo kernel ID/version; request selectors bind the saved acceptance"},
+        "pagination": {"pages": 0, "complete": False}, "stage": "list", "status": "partial"}
+    try:
+        for page in range(max_pages):
+            result["stage"] = "list"
+            reply = PROVIDER_RUNNER("list", kernel=kernel, identity=identity, page_token=token)
+            names = reply.get("files")
+            if not isinstance(names, list) or len(names) > 200 or any(not isinstance(name, str) for name in names):
+                raise KaggleDriverError("invalid bounded provider output page")
+            result["pagination"]["pages"] = page + 1
+            for name in names:
+                if name not in allowed:
+                    continue
+                if name in seen:
+                    raise KaggleDriverError("duplicate provider output file")
+                seen.add(name)
+                result["stage"] = "download"
+                record: dict[str, Any] = {"path": name, "bytes": 0, "sha256": None, "complete": False}
+                records.append(record)
+                def consume(chunks, *, path=dest / name, record=record):
+                    nonlocal total
+                    h = hashlib.sha256()
+                    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    try:
+                        with os.fdopen(fd, "wb") as stream:
+                            for chunk in chunks:
+                                if not isinstance(chunk, bytes):
+                                    raise KaggleDriverError("provider output is not bytes")
+                                if record["bytes"] + len(chunk) > 128 * 1024**2 or total + len(chunk) > MAX_FETCH_BYTES:
+                                    raise KaggleDriverError("output download exceeds bounded size")
+                                stream.write(chunk)
+                                record["bytes"] += len(chunk)
+                                total += len(chunk)
+                                h.update(chunk)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        record["complete"] = True
+                    finally:
+                        record["sha256"] = h.hexdigest()
+                PROVIDER_RUNNER("download", kernel=kernel, identity=identity, file_path=name, consume=consume)
+                if not record["complete"]:
+                    raise KaggleDriverError("provider download did not complete")
+            token = reply.get("next_page_token")
+            if not token:
+                result["pagination"]["complete"] = True
+                break
+            if not isinstance(token, str) or len(token) > 4096 or token in tokens:
+                raise KaggleDriverError("invalid or repeated output pagination token")
+            tokens.add(token)
+        if not result["pagination"]["complete"]:
+            raise KaggleDriverError("output pagination reached the bounded page cap")
+        if seen != allowed:
+            raise KaggleDriverError("selected output files are missing")
+        result.update(status="fetched", stage="download_complete", validation={"files": len(records), "bytes": total})
+        return result
+    except Exception as exc:
+        result.update(error_type=type(exc).__name__, bytes_received=total)
+        raise KaggleDriverError("exact-version output retrieval incomplete; retain partial files and receipt",
+                                evidence=result) from exc
 
 
 def verify_fetched_output(job_dir: str | Path, dest: str | Path) -> dict[str, Any]:
@@ -731,7 +1068,7 @@ def verify_fetched_output(job_dir: str | Path, dest: str | Path) -> dict[str, An
     manifest = _read_manifest(job)
     total = _total_units(manifest)
     manifest_digest = hashlib.sha256(_read_upload_file(job, PurePosixPath("manifest.json"))).hexdigest()
-    expected_names = {f"unit-{index:04d}.json" for index in range(total)} | {"result.json"}
+    expected_names = {name.removeprefix("out/") for name in output_allowlist(manifest)}
     actual_names = {path.name for path in output.iterdir() if path.is_file()}
     if actual_names != expected_names:
         raise KaggleDriverError(
@@ -773,6 +1110,8 @@ def verify_fetched_output(job_dir: str | Path, dest: str | Path) -> dict[str, An
             raise KaggleDriverError("prime-count result does not match manifest.verify")
     return {
         "verified": True,
+        "semantic_status": "not_checked",
+        "verification_scope": "manifest-bound checkpoint structure and explicit expected values only",
         "manifest_sha256": manifest_digest,
         "units": total,
         "result": result,
@@ -793,14 +1132,20 @@ def _submission_intent_path(
 
 
 def _write_submission_intent(path: Path, payload: dict[str, Any], *, create: bool) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        raise KaggleDriverError("submission intent path contains a link")
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if len(body.encode()) > 1024 * 1024:
+        raise KaggleDriverError("submission intent exceeds bounded size")
     if create:
         try:
             with path.open("x", encoding="utf-8", newline="\n") as handle:
                 handle.write(body)
                 handle.flush()
                 os.fsync(handle.fileno())
+            path.chmod(0o600)
+            _sync_submission_directory(path.parent)
         except FileExistsError as exc:
             raise KaggleDriverError(
                 f"submission intent already exists for {payload['kernel']}; "
@@ -813,6 +1158,74 @@ def _write_submission_intent(path: Path, payload: dict[str, Any], *, create: boo
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+    path.chmod(0o600)
+    _sync_submission_directory(path.parent)
+
+
+def _sync_submission_directory(directory: Path) -> None:
+    if os.name == "posix":
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _read_submission(path: str | Path) -> dict[str, Any]:
+    path = Path(path).absolute()
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        raise KaggleDriverError("submission intent path contains a link")
+    info = path.stat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 1024 * 1024
+            or (os.name == "posix" and (info.st_uid != os.getuid() or info.st_mode & 0o077))):
+        raise KaggleDriverError("submission intent must be a private bounded host record")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("schema") != "ai-agents-skills.kaggle-submission-intent.v2":
+        raise KaggleDriverError("submission intent lacks version-bound provider evidence")
+    return value
+
+
+def _bind_saved_response(intent: dict[str, Any]) -> dict[str, Any]:
+    identity = accepted_identity(intent.get("provider_response"), intent["kernel"])
+    for key in ("attempt_id", "bundle_sha256"):
+        if not isinstance(intent.get(key), str) or not intent[key]:
+            raise KaggleDriverError("submission intent lacks attempt/bundle binding")
+    if re.fullmatch(r"[0-9a-f]{64}", intent["bundle_sha256"]) is None or type(intent.get("enable_internet")) is not bool:
+        raise KaggleDriverError("submission intent has invalid bundle/policy binding")
+    return {**identity, "attempt_id": intent["attempt_id"], "bundle_sha256": intent["bundle_sha256"],
+            "enable_internet": intent["enable_internet"]}
+
+
+def load_submission_identity(path: str | Path, *, expected_kernel: str | None = None,
+                             expected_bundle_sha256: str | None = None) -> dict[str, Any]:
+    """Read controller-owned evidence; this file is not a worker receipt."""
+    intent = _read_submission(path)
+    if intent.get("state") != "submitted":
+        raise KaggleDriverError("submission acceptance is unknown; reconcile the recorded attempt, never repush")
+    identity = _bind_saved_response(intent)
+    if identity != intent.get("accepted_identity"):
+        raise KaggleDriverError("saved accepted identity changed")
+    if expected_kernel is not None and identity["kernel"] != expected_kernel:
+        raise KaggleDriverError("submission intent does not match requested kernel")
+    if expected_bundle_sha256 is not None and identity["bundle_sha256"] != expected_bundle_sha256:
+        raise KaggleDriverError("submission intent does not match approved bundle")
+    return identity
+
+
+def recover_submission(path: str | Path, *, checkpoint_writer: Callable[..., None] | None = None) -> dict[str, Any]:
+    """Recover a captured save response, with no provider calls or latest fallback."""
+    path = Path(path)
+    intent = _read_submission(path)
+    if intent.get("state") == "submitted":
+        return {"state": "submitted", "accepted_identity": load_submission_identity(path)}
+    if "provider_response" not in intent:
+        return {"state": "acceptance_unknown", "replay_permitted": False,
+                "attempt_id": intent.get("attempt_id")}
+    identity = _bind_saved_response(intent)
+    intent.update(state="submitted", accepted_identity=identity)
+    intent.setdefault("events", []).append({"stage": "recovery", "outcome": "saved_response_admitted"})
+    (checkpoint_writer or _write_submission_intent)(path, intent, create=False)
+    return {"state": "submitted", "accepted_identity": identity, "replay_permitted": False}
 
 
 def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int = 0,
@@ -820,13 +1233,16 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
          confirm: bool = False, dry_run: bool = False, work_root: str | Path | None = None,
          state_root: str | Path | None = None,
          expected_bundle_sha256: str | None = None,
-         expected_owner: str | None = None) -> dict[str, Any]:
+         expected_owner: str | None = None,
+         checkpoint_writer: Callable[..., None] | None = None) -> dict[str, Any]:
     """Push a single kernel run (one chunk). Manual/debug granularity; `run` orchestrates the
     full fan-out + resume loop. `--dry-run` prints the planned `kaggle kernels push` with no
     submission."""
-    manifest = _read_manifest(job_dir)
-    job_id = str(manifest.get("job_id") or _new_job_id())
     bundle_zip = _zip_job_bytes(Path(job_dir))
+    manifest = _bundle_manifest(bundle_zip)
+    job_id = str(manifest.get("job_id") or _new_job_id())
+    enable_internet = internet_policy(manifest, config)
+    output_allowlist(manifest)
     digest = hashlib.sha256(bundle_zip).hexdigest()
     gpu = bool(manifest.get("gpu")) if gpu is None else bool(gpu)
     ckpt = Path(checkpoints_dir).expanduser() if checkpoints_dir else None
@@ -834,9 +1250,9 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         return {"dry_run": True, "job_id": job_id,
                 "kernel": kernel_ref(job_id, round_idx, chunk_idx, username=expected_owner),
                 "bundle_sha256": digest,
-                "gpu": gpu, "enable_internet": False,
-                "command": [sys.executable, "-I", "-m", "kaggle", "kernels", "push", "-p",
-                            f"<kernel-dir r{round_idx} c{chunk_idx}>"]}
+                "gpu": gpu, "enable_internet": enable_internet,
+                "internet_scope": "kernel-wide" if enable_internet else "disabled",
+                "provider_operation": "official-sdk.kernels_push"}
     if not token_present():
         raise KaggleDriverError("refusing to push: KAGGLE_API_TOKEN is not set")
     if not confirm:
@@ -884,49 +1300,121 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         raise KaggleDriverError(f"Kaggle lane unavailable: {probe.get('reason', 'unknown')}")
     root = Path(work_root).expanduser() if work_root else Path(tempfile.mkdtemp(prefix="aas-kaggle-"))
     intent = {
-        "schema": "ai-agents-skills.kaggle-submission-intent.v1",
-        "state": "prepared",
+        "schema": "ai-agents-skills.kaggle-submission-intent.v2",
+        "state": "acceptance_unknown",
+        "attempt_id": uuid.uuid4().hex,
         "kernel": kernel,
         "bundle_sha256": digest,
         "gpu": gpu,
+        "enable_internet": enable_internet,
+        "events": [{"stage": "dispatch", "outcome": "prepared"}],
     }
-    _write_submission_intent(intent_path, intent, create=True)
-    result = _push_kernel(
-        job_id=job_id,
-        job_dir=job_dir,
-        round_idx=round_idx,
-        chunk_idx=chunk_idx,
-        num_chunks=num_chunks,
-        gpu=gpu,
-        checkpoints_dir=ckpt,
-        work_root=root,
-        username=username,
-        bundle_zip=bundle_zip,
-    )
-    intent["state"] = "submitted"
-    _write_submission_intent(intent_path, intent, create=False)
+    writer = checkpoint_writer or _write_submission_intent
+    writer(intent_path, intent, create=True)
+    try:
+        result = _push_kernel(
+            job_id=job_id, job_dir=job_dir, round_idx=round_idx, chunk_idx=chunk_idx,
+            num_chunks=num_chunks, gpu=gpu, checkpoints_dir=ckpt, work_root=root,
+            username=username, bundle_zip=bundle_zip, enable_internet=enable_internet)
+        intent["provider_response"] = result.pop("provider_response")
+        intent["submitted_source"] = result["submitted_source"]
+        intent["events"].append({"stage": "save_response", "outcome": "captured"})
+        writer(intent_path, intent, create=False)
+        identity = _bind_saved_response(intent)
+    except Exception as exc:
+        intent["events"].append({"stage": "submission", "outcome": "acceptance_unknown", "error_type": type(exc).__name__})
+        try:
+            writer(intent_path, intent, create=False)
+        except Exception:
+            pass  # Preserve the initial durable fence even if diagnostics cannot be updated.
+        raise KaggleDriverError("provider acceptance unknown; query/reconcile the recorded attempt, never repush",
+                                evidence={"state": "acceptance_unknown", "submission_intent": str(intent_path),
+                                          "attempt_id": intent["attempt_id"], "error_type": type(exc).__name__}) from exc
+    intent.update(state="submitted", accepted_identity=identity)
+    intent["events"].append({"stage": "acceptance", "outcome": "identity_bound"})
+    writer(intent_path, intent, create=False)
     result["bundle_sha256"] = digest
     result["submission_intent"] = str(intent_path)
+    result["accepted_identity"] = identity
+    result["host_provenance"] = {"source": "official-sdk-save-response", "accepted_identity": identity,
+                                 "submitted_source": intent["submitted_source"]}
     return result
 
 
-def status(*, kernel: str, config: Any) -> dict[str, Any]:
+def status(*, kernel: str, config: Any, submission_intent: str | Path | None = None,
+           timeout_s: float | None = None) -> dict[str, Any]:
     """Kernel run state (`kaggle kernels status`). Free of side effects."""
-    return {"kernel": kernel, "status": _kernel_status(kernel)}
+    if submission_intent is None:
+        return {"kernel": kernel, "status": _kernel_status(kernel, timeout_s=min(timeout_s, 120.0) if timeout_s is not None else 120.0),
+                "identity_status": "unverified_diagnostic"}
+    identity = load_submission_identity(submission_intent, expected_kernel=kernel)
+    try:
+        reply = PROVIDER_RUNNER("status", kernel=kernel, identity=identity, timeout_s=timeout_s)
+    except Exception as exc:
+        raise KaggleDriverError("exact-version status unavailable; retain existing attempt",
+                                evidence={"stage": "status", "status": "unknown", "accepted_identity": identity,
+                                          "error_type": type(exc).__name__}) from exc
+    state = reply.get("status")
+    if state not in {"complete", "error", "cancelacknowledged", "running", "queued"}:
+        state = "unknown"
+    return {"kernel": kernel, "status": state,
+            "host_provenance": {"source": "official-sdk-version-selected-status", "accepted_identity": identity,
+                                "version_label": version_selector(identity, "status"), "server_echoed_identity": False},
+            "failure_message": _redact(reply.get("failure_message"))}
 
 
 def wait(*, kernel: str, config: Any, timeout: float | None = None,
-         interval: float = 20.0) -> dict[str, Any]:
+         interval: float = 20.0, submission_intent: str | Path | None = None,
+         max_polls: int = 100000) -> dict[str, Any]:
     """Poll a kernel until it completes / errors or the wall cap hits."""
-    return _wait_kernel(kernel, timeout=timeout, interval=interval)
+    if submission_intent is None:
+        return {**_wait_kernel(kernel, timeout=timeout, interval=interval), "identity_status": "unverified_diagnostic"}
+    started = time.monotonic()
+    for _ in range(max_polls):
+        remaining = None if timeout is None else timeout - (time.monotonic() - started)
+        if remaining is not None and remaining <= 0:
+            return {"kernel": kernel, "status": "timeout"}
+        try:
+            result = status(kernel=kernel, config=config, submission_intent=submission_intent, timeout_s=remaining)
+        except KaggleDriverError:
+            if timeout is not None and time.monotonic() - started >= timeout:
+                return {"kernel": kernel, "status": "timeout"}
+            raise
+        if result["status"] in {"complete", "error", "cancelacknowledged"}:
+            return result
+        remaining = None if timeout is None else timeout - (time.monotonic() - started)
+        if remaining is not None and remaining <= 0:
+            return {**result, "status": "timeout"}
+        time.sleep(min(interval, remaining) if remaining is not None else interval)
+    return {"kernel": kernel, "status": "timeout", "reason": "poll_limit"}
 
 
 def fetch(*, kernel: str, config: Any, job_dir: str | Path,
-          dest: str | Path | None = None) -> dict[str, Any]:
+          dest: str | Path | None = None, submission_intent: str | Path | None = None,
+          validate_checkpoints: bool = True) -> dict[str, Any]:
     """Download a kernel's output (checkpoints) with `kaggle kernels output`."""
+    if submission_intent is None:
+        raise KaggleDriverError("exact-version fetch requires a host submission intent")
+    bundle = _zip_job_bytes(Path(job_dir))
+    identity = load_submission_identity(submission_intent, expected_kernel=kernel,
+                                        expected_bundle_sha256=hashlib.sha256(bundle).hexdigest())
+    manifest = _bundle_manifest(bundle)
+    if internet_policy(manifest, config) != identity["enable_internet"]:
+        raise KaggleDriverError("submission Internet policy changed")
     dest_dir = Path(dest).expanduser() if dest else Path.cwd() / "kaggle-results"
-    result = _fetch_kernel(kernel, dest=dest_dir)
-    result["verification"] = verify_fetched_output(job_dir, dest_dir)
+    result = _fetch_kernel(kernel, dest=dest_dir, identity=identity, allowed=output_allowlist(manifest))
+    try:
+        if bundle_sha256(job_dir) != identity["bundle_sha256"]:
+            raise KaggleDriverError("approved bundle changed during output retrieval")
+        if validate_checkpoints:
+            result["verification"] = verify_fetched_output(job_dir, dest_dir)
+        else:
+            result["verification"] = {"verified": False, "semantic_status": "not_checked",
+                                      "verification_scope": "downloaded bytes only; host content validator required"}
+    except Exception as exc:
+        result.update(stage="content_validation", status="rejected", error_type=type(exc).__name__)
+        raise KaggleDriverError(str(exc) if isinstance(exc, KaggleDriverError) else "output content validation failed",
+                                evidence=result) from exc
     return result
 
 
@@ -1008,15 +1496,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_p = sub.add_parser("status", help="Kernel run state")
     status_p.add_argument("kernel")
+    status_p.add_argument("--submission-intent", help="host receipt selecting the exact accepted version")
 
     wait_p = sub.add_parser("wait", help="Poll a kernel until it finishes or the wall cap hits")
     wait_p.add_argument("kernel")
     wait_p.add_argument("--timeout", type=float, default=None)
+    wait_p.add_argument("--submission-intent")
 
     fetch_p = sub.add_parser("fetch", help="Download a kernel's output (checkpoints)")
     fetch_p.add_argument("kernel")
     fetch_p.add_argument("--job", required=True)
     fetch_p.add_argument("--dest", default=None)
+    fetch_p.add_argument("--submission-intent", required=True)
+
+    recover_p = sub.add_parser("recover", help="Admit an already captured save response; never resubmit")
+    recover_p.add_argument("--submission-intent", required=True)
 
     run_p = sub.add_parser("run", help="Plan the bounded multi-run loop (live execution disabled)")
     run_p.add_argument("--job", required=True)
@@ -1043,7 +1537,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         config, state_root = _load(args)
-        if args.command == "bootstrap":
+        if args.command == "recover":
+            result = recover_submission(args.submission_intent)
+        elif args.command == "bootstrap":
             result = bootstrap(config)
         else:
             if config is None:
@@ -1061,11 +1557,12 @@ def main(argv: list[str] | None = None) -> int:
                               expected_bundle_sha256=args.bundle_sha256,
                               expected_owner=args.owner)
             elif args.command == "status":
-                result = status(kernel=args.kernel, config=config)
+                result = status(kernel=args.kernel, config=config, submission_intent=args.submission_intent)
             elif args.command == "wait":
-                result = wait(kernel=args.kernel, config=config, timeout=args.timeout)
+                result = wait(kernel=args.kernel, config=config, timeout=args.timeout, submission_intent=args.submission_intent)
             elif args.command == "fetch":
-                result = fetch(kernel=args.kernel, config=config, job_dir=args.job, dest=args.dest)
+                result = fetch(kernel=args.kernel, config=config, job_dir=args.job, dest=args.dest,
+                               submission_intent=args.submission_intent)
             elif args.command == "run":
                 result = run(job_dir=args.job, config=config, state_root=Path(state_root),
                              confirm=args.confirm, dry_run=args.dry_run, dest=args.dest,
@@ -1073,7 +1570,7 @@ def main(argv: list[str] | None = None) -> int:
             else:  # pragma: no cover - argparse guards this
                 raise KaggleDriverError(f"unhandled command: {args.command}")
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"ok": False, "error": _redact(str(exc))}, indent=2))
+        print(json.dumps({"ok": False, "error": _redact(str(exc)), "evidence": getattr(exc, "evidence", {})}, indent=2))
         return 1
     print(json.dumps({"ok": True, **result}, indent=2))
     return 0

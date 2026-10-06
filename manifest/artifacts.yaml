@@ -33,7 +33,8 @@
         "template:compute-offload-sizing-gate",
         "instruction-doc:autonomous-loop-formal-policy",
         "template:lax-paper-artifact",
-        "template:lax-paper-workflow"
+        "template:lax-paper-workflow",
+        "template:research-job-presets"
       ]
     },
     "serious-research": {
@@ -61,7 +62,8 @@
         "instruction-doc:math-manuscript-style",
         "instruction-doc:graph-combinatorics-style",
         "instruction-doc:mathscinet-zbmath-review-style",
-        "instruction-doc:autonomous-loop-formal-policy"
+        "instruction-doc:autonomous-loop-formal-policy",
+        "template:research-job-presets"
       ]
     },
     "workflow-instructions": {
@@ -231,7 +233,8 @@
         "management-notice:repo-management",
         "instruction-doc:autonomous-loop-formal-policy",
         "template:lax-paper-artifact",
-        "template:lax-paper-workflow"
+        "template:lax-paper-workflow",
+        "template:research-job-presets"
       ]
     }
   },
@@ -669,8 +672,6 @@
         ],
         "depends_on_skills": [
           "lean-formalization-intake",
-          "lax-formalization",
-          "zenodo-artifact",
           "formal-skeleton-helper",
           "lean-explore-mcp",
           "lean-strict-verification-gate",
@@ -758,6 +759,23 @@
           "lax-formalization",
           "lean-strict-verification-gate",
           "zenodo-artifact"
+        ]
+      },
+      "research-job-presets": {
+        "description": "Agent-neutral research, review and native Lean job composition with optional Lax conversion and explicit recovery/assurance.",
+        "source": "research-job-presets.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity"
+        ],
+        "depends_on_skills": [
+          "agent-group-discuss",
+          "deep-research-workflow",
+          "lean-formalization-intake",
+          "lean-strict-verification-gate"
         ]
       }
     },

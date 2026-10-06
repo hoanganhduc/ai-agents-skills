@@ -413,8 +413,9 @@ class ApplyDefaultsTests(unittest.TestCase):
                 any("current_plan.json is missing" in error for error in result["errors"]),
                 result,
             )
-            # The non-plan pins still land, so a later escalation completes the loop.
-            self.assertTrue((loop / "goal_priority.json").is_file())
+            # Invalid defaults never partially publish or create a loop.
+            self.assertFalse(loop.exists())
+            self.assertFalse(policy.exists())
 
     @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_apply_defaults_never_escalates_a_non_enforce_plan(self) -> None:
@@ -424,13 +425,10 @@ class ApplyDefaultsTests(unittest.TestCase):
             plan = self._seed_plan(loop, mode="monitor")
             before = plan.read_bytes()
             result = self.apply.apply_defaults(loop, profile="general", policy_file=policy)
-            self.assertFalse(result["ok"], result)
+            self.assertTrue(result["ok"], result)
             self.assertFalse(result["current_plan_enforced"], result)
             self.assertEqual(plan.read_bytes(), before)
-            self.assertTrue(
-                any("goal-focus set-mode" in error for error in result["errors"]),
-                result,
-            )
+            self.assertEqual(result["goal_focus_mode"], "monitor")
 
     @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_legacy_credential_shadow_fails_before_any_campaign_write(self) -> None:

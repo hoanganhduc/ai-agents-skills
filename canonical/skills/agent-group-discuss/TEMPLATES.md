@@ -18,7 +18,7 @@ The user can request a template by name, or the orchestrator can auto-select bas
 
 If multiple templates match, prefer the more domain-specific one.
 
-Lean Formalization Team sessions open with Mathlib search, then `lax-formalization search`. Independently verify every reused Lax result and its semantic correspondence. Close with scoped verification evidence and an open-statement ledger; publication requires separate authorization.
+Lean Formalization Team sessions use ordinary Lean/Lake projects and pinned Mathlib search by default. Lax search is optional; independently verify each Lax result actually reused and its semantic correspondence. For a later Lax artifact, use the existing `from-existing-lean` workflow. Close with scoped verification evidence and an open-statement ledger; publication requires separate authorization.
 
 ## Template chaining
 
@@ -451,7 +451,7 @@ Codex adaptation:
   exists, Formalizer/Repair may use guided `/prove` or `/draft` (MVP); record
   `opengauss_run` provenance only — Checker still requires
   `lean-strict-verification-gate` and must not treat Gauss logs as claim support
-- prefer pure codex_spawned scaffold when OpenGauss is unavailable
+- prefer the current host's native formalizer when OpenGauss is unavailable
 - distinguish mathematical gaps from formalization friction
 
 Final output:

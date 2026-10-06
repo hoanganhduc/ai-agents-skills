@@ -23,19 +23,93 @@ reached the broker.
 
 This module renders one block, injected into both prompt builders.
 
-Contract: never raise and never block prompt construction. A loop with no
-standing orders still gets the standing rules; an unreadable ``loop_state.json``
-degrades to the standing rules alone.
+Rendering contract: never raise or block prompt construction. A loop with no
+standing orders still gets the standing rules. The separate host execution
+guard fails closed on unreadable policy, explicit empty allowlists, denied
+services, changed policy bindings, or active operator controls.
 """
 
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import stat
 from pathlib import Path
 from typing import Any
+
+
+def execution_policy_snapshot(run_dir: Path, service: str) -> dict[str, Any]:
+    """Bind a host effect to every explicit run allowlist and denylist.
+
+    This supplements an independently authorized backend request. Absence of a
+    run restriction is not itself dispatch authorization. Empty structured
+    allowlists remain empty; prose cannot grant machine-readable permission.
+    """
+    from state_transaction import _read_bytes_nofollow
+    from goal_focus import _compute_services
+
+    documents: dict[str, Any] = {}
+    for name in ("compute_policy.json", "loop_state.json", "current_plan.json"):
+        try:
+            raw = _read_bytes_nofollow(Path(run_dir) / name)
+        except FileNotFoundError:
+            documents[name] = None
+            continue
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError(f"compute policy source {name} must be an object")
+        documents[name] = value
+    external = documents["compute_policy.json"]
+    if external is not None and "policy" in external:
+        external = external["policy"]
+    state = documents["loop_state.json"] or {}
+    orders = state.get("standing_orders") or {}
+    if not isinstance(orders, dict):
+        raise ValueError("compute standing orders must be an object")
+    standing = orders.get("compute")
+    plan = documents["current_plan.json"] or {}
+    selected = plan.get("compute_policy")
+    policies = {"compute_policy.json": external, "standing_orders.compute": standing,
+                "current_plan.compute_policy": selected}
+    allowed: list[set[str]] = []
+    forbidden: set[str] = set()
+    for name, policy in policies.items():
+        if policy is None:
+            continue
+        if not isinstance(policy, dict):
+            raise ValueError(f"{name} requires structured compute policy before remote execution")
+        for field in ("allowed_services", "backends", "user_allowed_services", "pinned_allowed_services", "backend", "forbidden_services"):
+            if field not in policy:
+                continue
+            value = policy[field]
+            if not isinstance(value, (str, list)) or (isinstance(value, list) and any(not isinstance(item, str) or not item.strip() for item in value)):
+                raise ValueError(f"{name}.{field} is not a valid compute service list")
+            lanes = _compute_services(value)
+            if field == "forbidden_services":
+                forbidden.update(lanes)
+            else:
+                allowed.append(lanes)
+    if service in forbidden or any(service not in lanes for lanes in allowed):
+        raise ValueError(f"compute service {service} is not permitted by the current run policy")
+    revision = plan.get("plan_revision")
+    if revision is not None and (type(revision) is not int or revision < 0):
+        raise ValueError("compute policy plan revision is invalid")
+    binding = {"service": service, "policies": policies, "plan_revision": revision}
+    return {"schema_version": "execution_policy_binding.v1", "service": service,
+            "policy_sha256": hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            "plan_revision": revision, "explicit_restrictions": bool(allowed or forbidden)}
+
+
+def require_execution_policy(run_dir: Path, service: str, *, expected: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Immediately pre-effect control/policy check; never changes authority."""
+    if any((Path(run_dir) / name).exists() for name in ("STOP_REQUESTED", "PAUSE", "BLOCKED")):
+        raise ValueError("operator control blocks remote compute execution")
+    current = execution_policy_snapshot(run_dir, service)
+    if expected is not None and current != expected:
+        raise ValueError("compute policy changed after host execution registration")
+    return current
 
 # Host-accepted job_ref charset (append-iteration / Goal-Focus compute rows).
 _JOB_REF_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$")
@@ -57,26 +131,28 @@ STANDING_RULES = (
     "3. After a plan selects (or the loop allowlists) Hetzner or Kaggle, execute "
     "via the **lane skill**: Hetzner free `preflight` then `oneshot --confirm` "
     "(up→push→run→wait→fetch→down with guaranteed teardown); Kaggle free "
-    "`preflight` then `run --confirm`. Prefer disjoint dual-lane shards when "
+    "offline `preflight`, then reviewed one-unit CPU `push --bundle-sha256 HEX --confirm`, "
+    "status/wait/fetch bound to the recorded submission intent. Live GPU and multi-run "
+    "remain disabled. Prefer disjoint dual-lane shards when "
     "both lanes are allowed and the work partitions. Host-verify fetched "
     "`out/` / runner logs before banking; never bank agent summary alone.\n"
     "4. Ensure lane credentials are in the **process environment** before "
     "lifecycle verbs: Hetzner needs `HCLOUD_TOKEN` set (env only; never print, "
     "never argv, never an `hcloud` context file). If it is unset, use an "
     "installation- or loop-owned secret loader — do not invent a store path in "
-    "prompt prose. Kaggle needs its API token path as the kaggle skill documents. "
+    "prompt prose. Kaggle uses guarded KAGGLE_API_TOKEN environment projection, "
+    "never a token pathname copied into a job. "
     "Note: `doctor`/`preflight` may run without a Hetzner token, but "
     "`available`/`api_unreachable` without a loaded token is not a final "
     "infrastructure verdict.\n"
     "5. Treat user-named compute resources as a strict allowlist. When the loop "
     "names lanes, encode them as `policy.backends` on the job and use only "
     "those. Do not fall through to local or to an unlisted lane while any "
-    "listed lane is still available. If all listed lanes appear exhausted, "
-    "re-run **same-bundle lane preflight** from a token-injected environment "
-    "and record the fields (`adequate`, `available`, `budget_verdict`, "
-    "`reason`) before banking a multi-iteration infrastructure blocker. That "
-    "recheck is diagnostic; it does not widen the allowlist or authorize local "
-    "heavy substitute.\n"
+    "listed lane is still available. Known hard exhaustion or user exclusions "
+    "must not trigger retries or account probes. Inspect retained host evidence "
+    "and offline same-bundle adequacy first; live account diagnostics require "
+    "explicit authorization. Record availability, budget and unresolved causes; "
+    "a diagnostic never widens the allowlist or authorizes a heavy substitute.\n"
     "6. Local compute is for work that finishes in about a minute on one core: "
     "smoke tests, bundle validation, reading a result a lane already produced, "
     "or short `lake build` / `lake exe axiom_audit` when the loop allowlists "

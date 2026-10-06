@@ -42,6 +42,8 @@ PRIVILEGED_KEYS = frozenset(
         "force_after_iteration",
         "allow_create_skeleton",
         "lax_request",
+        "execution_backend",
+        "remote_request",
     }
 )
 _ENV_ON = frozenset({"1", "on", "true", "yes"})
@@ -100,12 +102,13 @@ BINDING_BLOCK = (
     "1. When path is formal-track: F1 intake → F2 Explore → F3 skeleton → F4a agent fill "
     "→ F4b OpenGauss optional interactive only → F5 strict gate → F6 fresh-context "
     "→ F7 acceptance.\n"
-    "1a. For paper formalization use the Lax format: search pinned mathlib, then "
-    "Lax candidates, then formalize new. Independently verify reused Lax sources, "
-    "proof closure and statement meaning; registration is not proof evidence. "
-    "Freeze reviewed concepts and use the host-pinned lax-formalization request. "
-    "No private-library intake is required. Prepare local artifacts only; "
-    "publication is outside the loop. Generic Lean work keeps its strict gate.\n"
+    "1a. Ordinary Lean/Lake is the default, including paper formalization. Search "
+    "pinned Mathlib first; Lax discovery is optional. Independently verify any "
+    "Lax dependency actually reused and its statement meaning. For a requested "
+    "Lax artifact, reuse the existing from-existing-lean workflow, freeze reviewed "
+    "concepts and use the host-pinned Lax request. Existing Lax jobs retain their "
+    "stronger gates. No private-library intake is required; publication is outside "
+    "the loop. Native Lean uses its existing verification and correspondence checks.\n"
     "2. Never auto-spawn OpenGauss (refuse-by-default without headless_qualified driver).\n"
     "3. Evidence labels only: lean_declaration_search | opengauss_run | formal_scan | "
     "formal_typecheck. Never promote those to claim_support alone.\n"
@@ -162,6 +165,8 @@ def default_formal_config() -> dict[str, Any]:
         "force_after_iteration": False,
         "allow_create_skeleton": False,
         "lax_request": "",
+        "execution_backend": "local",
+        "remote_request": "",
         "notes": [],
         "status": {
             "phase": "",
@@ -295,8 +300,9 @@ def _normalize_policy_dict(raw: dict[str, Any]) -> dict[str, Any]:
         cfg["policy"] = p if p in FORMAL_POLICIES else "off"
     if "project" in raw and raw["project"] is not None:
         cfg["project"] = str(raw["project"]).strip() or "formal/"
-    if "lax_request" in raw and raw["lax_request"] is not None:
-        cfg["lax_request"] = str(raw["lax_request"]).strip()
+    for key in ("lax_request", "execution_backend", "remote_request"):
+        if key in raw and raw[key] is not None:
+            cfg[key] = str(raw[key]).strip()
     if "force_credits" in raw:
         cfg["force_credits"] = _safe_int(raw.get("force_credits"), 3)
     for bkey in (
@@ -356,6 +362,8 @@ class FormalPolicy:
     force_after_iteration: bool = False
     allow_create_skeleton: bool = False
     lax_request: str = ""
+    execution_backend: str = "local"
+    remote_request: str = ""
     notes: list[str] = field(default_factory=list)
     status: dict[str, Any] = field(default_factory=dict)
     legacy_enabled: bool = False
@@ -372,6 +380,8 @@ class FormalPolicy:
             "force_after_iteration": self.force_after_iteration,
             "allow_create_skeleton": self.allow_create_skeleton,
             "lax_request": self.lax_request,
+            "execution_backend": self.execution_backend,
+            "remote_request": self.remote_request,
             "notes": list(self.notes),
             "status": dict(self.status),
         }
@@ -413,8 +423,11 @@ def load_formal_policy(
 
     if env.get("AAS_AUTOLOOP_FORMAL_PROJECT"):
         cfg["project"] = str(env["AAS_AUTOLOOP_FORMAL_PROJECT"]).strip() or cfg["project"]
-    if env.get("AAS_AUTOLOOP_LAX_REQUEST"):
-        cfg["lax_request"] = str(env["AAS_AUTOLOOP_LAX_REQUEST"]).strip()
+    for key, variable in (("lax_request", "AAS_AUTOLOOP_LAX_REQUEST"),
+            ("execution_backend", "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND"),
+            ("remote_request", "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST")):
+        if env.get(variable):
+            cfg[key] = str(env[variable]).strip()
     if env.get("AAS_AUTOLOOP_FORMAL_FORCE_CREDITS") is not None:
         cfg["force_credits"] = _safe_int(env.get("AAS_AUTOLOOP_FORMAL_FORCE_CREDITS"), 3)
     if "AAS_AUTOLOOP_FORMAL_ALLOW_PATH_STEAL" in env:
@@ -431,8 +444,9 @@ def load_formal_policy(
             cfg["policy"] = p if p in FORMAL_POLICIES else "off"
         if cli.get("project") is not None:
             cfg["project"] = str(cli["project"]).strip() or cfg["project"]
-        if cli.get("lax_request") is not None:
-            cfg["lax_request"] = str(cli["lax_request"]).strip()
+        for key in ("lax_request", "execution_backend", "remote_request"):
+            if cli.get(key) is not None:
+                cfg[key] = str(cli[key]).strip()
         if cli.get("force_credits") is not None:
             cfg["force_credits"] = _safe_int(cli.get("force_credits"), 3)
         for bkey in (
@@ -465,6 +479,8 @@ def load_formal_policy(
         force_after_iteration=bool(cfg.get("force_after_iteration")),
         allow_create_skeleton=bool(cfg.get("allow_create_skeleton")),
         lax_request=str(cfg.get("lax_request") or ""),
+        execution_backend=str(cfg.get("execution_backend") or "local"),
+        remote_request=str(cfg.get("remote_request") or ""),
         notes=list(cfg.get("notes") or []),
         status=dict(cfg.get("status") or {}),
         legacy_enabled=legacy_enabled,
@@ -769,6 +785,8 @@ def pin_privileged_policy(pol: FormalPolicy) -> dict[str, Any]:
         "force_after_iteration": pol.force_after_iteration,
         "allow_create_skeleton": pol.allow_create_skeleton,
         "lax_request": pol.lax_request,
+        "execution_backend": pol.execution_backend,
+        "remote_request": pol.remote_request,
         "pinned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pin_source": "drive_start",
     }
@@ -777,6 +795,11 @@ def pin_privileged_policy(pol: FormalPolicy) -> dict[str, Any]:
             pin["lax_request_sha256"] = hashlib.sha256(_read_regular_text(Path(pol.lax_request)).encode()).hexdigest()
         except OSError:
             pin["lax_request_sha256"] = "unavailable"
+    if pol.remote_request:
+        try:
+            pin["remote_request_sha256"] = hashlib.sha256(_read_regular_text(Path(pol.remote_request)).encode()).hexdigest()
+        except OSError:
+            pin["remote_request_sha256"] = "unavailable"
     return pin
 
 
@@ -818,6 +841,8 @@ def export_formal_env(pol: FormalPolicy) -> dict[str, str]:
         "AAS_AUTOLOOP_FORMAL_TYPECHECK": "1" if pol.typecheck else "0",
         "AAS_AUTOLOOP_FORMAL_FORCE": "1" if pol.force_after_iteration else "0",
         "AAS_AUTOLOOP_LAX_REQUEST": pol.lax_request,
+        "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND": pol.execution_backend,
+        "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST": pol.remote_request,
     }
 
 
@@ -1108,6 +1133,22 @@ def formal_force_tick(
             # generic scanner or promote stale cached Lax evidence here.
             report["ledger"].append({"step": "lax_verification", "decision": "deferred",
                 "detail": "Run host formal-terminal-state with the pinned Lax request; independent replay is required."})
+            _write_force_report(run_path, report)
+            return report
+
+        if pol.execution_backend != "local":
+            # The remote supervisor owns one persistent attempt. A hygiene
+            # tick must not fall back to running the same build on this host.
+            verdict = evaluate_formal_terminal_state(run_path, root=root, policy=pol, pin=pin,
+                reason="remote_formal_hygiene", write=False)
+            report["execution_backend"] = pol.execution_backend
+            report["remote_verification"] = verdict.get("remote_verification", {})
+            report["verification_pending"] = bool(verdict.get("verification_pending"))
+            report["ledger"].append({"step": "remote_verification", "decision": verdict["terminal_state"],
+                                      "detail": verdict.get("detail", "")})
+            if verdict["terminal_state"] == "sorry_free_artifact":
+                report.update(terminal="issue_free", hygiene_status="clean",
+                              claim_support_status=HOST_MACHINE_CHECKED_CLAIM_SUPPORT)
             _write_force_report(run_path, report)
             return report
 
@@ -1576,6 +1617,7 @@ def evaluate_formal_terminal_state(
     require_typecheck: bool = True,
     integrity: dict[str, Any] | None = None,
     write: bool = True,
+    remote_purpose_key: str | None = None,
 ) -> dict[str, Any]:
     """Host-authored terminal verdict for a formal-track run. Never raises.
 
@@ -1629,9 +1671,40 @@ def evaluate_formal_terminal_state(
             return verdict
         active_runner = runner if runner is not None else default_gate_runner
         if (proj / "manifest.yaml").is_file() and (proj / "concepts/lakefile.toml").is_file() and (proj / "proofs/lakefile.toml").is_file():
+            if pol.execution_backend != "local":
+                verdict["detail"] = "remote_lax_isolation_unsupported"
+                _persist(verdict)
+                return verdict
             verdict.update(_evaluate_lax_terminal(proj, active_runner, dict(pin or pol.pin or read_host_pin(run_path))))
             _persist(verdict)
             return verdict
+        if pol.execution_backend != "local":
+            if pol.execution_backend != "kaggle-cpu":
+                verdict["detail"] = "unsupported_formal_execution_backend"
+                _persist(verdict)
+                return verdict
+            import remote_formal
+            host_pin = dict(pin or pol.pin or read_host_pin(run_path))
+            purpose = remote_purpose_key or remote_formal.digest(remote_formal.canonical(["terminal", str(run_path.resolve())]))
+            remote = remote_formal.advance(run_path, proj, host_pin, purpose)
+            verdict["execution_backend"] = "kaggle-cpu"
+            verdict["remote_verification"] = {key: value for key, value in remote.items() if key != "reports"}
+            if remote.get("status") != "passed" or remote.get("admission_suspended"):
+                verdict["detail"] = "verification_pending" if remote.get("status") == "verification_pending" else str(remote.get("detail") or "remote_verification_incomplete")
+                verdict["verification_pending"] = remote.get("status") == "verification_pending"
+                _persist(verdict)
+                return verdict
+            reports = remote["reports"]
+            def remote_runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+                if payload.get("project") != str(proj):
+                    return {"ok": False, "status": "remote_project_binding_mismatch"}
+                phase = {"lean_strict_verification_gate.scan": "scan",
+                    "lean_strict_verification_gate.verify_typecheck": "build",
+                    "lean_strict_verification_gate.axiom_audit": "axiom",
+                    "lean_strict_verification_gate.kernel_check": "kernel"}.get(name)
+                report = reports.get(phase) or {}
+                return {"ok": report.get("ok") is True, "report": report, "execution_backend": "kaggle-cpu"}
+            active_runner = remote_runner
         scan_result = active_runner(
             "lean_strict_verification_gate.scan", {"project": str(proj)}
         )
@@ -1675,6 +1748,15 @@ def evaluate_formal_terminal_state(
             "source_files": source_files,
             "source_digest_scope": source_scope,
         }
+        if pol.execution_backend == "kaggle-cpu":
+            # Stable semantics across fresh executions: no attempt nonce or
+            # provider version enters the candidate's source binding.
+            binding = {"request_sha256": remote["request_sha256"], "input_digest": remote["input_digest"],
+                       "execution_backend": "kaggle-cpu"}
+            binding_digest = hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            verdict["gate"]["scan"].update(source_digest=binding_digest,
+                source_digest_scope="host_request_and_complete_source_snapshot", formal_binding=binding,
+                formal_binding_digest=binding_digest)
         verdict["obligations"] = [
             {
                 "file": str(f.get("file") or ""),
@@ -1690,6 +1772,17 @@ def evaluate_formal_terminal_state(
                 {"project": str(proj), "timeout": typecheck_timeout_s()},
             )
             ver_report = ver.get("report") if isinstance(ver, dict) else None
+            if pol.execution_backend == "local" and isinstance(ver_report, dict):
+                context_digest = (ver_report.get("post_verification_project_context_fingerprint")
+                                  or ver_report.get("verification_project_context_fingerprint"))
+                if isinstance(context_digest, str) and context_digest:
+                    scan_binding = verdict["gate"]["scan"]
+                    scan_binding["scanned_source_digest"] = scan_binding["source_digest"]
+                    scan_binding["source_digest"] = hashlib.sha256(json.dumps(
+                        ["native_source_context.v1", scan_binding["source_digest"], context_digest],
+                        separators=(",", ":")).encode()).hexdigest()
+                    scan_binding["source_binding_version"] = "native_source_context.v1"
+                    scan_binding["context_digest"] = context_digest
             if isinstance(ver_report, dict) and ver_report.get("lean_check_status"):
                 typecheck_status = str(ver_report["lean_check_status"])
             elif isinstance(ver, dict):
@@ -1877,7 +1970,12 @@ def reverify_formal_evidence(
             reason="host_reverification_at_finalize",
             require_typecheck=True,
             write=False,
+            remote_purpose_key=hashlib.sha256(json.dumps(["reverification", staged], sort_keys=True).encode()).hexdigest(),
         )
+        if observed.get("verification_pending"):
+            result.update(status="verification_pending", ok=False, detail="verification_pending",
+                          verification_pending=True, remote_verification=observed.get("remote_verification"))
+            return result
         observed_gate = observed.get("gate") if isinstance(observed, dict) else {}
         observed_gate = observed_gate if isinstance(observed_gate, dict) else {}
         observed_scan = observed_gate.get("scan")

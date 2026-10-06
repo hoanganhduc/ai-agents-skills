@@ -327,6 +327,8 @@ def budget_gate(*, job_id: str, server_spec: dict[str, Any] | None, config: Any,
         state_root=Path(state_root), backend="hetzner", job_id=job_id,
         worst_case=wc, available=per_day, unit="eur",
     )
+    if res.get("idempotent"):
+        raise HetznerBudgetError("attempt already reserved; reconcile existing execution before any new dispatch")
     res.update({"worst_case": round(wc, 4), "per_job_cap": per_job, "per_day_cap": per_day,
                 "server_type": server_spec.get("name"), "count": n})
     if not res["ok"]:

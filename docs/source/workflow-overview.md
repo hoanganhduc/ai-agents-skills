@@ -62,11 +62,12 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
-- **Paper formalization:** search pinned Mathlib, then independently verify
-  relevant Lax results before reuse. Keep source and evidence per paper, use
-  CI for machine checks, and prepare Zenodo as a secondary archive. Follow
-  [Lax Formalization And Zenodo Archival](lax-formalization.md); publication
-  requires a separate request after local verification.
+- **Paper formalization:** use ordinary Lean/Lake and pinned Mathlib by default.
+  Lax discovery is optional; independently verify any selected Lax dependency.
+  Local or authorized remote execution keeps proof evidence separate from
+  paper correspondence. For later Lax delivery, reuse the existing
+  `from-existing-lean` workflow in [Lax Formalization And Zenodo Archival](lax-formalization.md).
+  Archival and publication remain optional, separately authorized operations.
 - **Reusable workflow improvement:** `self-improving-agent` records local
   `.learnings/` entries, then proposes repo-first changes across `canonical/`,
   `manifest/`, generated docs, runtime helpers, and tests with explicit

@@ -64,7 +64,7 @@ explicit confirm.
 - `push --job DIR --owner USER --bundle-sha256 HEX --confirm` -- write intent for the exact reviewed ref before any network call, verify `whoami()` matches `USER`, then push one reviewed one-unit kernel.
 - `status <ref>` -- kernel run state.
 - `wait <ref>` -- poll a kernel until it completes / errors or the wall cap hits.
-- `fetch <ref> --job DIR --dest DIR` -- download only flat allowlisted JSON outputs and verify them against the original manifest.
+- `fetch <ref> --submission-intent PATH --job DIR --dest DIR` -- fetch only the exact accepted version and manifest-allowlisted bounded JSON/log/text outputs. Structural checkpoint validation is distinct from host formal verification.
 - `run --job DIR --dry-run` -- report the multi-run shape. Live multi-run is currently fail-closed pending crash-safe recovery.
 
 Use `--dry-run` on `push` and `run` to print the plan with nothing submitted. A live push must
@@ -124,3 +124,19 @@ core-h (5 kernels x 4 cores x 12h) or for a single chunk that needs more than 12
 
 This lane reuses the broker's `research_compute` routing and ledger code, which installs with
 the Modal lane, so install them together (all are in the `full-research` profile).
+
+## Execution identity and network policy
+
+`push` returns a durable submission-intent path and SDK-observed numeric kernel/version
+identity. Use that intent for status, wait and fetch; status/list select `vN`, while
+file downloads select numeric N. No recovery path substitutes latest or retries an
+ambiguous submission. Preserve partial pagination and download evidence.
+
+Job `enable_internet` defaults false and requires host `[kaggle].allow_internet`.
+Bind bootstrap/lockfiles in upload_files and validate downloaded dependency evidence
+in the purpose-specific host verifier. Native Lean does not require Lax; Internet
+is kernel-wide and native execution does not claim Lax's Docker isolation.
+
+Doctor/preflight/dry-run are offline. Bootstrap may validate account readiness;
+it is not a remote dependency installer. Live one-unit CPU execution remains the
+only enabled submission shape; planning GPU/multi-run does not authorize execution.

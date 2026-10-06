@@ -11,7 +11,7 @@ formal:
   policy: off
   typecheck: false
 compute:
-  backends: [local, kaggle, modal]
-  forbidden_services: [hetzner, github-actions]
+  backends: [local, kaggle]
+  forbidden_services: [modal, hetzner, github-actions]
 panel:
   enabled: true

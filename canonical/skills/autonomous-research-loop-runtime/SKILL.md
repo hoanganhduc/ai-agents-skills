@@ -5,6 +5,12 @@ description: Runtime helper for autonomous-research-loop ledgers plus headless d
 
 # Autonomous Research Loop Runtime
 
+For optional native Lean verification on Kaggle CPU, read
+[native Lean remote execution](references/native-lean-remote.md). Ordinary
+Lean/Lake is independent of Lax; its existing `from-existing-lean` workflow is
+used only when a Lax artifact is selected later. The remote lane preserves
+host-bound evidence, pending verification and explicit network/compute policy.
+
 This companion skill provides offline helper scripts for the
 `autonomous-research-loop` ledger contract.
 

@@ -12,12 +12,16 @@ workflow that uses `cross-agent-delegation` packets toward a live recipient.
 
 ## Classification (host-verified)
 
-Record the class from the provider's own stderr/stdout or exit text. Do not
-infer credit exhaustion from a silent hang or empty reply alone.
+Record the class only from host-captured provider diagnostics: a structured error
+envelope or an anchored CLI error on the separate stderr transport after a
+nonzero exit. Model narration, stdout, silence, and empty replies cannot
+establish credit exhaustion. Unsupported diagnostic formats remain ordinary
+failures until an adapter is verified.
 
 | Class | Examples | Treat as |
 |-------|----------|----------|
-| **quota_or_credit** | usage/weekly/monthly limit, “hit your weekly limit · resets …”, HTTP 402 / “usage balance exhausted”, rate limit, 429, out of credits, anchored `quota exceeded|limit|…`, insufficient credit | Pause that **provider**, not the research goal. With `--max-quota-waits N` (recommend **3**): after **N** consecutive signals exit **5**; outer supervisor session-excludes as temporary credit and switches to the first available primary |
+| **hard_quota** | HTTP 402, insufficient_quota, exhausted credits, weekly/monthly usage cap | Exclude immediately and persist until an explicit operator restoration. Drive exits **18**, without a retry or probe. |
+| **quota** | HTTP 429, rate_limit_error, too many requests | Bounded transient throttling. Drive exits **5** when the configured wait or persistent attempt cap is reached; the supervisor may temporarily exclude this provider. |
 | **auth_or_session** | 401 Unauthorized, token_invalidated, refresh_token revoked, sign in again | Re-auth offline or rotate primary; **not** a credit pause (drive exit **7**) |
 | **transport** | DNS, network disconnect, ENOTIMP, connection refused | Retry same primary / different-family fallback; not a credit stop |
 | **empty_or_unusable** | exit 0 with preamble-only / no verdict | Mark unusable; do not count as credit |
@@ -40,18 +44,23 @@ infer credit exhaustion from a silent hang or empty reply alone.
      (`arl_drive_supervisor.sh` + `{loop}/failover.json` `primary_order` /
      alias `primary_fallback`). The supervisor is the sole consumer of that
      order; stock `drive` stays single-provider. On exit 5/6/7 it
-     **session-excludes** the dead primary (exclude, do not thrash) and may
-     sync `exclude_until_credit` on the panel.
-   - `quota_wait` / pause-and-retry is correct **only** when no alternate
-     primary is configured or remaining, or the operator explicitly chose
-     wait-only (`--max-quota-waits 0` with a single primary). Multi-primary +
-     waits 0 is refused by the supervisor.
-   - When waiting, re-check `STOP_REQUESTED` / `PAUSE` / `done` each cycle
-     (interruptible sleep).
+     **temporarily excludes** the unavailable primary. Exit 18 separately
+     persists the hard exclusion and may sync it to the panel.
+   - Ordinary execution attempts are capped at three per pending iteration and
+     phase, persisted through restarts and provider rotation. A lower explicit
+     cap is honored. `--max-quota-waits 0` does not remove that execution cap.
+   - Hard quota exits 18 immediately; it never enters a wait/retry path. A hard
+     exclusion has no automatic TTL. Soft throttling, missing binaries, and
+     authentication failures do not create permanent credit exclusions.
+   - Waiting checks `STOP_REQUESTED` / `PAUSE`; new workers receive at most the
+     remaining wall budget after reserving cleanup time. This reservation is
+     not a claim of an independently enforced absolute cleanup deadline.
 4. **Panel and multi-agent rosters.** Host panel (`panel.json` /
    `standing_orders.panel`) and AGD invite lists should set
    `exclude_until_credit` (or an equivalent exclude list) for exhausted
-   providers. Remaining providers must still satisfy different-family rules
+   providers. An empty filtered roster remains empty, including smoke probes.
+   Explicit available providers remain selectable, but relisting an excluded
+   provider does not restore it. Remaining providers must still satisfy different-family rules
    when those rules are enabled; if they cannot, fail closed on the multi-agent
    gate and continue single-path host work only when standing orders allow.
 5. **Cross-agent delegation packets.** Credit exhaustion is a **parent
@@ -102,12 +111,13 @@ Preferred loop-local fields (any one is enough if documented for the run):
 
 ## Operator checklist when credits run out
 
-1. Confirm class = `quota_or_credit` from a concrete log line (not guesswork).
+1. Confirm `hard_quota` from an admitted host diagnostic; distinguish soft throttling.
 2. Update `panel.json` / standing orders: drop or exclude the exhausted
    provider(s).
 3. If the **drive primary** is exhausted: stop that drive process and restart
    with `--provider <funded>`; do not leave `max-quota-waits 0` spinning on a
-   known dead primary when alternatives exist.
+   known dead primary when alternatives exist. Clear any permanent supervisor
+   exclusion only after the operator has restored the provider.
 4. Notify (optional remote-bridge) with a short operational status; do not claim
    research progress.
 5. When credits return: remove from `exclude_until_credit`, restore roster, and

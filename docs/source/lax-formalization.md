@@ -1,7 +1,10 @@
 # Lax Formalization And Zenodo Archival
 
-Keep a separate Git repository for each paper's formalization. Search pinned
-Mathlib first, then look for reusable Lax declarations. Independently rebuild
+Ordinary Lean/Lake formalization does not require Lax. This page applies when
+a Lax artifact or optional archive is selected. The existing `from-existing-lean`
+workflow adapts selected source from a normal Lean repository later.
+Keep artifacts per paper. Search pinned Mathlib first; Lax discovery is optional
+outside a selected Lax workflow. Independently rebuild
 the selected Lax results, close their actual proof dependencies, and review
 whether the formal statements match the paper. Registration alone is not proof
 evidence. Zenodo is the secondary archive; no personal Lean library is required.

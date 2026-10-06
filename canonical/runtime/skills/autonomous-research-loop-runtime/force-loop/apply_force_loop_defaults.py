@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -40,7 +41,11 @@ MAX_LEGACY_POLICY_BYTES = 16_384
 # Compute lanes are not pure pins: the value selects which credential lane the
 # start path is allowed to project, so it can never be inherited from an
 # agent-writable legacy shadow.
-NON_MIGRATABLE_POLICY_KEYS = frozenset({"AAS_FORCE_LOOP_COMPUTE_LANES"})
+NON_MIGRATABLE_POLICY_KEYS = frozenset({
+    "AAS_FORCE_LOOP_COMPUTE_LANES",
+    "AAS_AUTOLOOP_FORMAL_EXECUTION_BACKEND",
+    "AAS_AUTOLOOP_FORMAL_REMOTE_REQUEST",
+})
 PENDING_JOURNAL_ERROR = (
     "a Goal-Focus transaction journal is pending; run drive or "
     "goal-focus recovery before re-applying pins"
@@ -146,7 +151,7 @@ def _legacy_policy_preflight(run_dir: Path) -> tuple[Path | None, dict[str, str]
         if observed_names & NON_MIGRATABLE_POLICY_KEYS:
             raise ValueError(
                 "legacy force-loop policy selects compute lanes; set "
-                f"{sorted(NON_MIGRATABLE_POLICY_KEYS)[0]} in the host policy file "
+                f"{sorted(observed_names & NON_MIGRATABLE_POLICY_KEYS)[0]} in the host policy file "
                 "yourself and remove the loop-local shadow before retrying"
             )
         try:
@@ -214,10 +219,13 @@ def _read_json_strict(path: Path) -> dict[str, Any]:
     with profile defaults.
     """
 
-    if not path.is_file():
+    if not path.exists() and not path.is_symlink():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        from state_transaction import TransactionError, _read_bytes_nofollow
+        data = json.loads(_read_bytes_nofollow(path))
+    except TransactionError as exc:
+        raise ValueError(f"{path.name} is unsafe: {exc}") from exc
     except OSError as exc:
         raise ValueError(f"{path.name} is unreadable: {exc}") from exc
     except json.JSONDecodeError as exc:
@@ -263,11 +271,11 @@ def apply_goal_priority(run_dir: Path) -> dict[str, Any]:
     existing = _read_json_strict(path)
     base = _load_goal_priority_base()
     if existing:
-        # Preserve campaign structure; force discipline pins.
+        # A default fills gaps; an existing operator choice remains authority.
         merged = dict(existing)
         merged["schema_version"] = existing.get("schema_version") or base["schema_version"]
-        merged["enabled"] = True
-        merged["discipline_mode"] = "hard"
+        merged.setdefault("enabled", True)
+        merged.setdefault("discipline_mode", "hard")
         if not merged.get("primary_campaign"):
             merged["primary_campaign"] = base["primary_campaign"]
         if not merged.get("campaign_registry"):
@@ -286,7 +294,18 @@ def apply_goal_priority(run_dir: Path) -> dict[str, Any]:
 
 def apply_compute_policy(run_dir: Path, profile: str) -> dict[str, Any]:
     path = run_dir / "compute_policy.json"
+    if path.exists():
+        return _read_json_strict(path)
     data = _load_profile_compute(profile)
+    state = _read_json_strict(run_dir / "loop_state.json")
+    standing = (state.get("standing_orders") or {}).get("compute")
+    if isinstance(standing, dict):
+        data = dict(standing)
+    else:
+        # An absent policy grants no paid lane. Explicit configured policies
+        # above are preserved, including an explicitly authorized paid lane.
+        policy = data.get("policy", data)
+        policy["backends"] = [p for p in policy.get("backends", []) if p in {"local", "kaggle"}]
     _atomic_write_json(path, data)
     return data
 
@@ -331,12 +350,12 @@ def apply_formal_policy(run_dir: Path, profile: str) -> dict[str, Any] | None:
     formal_dir = run_dir / "formal"
     formal_dir.mkdir(parents=True, exist_ok=True)
     path = formal_dir / "formal_policy.json"
-    existing = _read_json(path)
+    existing = _read_json_strict(path)
     cfg = {
         "schema_version": "formal_policy.v1",
         "policy": "on",
         "project": existing.get("project") or ".",
-        "force_credits": int(existing.get("force_credits") or 3),
+        "force_credits": int(existing.get("force_credits", 3)),
         "allow_path_steal": bool(existing.get("allow_path_steal", False)),
         "typecheck": True,
         "force_after_iteration": bool(existing.get("force_after_iteration", False)),
@@ -353,6 +372,11 @@ def apply_formal_policy(run_dir: Path, profile: str) -> dict[str, Any] | None:
             "updated_at": "",
         },
     }
+    cfg.update(existing)
+    state = _read_json_strict(run_dir / "loop_state.json")
+    explicit = (state.get("standing_orders") or {}).get("formal")
+    if isinstance(explicit, dict):
+        cfg.update(explicit)
     _atomic_write_json(path, cfg)
     return cfg
 
@@ -399,21 +423,23 @@ def apply_standing_orders(
     policy = compute.get("policy") if isinstance(compute.get("policy"), dict) else compute
     backends = list(policy.get("backends") or [])
     forbidden = list(policy.get("forbidden_services") or [])
-    so["compute"] = {
+    so.setdefault("compute", {
         "backends": backends,
         "forbidden_services": forbidden,
         "note": str(compute.get("notes") or "force-loop compute pin"),
-    }
-    so["goal_focus"] = {
-        "mode": "enforce",
+    })
+    plan = _read_json_strict(run_dir / "current_plan.json")
+    so.setdefault("goal_focus", {
+        "mode": plan.get("enforcement_mode", "enforce"),
         "note": "force-loop default: Goal Focus enforce + goal_priority hard",
-    }
-    so["goal_priority"] = {
-        "enabled": True,
-        "discipline_mode": "hard",
-    }
+    })
+    priority = _read_json_strict(run_dir / "goal_priority.json")
+    so.setdefault("goal_priority", {
+        "enabled": priority.get("enabled", True),
+        "discipline_mode": priority.get("discipline_mode", "hard"),
+    })
     notify = so.get("notify") if isinstance(so.get("notify"), dict) else {}
-    notify["mode"] = "auto"
+    notify.setdefault("mode", "off" if state.get("notify_channel") in {"off", "none", "disabled"} or state.get("notify_policy") == "off" else "auto")
     notify["schema"] = notify.get("schema") or "aas.autoloop.notify.v2"
     notify["schema_version"] = notify.get("schema_version") or "2.1"
     notify["body_profile"] = notify.get("body_profile") or "operator_full"
@@ -423,18 +449,17 @@ def apply_standing_orders(
 
     if profile == "formal" and formal:
         so_formal = so.get("formal") if isinstance(so.get("formal"), dict) else {}
-        so_formal.update(
-            {
+        for key, value in {
                 "policy": formal.get("policy", "on"),
                 "project": formal.get("project", "."),
-                "typecheck": True,
+                "typecheck": formal.get("typecheck", True),
                 "force_after_iteration": bool(formal.get("force_after_iteration", False)),
-                "force_credits": int(formal.get("force_credits") or 3),
+                "force_credits": int(formal.get("force_credits", 3)),
                 "allow_path_steal": bool(formal.get("allow_path_steal", False)),
                 "allow_create_skeleton": bool(formal.get("allow_create_skeleton", True)),
                 "note": "force-loop formal profile; distinct from formal_policy=force hygiene",
-            }
-        )
+            }.items():
+            so_formal.setdefault(key, value)
         so["formal"] = so_formal
 
     panel = so.get("panel") if isinstance(so.get("panel"), dict) else {}
@@ -463,7 +488,6 @@ def _validated_policy_path(run_dir: Path, policy_file: Path) -> Path:
         current = current.parent
     if current.is_symlink():
         raise ValueError("force-loop policy parent must not be symlinked")
-    dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     for parent in [dest.parent, *dest.parent.parents]:
         if parent.is_symlink():
             raise ValueError("force-loop policy parent chain must not contain links")
@@ -500,6 +524,41 @@ def _reproject_windows_policy(dest: Path, values: dict[str, str]) -> None:
     os.environ[WINDOWS_PROJECTION_SOURCE_ENV] = str(dest)
 
 
+def _host_env_default_values(
+    run_dir: Path,
+    profile: str,
+    existing: dict[str, str],
+    *,
+    migrated_policy: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Fill missing pins from an already admitted host authority."""
+    values = dict(existing)
+    for key, value in (migrated_policy or {}).items():
+        values.setdefault(key, value)
+    state = _read_json_strict(run_dir / "loop_state.json")
+    standing = state.get("standing_orders") or {}
+    formal = standing.get("formal") or _read_json_strict(run_dir / "formal/formal_policy.json")
+    priority = standing.get("goal_priority") or _read_json_strict(run_dir / "goal_priority.json")
+    for key, value in {
+            "AAS_AUTOLOOP_GOAL_PRIORITY": "on" if priority.get("enabled", True) else "off",
+            "AAS_AUTOLOOP_NOTIFY": str((standing.get("notify") or {}).get("mode", "auto")),
+            "AAS_AUTOLOOP_FORMAL_POLICY": str(formal.get("policy", "on" if profile == "formal" else "off")),
+        }.items():
+        values.setdefault(key, value)
+    if profile == "formal":
+        values.setdefault("AAS_AUTOLOOP_FORMAL_TYPECHECK", "1" if formal.get("typecheck", True) else "0")
+    return values
+
+
+def _host_env_text(values: dict[str, str]) -> str:
+    lines = [
+        "# Generated by apply_force_loop_defaults.py — strict KEY=VALUE only.",
+        "# Load via load_loop_env.py; never shell-source agent-writable trees.",
+    ]
+    lines.extend(f"{key}={values[key]}" for key in sorted(values))
+    return "\n".join(lines) + "\n"
+
+
 def write_host_env_defaults(
     run_dir: Path,
     profile: str,
@@ -509,37 +568,19 @@ def write_host_env_defaults(
 ) -> Path:
     """Write the host policy outside the agent-writable loop tree."""
     dest = _validated_policy_path(run_dir, policy_file)
-    # Idempotence: preserve operator-set keys already in the destination
-    # (e.g. AAS_FORCE_LOOP_COMPUTE_LANES) instead of silently deleting them
-    # on re-runs; migrated and fixed defaults still override below.
-    values: dict[str, str] = {}
+    # Preserve explicit operator choices, including selected compute lanes.
+    existing: dict[str, str] = {}
     if dest.is_file():
         from load_loop_env import EnvLoadError, load_env_file
 
         try:
-            values.update(load_env_file(dest, forbidden_root=run_dir))
+            existing = load_env_file(dest, forbidden_root=run_dir)
         except EnvLoadError as exc:
             raise ValueError(
                 f"existing host force-loop policy is unreadable; fix or move it first: {exc}"
             ) from exc
-    values.update(migrated_policy or {})
-    values.update(
-        {
-            "AAS_AUTOLOOP_GOAL_PRIORITY": "on",
-            "AAS_AUTOLOOP_NOTIFY": "auto",
-            "AAS_AUTOLOOP_FORMAL_POLICY": "on" if profile == "formal" else "off",
-        }
-    )
-    if profile == "formal":
-        values["AAS_AUTOLOOP_FORMAL_TYPECHECK"] = "1"
-    else:
-        values.pop("AAS_AUTOLOOP_FORMAL_TYPECHECK", None)
-    lines = [
-        "# Generated by apply_force_loop_defaults.py — strict KEY=VALUE only.",
-        "# Load via load_loop_env.py; never shell-source agent-writable trees.",
-    ]
-    lines.extend(f"{key}={values[key]}" for key in sorted(values))
-    _atomic_write_text(dest, "\n".join(lines) + "\n")
+    values = _host_env_default_values(run_dir, profile, existing, migrated_policy=migrated_policy)
+    _atomic_write_text(dest, _host_env_text(values))
     if os.name == "posix":
         dest.chmod(0o600)
     else:
@@ -549,25 +590,43 @@ def write_host_env_defaults(
 
 def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = None) -> list[str]:
     """Return list of missing-default errors (empty = ok)."""
+    if policy_file is None:
+        return _verify_effective(run_dir, profile, None, "host force-loop policy path missing")
+    try:
+        from load_loop_env import load_env_file
+
+        policy = load_env_file(policy_file, forbidden_root=run_dir)
+    except Exception as exc:
+        return _verify_effective(run_dir, profile, None, f"host force-loop policy is missing or unsafe: {exc}")
+    return _verify_effective(run_dir, profile, policy)
+
+
+def _verify_effective(
+    run_dir: Path,
+    profile: str,
+    policy: dict[str, str] | None,
+    policy_error: str = "",
+) -> list[str]:
+    """Check loop pins against admitted host values or a private staged proposal."""
     errors: list[str] = []
     gp = _read_json(run_dir / "goal_priority.json")
-    if not gp.get("enabled"):
-        errors.append("goal_priority.enabled is not true")
-    if str(gp.get("discipline_mode") or "").lower() != "hard":
-        errors.append("goal_priority.discipline_mode is not hard")
+    if not isinstance(gp.get("enabled"), bool):
+        errors.append("goal_priority.enabled must be boolean")
+    if str(gp.get("discipline_mode") or "").lower() not in {"hard", "soft"}:
+        errors.append("goal_priority.discipline_mode must be hard/soft")
 
     state = _read_json(run_dir / "loop_state.json")
     so = state.get("standing_orders") if isinstance(state.get("standing_orders"), dict) else {}
     gf = so.get("goal_focus") if isinstance(so.get("goal_focus"), dict) else {}
-    if str(gf.get("mode") or "").lower() != "enforce":
-        errors.append("standing_orders.goal_focus.mode is not enforce")
+    if str(gf.get("mode") or "").lower() not in {"enforce", "monitor", "off"}:
+        errors.append("standing_orders.goal_focus.mode is invalid")
     gpp = so.get("goal_priority") if isinstance(so.get("goal_priority"), dict) else {}
-    if str(gpp.get("discipline_mode") or "").lower() != "hard":
-        errors.append("standing_orders.goal_priority.discipline_mode is not hard")
+    if str(gpp.get("discipline_mode") or "").lower() not in {"hard", "soft"}:
+        errors.append("standing_orders.goal_priority.discipline_mode is invalid")
     notify = so.get("notify") if isinstance(so.get("notify"), dict) else {}
     mode = str(notify.get("mode") or "").lower()
-    if mode not in {"auto", "on"}:
-        errors.append("standing_orders.notify.mode is not auto/on")
+    if mode not in {"auto", "on", "off", "none", "disabled"}:
+        errors.append("standing_orders.notify.mode is invalid")
     channel = str(state.get("notify_channel") or "").lower()
     if mode in {"auto", "on"} and channel in {"off", "none", "disabled"}:
         errors.append("loop_state.notify_channel is off while the notify pin is auto/on")
@@ -588,20 +647,13 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
     ):
         errors.append("standing_orders.compute does not mirror compute_policy.json")
 
-    if policy_file is None:
-        errors.append("host force-loop policy path missing")
+    if policy is None:
+        errors.append(policy_error)
     else:
-        try:
-            from load_loop_env import load_env_file
-
-            policy = load_env_file(policy_file, forbidden_root=run_dir)
-        except Exception as exc:
-            errors.append(f"host force-loop policy is missing or unsafe: {exc}")
-        else:
-            if policy.get("AAS_AUTOLOOP_GOAL_PRIORITY") != "on":
-                errors.append("host policy missing AAS_AUTOLOOP_GOAL_PRIORITY=on")
-            if policy.get("AAS_AUTOLOOP_NOTIFY") not in {"auto", "on"}:
-                errors.append("host policy missing notify ON")
+        if policy.get("AAS_AUTOLOOP_GOAL_PRIORITY") not in {"on", "off"}:
+            errors.append("host policy missing goal priority choice")
+        if policy.get("AAS_AUTOLOOP_NOTIFY") not in {"auto", "on", "off", "none", "disabled", "zulip", "telegram"}:
+            errors.append("host policy missing notify choice")
 
     # current_plan.json is the only enforcement_mode any runtime reads; the
     # standing-orders mirror above is advisory.
@@ -611,7 +663,7 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
             "current_plan.json is missing; Goal Focus enforce is not established "
             "(re-init with --goal-focus-mode enforce or run goal-focus migrate)"
         )
-    elif str(plan.get("enforcement_mode") or "").lower() != "enforce":
+    elif str(plan.get("enforcement_mode") or "").lower() not in {"enforce", "monitor", "off"}:
         errors.append(
             "current_plan.enforcement_mode is not enforce; escalate the mode with "
             "goal-focus set-mode --mode enforce --apply"
@@ -619,10 +671,10 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
 
     if profile == "formal":
         formal = _read_json(run_dir / "formal" / "formal_policy.json")
-        if str(formal.get("policy") or "").lower() != "on":
-            errors.append("formal_policy.policy is not on")
-        if not formal.get("typecheck"):
-            errors.append("formal_policy.typecheck is not true")
+        if str(formal.get("policy") or "").lower() not in {"off", "mention-only", "auto", "on", "force"}:
+            errors.append("formal_policy.policy is invalid")
+        if not isinstance(formal.get("typecheck"), bool):
+            errors.append("formal_policy.typecheck must be boolean")
 
     return errors
 
@@ -639,45 +691,102 @@ def apply_defaults(
     if profile not in PROFILES:
         raise ValueError(f"profile must be one of {sorted(PROFILES)}")
     run_dir = run_dir.expanduser().resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
     if policy_file is None:
         raise ValueError("an explicit host --policy-file is required")
     policy_file = _validated_policy_path(run_dir, policy_file.expanduser())
     legacy_policy, migrated_policy = _legacy_policy_preflight(run_dir)
-
-    with _pin_guard(run_dir):
-        if backup:
-            backup_dir = run_dir / "driver" / "force_loop_pin_backups"
-            for name in (
-                "goal_priority.json",
-                "compute_policy.json",
-                "loop_state.json",
-                "current_plan.json",
-                "notify.json",
-            ):
-                _backup(run_dir / name, backup_dir)
-            _backup(run_dir / "formal" / "formal_policy.json", backup_dir)
-        gp = apply_goal_priority(run_dir)
-        compute = apply_compute_policy(run_dir, profile)
-        formal = apply_formal_policy(run_dir, profile)
-        notify = apply_notify_identity(run_dir, research_title=research_title)
-        plan_enforced = apply_current_plan_enforce(run_dir)
+    # Validate the outside-root authority before touching even the run lock.
+    from load_loop_env import MAX_POLICY_BYTES, load_env_file, parse_env_text
+    import state_transaction
+    host_before = None
+    host_values: dict[str, str] = {}
+    if policy_file.exists():
+        host_values = load_env_file(policy_file, forbidden_root=run_dir)
+        host_before = state_transaction._read_bytes_nofollow(policy_file)
+        if len(host_before) > MAX_POLICY_BYTES:
+            raise ValueError("host force-loop policy exceeds the size limit")
+        # Bind the admitted mapping (PowerShell projection on Windows) to the
+        # exact snapshot used by publication CAS; a stale projection is unsafe.
+        if parse_env_text(host_before.decode("utf-8")) != host_values:
+            raise ValueError("host force-loop policy changed since admission")
+    names = ("goal_priority.json", "compute_policy.json", "loop_state.json",
+             "current_plan.json", "notify.json", "formal/formal_policy.json")
+    before: dict[str, bytes] = {}
+    for name in names:
+        path = run_dir / name
+        _read_json_strict(path)
+        if path.exists():
+            before[name] = state_transaction._read_bytes_nofollow(path)
+    # Stage with the same helpers, then validate the complete proposed group.
+    # commit_transaction owns the non-reentrant loop lock; never nest it in
+    # _pin_guard. Its byte CAS protects snapshots taken during a live drive.
+    with tempfile.TemporaryDirectory(prefix="aas-defaults-") as tmp:
+        stage = Path(tmp) / "loop"
+        stage.mkdir()
+        for name, payload in before.items():
+            target = stage / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+        gp = apply_goal_priority(stage)
+        compute = apply_compute_policy(stage, profile)
+        formal = apply_formal_policy(stage, profile)
+        notify = apply_notify_identity(stage, research_title=research_title)
+        plan_enforced = apply_current_plan_enforce(stage)
         standing = apply_standing_orders(
-            run_dir,
+            stage,
             profile=profile,
             compute=compute,
             formal=formal,
             research_title=research_title,
         )
-        env_path = write_host_env_defaults(
-            run_dir,
+        staged_values = _host_env_default_values(
+            stage,
             profile,
-            policy_file,
+            host_values,
             migrated_policy=migrated_policy,
         )
-        if legacy_policy is not None:
-            legacy_policy.unlink()
-        errors = verify_effective(run_dir, profile, policy_file)
+        # Staging uses only the admitted mapping; it neither reloads a temporary
+        # path as authority nor changes the process's Windows projection.
+        host_text = _host_env_text(staged_values)
+        host_after = host_text.encode("utf-8")
+        if len(host_after) > MAX_POLICY_BYTES:
+            raise ValueError("staged host force-loop policy exceeds the size limit")
+        staged_values = parse_env_text(host_text)
+        errors = _verify_effective(stage, profile, staged_values)
+        after = {name: (stage / name).read_bytes() for name in names if (stage / name).exists()}
+    if errors:
+        return {"ok": False, "errors": errors, "current_plan_enforced": plan_enforced,
+                "run_dir": str(run_dir), "profile": profile}
+    # Host policy publication is a separate recoverable transaction; its
+    # private intent survives interruption between the two roots. A rerun
+    # recomputes/validates the group; it never trusts loop-owned policy bytes.
+    policy_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    intent_name = f".{policy_file.name}.defaults-pending.json"
+    host_expected = {policy_file.name: hashlib.sha256(host_before).hexdigest()} if host_before is not None else {}
+    host_absent = [] if host_before is not None else [policy_file.name]
+    state_transaction.commit_transaction(policy_file.parent,
+        json_files={intent_name: {"schema_version": "force_loop_defaults_intent.v1",
+                    "run_dir": str(run_dir), "policy_sha256": hashlib.sha256(host_after).hexdigest()}},
+        expected_hashes=host_expected, expected_absent=host_absent)
+    changed = {name: data for name, data in after.items() if before.get(name) != data}
+    if backup:
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + os.urandom(4).hex()
+        changed.update({f"driver/force_loop_pin_backups/{Path(name).name}.{stamp}": data
+                        for name, data in before.items() if name in changed})
+    deletes = []
+    if legacy_policy is not None:
+        name = str(legacy_policy.relative_to(run_dir))
+        before[name] = state_transaction._read_bytes_nofollow(legacy_policy)
+        deletes.append(name)
+    state_transaction.commit_transaction(run_dir, binary_files=changed, deletes=deletes,
+        expected_hashes={name: hashlib.sha256(data).hexdigest() for name, data in before.items()},
+        expected_absent=[name for name in names if name not in before])
+    state_transaction.commit_transaction(policy_file.parent,
+        binary_files={policy_file.name: host_after}, deletes=[intent_name],
+        expected_hashes=host_expected, expected_absent=host_absent)
+    if os.name != "posix":
+        _reproject_windows_policy(policy_file, staged_values)
+    env_path = policy_file
     return {
         "ok": not errors,
         "profile": profile,

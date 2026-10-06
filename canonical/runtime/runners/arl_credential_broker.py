@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import ctypes
 import io
+import hashlib
+import hmac
 import json
 import os
 import pwd
@@ -367,7 +369,15 @@ class CredentialState:
         self.parent_token = parent_token
         self.socket_path = socket_path
         self.private_root = private_root
+        authority_name = os.environ.get("AAS_ARL_FORMAL_AUTHORITY_ROOT")
+        self.formal_authority_root = Path(authority_name) if authority_name else Path.home() / ".local/share/ai-agents-skills/host-authority"
+        if not self.formal_authority_root.is_absolute() or self.formal_authority_root.resolve().is_relative_to(runtime_root.resolve()):
+            raise ValueError("formal authority must be a stable host data directory outside runtime code")
         self.capabilities: dict[str, tuple[frozenset[str], Path]] = {}
+        self.formal_registrations: dict[str, dict[str, Any]] = {}
+        self.formal_locks: dict[str, threading.Lock] = {}
+        self.formal_checkpoint_locks: dict[str, threading.Lock] = {}
+        self.formal_step_capabilities: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
         self.skill_dir = _skills_root(runtime_root) / "autonomous-research-loop-runtime"
         sys.path.insert(0, str(self.skill_dir))
@@ -375,6 +385,8 @@ class CredentialState:
         import panel_parent  # type: ignore
         self.runtime = runtime
         self.panel = panel_parent
+        from provider_resources import register_host_formal_authority_root
+        register_host_formal_authority_root(self.formal_authority_root)
         self.proxy = self.skill_dir / "arl_compute_proxy.py"
 
     def _secret_projection(self, provider: str) -> dict[str, str]:
@@ -426,6 +438,467 @@ class CredentialState:
             return projected, mounts
         mounts[str(target)] = str(source)
         return projected, mounts
+
+    def _filter_process_evidence(
+        self, rc: int, stdout: str, stderr: str, evidence: dict[str, Any] | None,
+        *, extra_secrets: tuple[str, ...] = (),
+    ) -> tuple[int, str, str, dict[str, Any] | None]:
+        """Filter original bytes as well as text before anything leaves the broker."""
+        import base64
+        from provider_resources import validate_process_evidence, withhold_process_evidence
+
+        values = tuple(value for value in (*self.providers.values(), *self.compute.values(), *extra_secrets) if value)
+        if evidence is None:
+            if any(value in stdout or value in stderr for value in values):
+                return 126, "", "broker blocked provider output containing credential material\n", None
+            rc, stdout, stderr = self._block_secret_output(rc, stdout, stderr)
+            return rc, stdout, stderr, None
+        if validate_process_evidence(evidence):
+            return 126, "", "broker blocked malformed process evidence\n", None
+        encoded = json.dumps(evidence, ensure_ascii=False)
+        blocked = any(value in stdout or value in stderr or value in encoded for value in values)
+        for name in ("stdout", "stderr"):
+            stream = evidence[name]
+            if stream["state"] in {"captured", "partial"}:
+                raw = base64.b64decode(stream["base64"], validate=True)
+                blocked = blocked or any(value.encode("utf-8") in raw for value in values)
+        if blocked:
+            evidence = withhold_process_evidence(evidence, "credential_material")
+            for name in ("capture_error", "cleanup_error", "execution_error"):
+                value = evidence.get(name)
+                if isinstance(value, str) and any(secret in value for secret in values):
+                    evidence[name] = "[withheld diagnostic]"
+            return 126, "", "broker blocked provider output containing credential material\n", evidence
+        return rc, stdout, stderr, evidence
+
+    def formal_register(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Parent-token-only registration; workers cannot mint this authority."""
+        import remote_formal
+        from compute_policy import require_execution_policy
+        if set(request) - {"operation", "run_dir", "project", "pin"}:
+            raise ValueError("unrecognized formal registration fields")
+        pin = request.get("pin")
+        if not isinstance(pin, dict) or pin.get("execution_backend") != "kaggle-cpu":
+            raise ValueError("host formal registration requires a pinned Kaggle CPU executor")
+        run_dir = Path(str(request.get("run_dir") or ""))
+        project = Path(str(request.get("project") or ""))
+        if not run_dir.is_absolute() or not project.is_absolute() or not run_dir.is_dir() or not project.is_dir():
+            raise ValueError("host formal registration requires exact existing roots")
+        compute_binding = require_execution_policy(run_dir, "kaggle")
+        if self.formal_authority_root.resolve().is_relative_to(project.resolve()):
+            raise ValueError("formal authority cannot be inside the candidate project")
+        bound = remote_formal.request_snapshot(Path(str(pin.get("remote_request") or "")),
+            str(pin.get("remote_request_sha256") or ""), project)
+        for value in (bound["bootstrap_script"], bound["compute_config"], bound["state_root"], pin["remote_request"]):
+            if Path(value).resolve().is_relative_to(self.formal_authority_root.resolve()):
+                raise ValueError("formal request inputs cannot reference host signing authority")
+        if bound["submission_authorized"] is not True:
+            raise ValueError("remote formal submission is not authorized")
+        # Only immutable host registration data crosses this boundary; no CLI,
+        # environment, validator choice or credential pointer is accepted.
+        authority_id = hashlib.sha256(self._formal_authority_key(create=True)).hexdigest()
+        registration = {"run_dir": str(run_dir.resolve()), "project": str(project.resolve()),
+            "authority_id": authority_id,
+            "pin": {name: pin[name] for name in ("execution_backend", "remote_request", "remote_request_sha256")}}
+        fingerprint = hashlib.sha256(json.dumps(registration, sort_keys=True).encode()).hexdigest()
+        # Policy changes never reset the persisted attempt account.
+        registration["compute_policy_binding"] = compute_binding
+        with self.lock:
+            for identity, value in self.formal_registrations.items():
+                if value["fingerprint"] == fingerprint:
+                    if value["registration"].get("compute_policy_binding") != compute_binding:
+                        raise ValueError("compute policy changed during this host registration")
+                    return {"ok": True, "registration_id": identity}
+            identity = secrets.token_hex(24)
+            anchor_path = self.formal_authority_root / ("state-" + fingerprint + ".json")
+            state_path = Path(bound["state_root"]) / "state.json"
+            if not anchor_path.exists():
+                if state_path.exists():
+                    raise ValueError("preexisting remote state has no host admission anchor")
+                from state_transaction import commit_transaction, RevisionConflict
+                try:
+                    commit_transaction(self.formal_authority_root, json_files={anchor_path.name: {
+                        "schema_version": "remote_formal_authority.v1", "fingerprint": fingerprint,
+                        "state_path": str(state_path), "state_sha256": None, "mirrors": {}}},
+                        expected_absent=[anchor_path.name])
+                except RevisionConflict:
+                    pass  # Another host created the same authority; never replace it.
+            path = self.private_root / ("formal-" + identity + ".json")
+            with path.open("x", encoding="utf-8") as stream:
+                json.dump(registration, stream)
+            path.chmod(0o600)
+            self.formal_registrations[identity] = {"fingerprint": fingerprint, "path": path,
+                "registration": registration, "anchor_path": anchor_path, "state_path": state_path}
+            self.formal_locks[identity] = threading.Lock()
+            self.formal_checkpoint_locks[identity] = threading.Lock()
+        return {"ok": True, "registration_id": identity}
+
+    def _read_formal_anchor(self, registered: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        import remote_formal
+        raw = remote_formal.regular_bytes(registered["anchor_path"], private=True)
+        anchor = json.loads(raw)
+        if (anchor.get("schema_version") != "remote_formal_authority.v1"
+                or anchor.get("fingerprint") != registered["fingerprint"]
+                or anchor.get("state_path") != str(registered["state_path"])):
+            raise ValueError("formal authority checkpoint identity mismatch")
+        return anchor, remote_formal.digest(raw)
+
+    def _commit_formal_anchor(self, registered: dict[str, Any], anchor: dict[str, Any], *, expected_hash: str) -> None:
+        from state_transaction import commit_transaction
+        path = registered["anchor_path"]
+        commit_transaction(self.formal_authority_root, json_files={path.name: anchor},
+                           expected_hashes={path.name: expected_hash})
+
+    def _repair_formal_mirrors(self, registered: dict[str, Any], anchor: dict[str, Any]) -> None:
+        """Restore only authoritative checkpoint postimages, never adopt disk data."""
+        import remote_formal
+        from state_transaction import commit_transaction
+        root = registered["state_path"].parent
+        files = {}
+        for name, entry in anchor.get("mirrors", {}).items():
+            path = Path(name)
+            relative = path.relative_to(root)
+            raw = (remote_formal.canonical(entry["payload"]) if entry["kind"] == "receipt"
+                   else (json.dumps(entry["payload"], indent=2, sort_keys=True) + "\n").encode())
+            if remote_formal.digest(raw) != entry["sha256"]:
+                raise ValueError("protected formal checkpoint is corrupt")
+            try:
+                current = remote_formal.regular_bytes(path, private=True)
+            except FileNotFoundError:
+                current = None
+            if current != raw:
+                files[relative] = raw
+        if files:
+            commit_transaction(root, binary_files=files)
+
+    def formal_checkpoint(self, request: Mapping[str, Any], token: str) -> dict[str, Any]:
+        """Scoped controller callback: protected postimage commits before its mirror."""
+        import remote_formal
+        if set(request) - {"operation", "path", "payload", "kind", "expected_sha256"}:
+            raise ValueError("unrecognized formal checkpoint fields")
+        with self.lock:
+            capability = self.formal_step_capabilities.get(token)
+            if capability is None:
+                raise ValueError("formal step capability is invalid or expired")
+            identity = capability["registration_id"]
+            registered = self.formal_registrations[identity]
+            checkpoint_lock = self.formal_checkpoint_locks[identity]
+        # This is deliberately not the outer advance_lock held while waiting
+        # for the controller: checkpoint callbacks run on another server thread.
+        with checkpoint_lock:
+            with self.lock:
+                if self.formal_step_capabilities.get(token) is not capability:
+                    raise ValueError("formal step capability expired before checkpoint admission")
+            anchor, anchor_hash = self._read_formal_anchor(registered)
+            if (anchor.get("in_flight") or {}).get("step_id") != capability["step_id"]:
+                raise ValueError("formal checkpoint belongs to an obsolete step")
+            registration = registered["registration"]
+            bound = remote_formal.request_snapshot(Path(registration["pin"]["remote_request"]),
+                registration["pin"]["remote_request_sha256"], Path(registration["project"]))
+            path = Path(str(request.get("path") or ""))
+            payload = request.get("payload")
+            kind = request.get("kind")
+            if not path.is_absolute() or not isinstance(payload, dict) or kind not in {"state", "intent", "receipt"}:
+                raise ValueError("invalid formal checkpoint")
+            root = registered["state_path"].parent
+            path.relative_to(root)
+            mirrors = anchor.setdefault("mirrors", {})
+            previous = mirrors.get(str(path))
+            if request.get("expected_sha256") != (previous["sha256"] if previous else None):
+                raise ValueError("formal checkpoint preimage changed")
+            prior_state = (mirrors.get(str(registered["state_path"])) or {}).get("payload") or {"attempts": {}}
+            attempts = prior_state["attempts"]
+            if kind == "state":
+                if path != registered["state_path"] or payload.get("schema_version") != "remote_lean_state.v1" or not isinstance(payload.get("attempts"), dict):
+                    raise ValueError("invalid registered formal state")
+                proposed = payload["attempts"]
+                if len(proposed) > bound["max_attempts"] or not set(attempts) <= set(proposed):
+                    raise ValueError("formal checkpoint cannot reset attempt accounting")
+                if len(set(proposed) - set(attempts)) > 1:
+                    raise ValueError("a formal step can reserve only one new attempt")
+                transitions = {"preparing": {"preparing", "submitting", "incomplete"},
+                    "submitting": {"submitting", "submitted", "incomplete"},
+                    "submitted": {"submitted", "passed", "incomplete"},
+                    "passed": {"passed"}, "incomplete": {"incomplete"}}
+                for key, row in proposed.items():
+                    old = attempts.get(key)
+                    if not isinstance(row, dict) or row.get("request_sha256") != registration["pin"]["remote_request_sha256"]:
+                        raise ValueError("formal checkpoint request identity mismatch")
+                    if re.fullmatch(r"[a-f0-9]{64}", str(row.get("input_digest"))) is None:
+                        raise ValueError("formal checkpoint has no exact input digest")
+                    if row == old:
+                        continue
+                    if row.get("purpose_key") != capability["purpose_key"]:
+                        raise ValueError("formal checkpoint changes another host purpose")
+                    if old is None:
+                        if row.get("state") != "preparing" or re.fullmatch(r"[a-f0-9]{32}", str(row.get("attempt_id"))) is None:
+                            raise ValueError("new formal attempt must begin preparing")
+                        from compute_policy import require_execution_policy
+                        require_execution_policy(Path(registration["run_dir"]), "kaggle",
+                            expected=registration["compute_policy_binding"])
+                        if row.get("compute_policy_binding") != registration["compute_policy_binding"]:
+                            raise ValueError("formal attempt omits the registered compute policy binding")
+                    else:
+                        if row.get("state") not in transitions.get(old.get("state"), set()):
+                            raise ValueError("formal checkpoint stage regression")
+                        for field in ("attempt_id", "purpose_key", "input_digest", "request_sha256", "created_at", "original_submission_failure",
+                                      "bundle_sha256", "submission_intent", "accepted_identity", "receipt_sha256", "compute_policy_binding"):
+                            if field in old and row.get(field) != old[field]:
+                                raise ValueError("formal checkpoint changes original attempt evidence")
+                    expected_key = remote_formal.digest(remote_formal.canonical([row["request_sha256"], row["purpose_key"], row["input_digest"]]))
+                    if key != expected_key:
+                        raise ValueError("formal attempt key disagrees with bound input")
+                    if row.get("state") == "passed":
+                        receipt_path = root / "attempts" / row["attempt_id"] / "receipt.json"
+                        if (mirrors.get(str(receipt_path)) or {}).get("sha256") != row.get("receipt_sha256"):
+                            raise ValueError("formal completion lacks a protected receipt checkpoint")
+                    if row.get("state") == "submitted":
+                        intent = (mirrors.get(row.get("submission_intent")) or {}).get("payload") or {}
+                        if intent.get("state") != "submitted" or intent.get("accepted_identity") != row.get("accepted_identity"):
+                            raise ValueError("formal submission lacks a protected accepted-identity checkpoint")
+            else:
+                owners = [row for row in attempts.values() if row.get("purpose_key") == capability["purpose_key"]]
+                if kind == "intent":
+                    kaggle_driver, _ = remote_formal.kaggle_modules()
+                    owners = [row for row in owners if path == kaggle_driver._submission_intent_path(root,
+                        job_id="lean-" + row["attempt_id"], round_idx=0, chunk_idx=0)]
+                    if len(owners) != 1 or owners[0].get("state") not in {"submitting", "submitted"}:
+                        raise ValueError("formal submission checkpoint has no exact reserved owner")
+                    if payload.get("schema") != "ai-agents-skills.kaggle-submission-intent.v2" or payload.get("bundle_sha256") != owners[0].get("bundle_sha256"):
+                        raise ValueError("formal submission checkpoint identity mismatch")
+                    if payload.get("state") not in {"acceptance_unknown", "submitted"}:
+                        raise ValueError("unsupported formal submission stage")
+                    expected_kernel = kaggle_driver.kernel_ref("lean-" + owners[0]["attempt_id"], 0, 0, username=bound["owner"])
+                    if payload.get("kernel") != expected_kernel or payload.get("gpu") is not False or payload.get("enable_internet") is not bound["enable_internet"]:
+                        raise ValueError("formal submission contradicts host execution policy")
+                    if previous is None and payload.get("state") != "acceptance_unknown":
+                        raise ValueError("formal submission must begin with an uncertainty fence")
+                    if previous is None:
+                        from compute_policy import require_execution_policy
+                        require_execution_policy(Path(registration["run_dir"]), "kaggle",
+                            expected=registration["compute_policy_binding"])
+                    if previous is not None:
+                        prior = previous["payload"]
+                        for field in ("schema", "attempt_id", "kernel", "bundle_sha256", "gpu", "enable_internet", "submitted_source", "provider_response"):
+                            if field in prior and payload.get(field) != prior[field]:
+                                raise ValueError("formal submission checkpoint changes bound identity")
+                        if prior.get("state") == "submitted" and payload.get("state") != "submitted":
+                            raise ValueError("formal submission stage cannot regress")
+                        prior_events = prior.get("events") or []
+                        if not isinstance(payload.get("events"), list) or payload["events"][:len(prior_events)] != prior_events:
+                            raise ValueError("formal submission history cannot be rewritten")
+                    if payload.get("state") == "submitted" and kaggle_driver._bind_saved_response(payload) != payload.get("accepted_identity"):
+                        raise ValueError("formal accepted identity differs from its saved provider response")
+                else:
+                    owners = [row for row in owners if path == root / "attempts" / row["attempt_id"] / "receipt.json"]
+                    if len(owners) != 1 or owners[0].get("state") != "submitted" or payload.get("attempt_id") != owners[0]["attempt_id"]:
+                        raise ValueError("formal receipt checkpoint has no exact submitted owner")
+            raw = remote_formal.canonical(payload) if kind == "receipt" else (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("formal checkpoint exceeds its bounded metadata size")
+            if any(value and value in raw.decode() for value in (*self.providers.values(), *self.compute.values(), token)):
+                raise ValueError("formal checkpoint contains credential material")
+            mirrors[str(path)] = {"kind": kind, "payload": payload, "sha256": remote_formal.digest(raw)}
+            if kind == "state":
+                anchor["state_sha256"] = remote_formal.digest(raw)
+            self._commit_formal_anchor(registered, anchor, expected_hash=anchor_hash)
+            self._repair_formal_mirrors(registered, anchor)
+            return {"ok": True, "sha256": remote_formal.digest(raw)}
+
+    def _formal_authority_key(self, *, create: bool) -> bytes:
+        """Durable host key; its location is selected by this runtime, not data."""
+        root = self.formal_authority_root
+        new_root = False
+        if create:
+            try:
+                root.mkdir(mode=0o700)
+                new_root = True
+            except FileExistsError:
+                pass
+        if root.is_symlink() or any(parent.is_symlink() for parent in root.parents):
+            raise ValueError("formal host authority traverses a link")
+        info = root.stat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError("formal host authority directory is not private")
+        path = root / "remote-formal.key"
+        if create:
+            if not new_root and not path.exists() and any(root.iterdir()):
+                raise ValueError("formal host authority key is missing; explicit recovery required")
+            try:
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(secrets.token_bytes(32))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        import remote_formal
+        key = remote_formal.regular_bytes(path, private=True, limit=32)
+        if len(key) != 32:
+            raise ValueError("invalid formal host authority key")
+        return key
+
+    def _sign_formal_admission(self, result: dict[str, Any], registration: dict[str, Any], purpose_key: str) -> None:
+        import remote_formal
+        path = Path(result["receipt_path"])
+        receipt = remote_formal.inspect_receipt_content(path, result["receipt_sha256"], project=Path(registration["project"]))
+        if receipt["request_sha256"] != registration["pin"]["remote_request_sha256"]:
+            raise ValueError("remote admission does not match the host registration")
+        if receipt.get("purpose_key") != purpose_key or receipt.get("run_dir") != registration["run_dir"]:
+            raise ValueError("remote admission does not match its host purpose/run")
+        key = self._formal_authority_key(create=True)
+        message = {"schema_version": "remote_lean_authentication.v1", "receipt_sha256": result["receipt_sha256"],
+            "receipt_path": str(path.absolute()), "project": str(Path(registration["project"]).resolve()),
+            "authority_id": hashlib.sha256(key).hexdigest()}
+        message["hmac_sha256"] = hmac.new(key, remote_formal.canonical(message), hashlib.sha256).hexdigest()
+        self.panel._secure_write_text(path.with_suffix(".host-auth.json"), json.dumps(message, sort_keys=True) + "\n")
+
+    def formal_validate(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Read-only master-capability verification of durable host admission."""
+        import remote_formal
+        if set(request) - {"operation", "receipt_path", "receipt_sha256", "project"}:
+            raise ValueError("unrecognized formal validation fields")
+        path = Path(str(request.get("receipt_path") or ""))
+        project = Path(str(request.get("project") or ""))
+        if not path.is_absolute() or not project.is_absolute() or path.resolve().is_relative_to(project.resolve()):
+            raise ValueError("invalid host receipt location")
+        key = self._formal_authority_key(create=False)
+        document = json.loads(remote_formal.regular_bytes(path.with_suffix(".host-auth.json"), private=True, limit=4096))
+        signature = document.pop("hmac_sha256", None)
+        expected = {"schema_version": "remote_lean_authentication.v1", "receipt_sha256": request.get("receipt_sha256"),
+            "receipt_path": str(path.absolute()), "project": str(project.resolve()), "authority_id": hashlib.sha256(key).hexdigest()}
+        if document != expected or not isinstance(signature, str) or not hmac.compare_digest(signature,
+                hmac.new(key, remote_formal.canonical(document), hashlib.sha256).hexdigest()):
+            raise ValueError("receipt was not admitted by this host authority")
+        if remote_formal.digest(remote_formal.regular_bytes(path, private=True)) != document["receipt_sha256"]:
+            raise ValueError("authenticated receipt bytes changed")
+        return {"ok": True, "authenticated": True, "authority_id": document["authority_id"]}
+
+    def formal_advance(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Run only the fixed formal controller with a Kaggle-only projection."""
+        import remote_formal
+        from compute_policy import require_execution_policy
+        if set(request) - {"operation", "registration_id", "purpose_key"}:
+            raise ValueError("unrecognized formal advance fields")
+        identity = str(request.get("registration_id") or "")
+        purpose = request.get("purpose_key")
+        if not isinstance(purpose, str) or re.fullmatch(r"[a-f0-9]{64}", purpose) is None:
+            raise ValueError("invalid host formal purpose identity")
+        with self.lock:
+            registered = self.formal_registrations.get(identity)
+            advance_lock = self.formal_locks.get(identity)
+        if registered is None or advance_lock is None:
+            raise ValueError("host formal registration is absent")
+        with advance_lock:
+            registration = registered["registration"]
+            pin = registration["pin"]
+            require_execution_policy(Path(registration["run_dir"]), "kaggle",
+                expected=registration["compute_policy_binding"])
+            remaining = self.panel._remaining_panel_wall_budget(Path(registration["run_dir"]))
+            if remaining == 0:
+                return {"ok": True, "result": {"status": "verification_pending", "execution_backend": "kaggle-cpu",
+                    "detail": "host_wall_budget_exhausted"}}
+            controller_timeout = min(900, remaining) if remaining is not None else 900
+            if hashlib.sha256(self._formal_authority_key(create=False)).hexdigest() != registration["authority_id"]:
+                raise ValueError("registered formal authority changed")
+            remote_formal.request_snapshot(Path(pin["remote_request"]), pin["remote_request_sha256"], Path(registration["project"]))
+            if json.loads(remote_formal.regular_bytes(registered["path"], private=True)) != registration:
+                raise ValueError("broker formal registration changed")
+            from state_transaction import recover_transactions
+            recover_transactions(self.formal_authority_root)
+            anchor, anchor_hash = self._read_formal_anchor(registered)
+            if anchor.get("cleanup_unverified"):
+                return {"ok": True, "result": {"status": "incomplete", "execution_backend": "kaggle-cpu",
+                    "detail": "resource_cleanup_unverified", "reconciliation_required": True}}
+            if anchor.get("in_flight") and anchor["in_flight"].get("resource_scope"):
+                owner = anchor["in_flight"].get("broker_pid")
+                if type(owner) is not int or owner <= 0:
+                    raise ValueError("interrupted formal controller has no host owner")
+                if owner != os.getpid():
+                    try:
+                        os.kill(owner, 0)
+                    except ProcessLookupError:
+                        pass
+                    else:
+                        return {"ok": True, "result": {"status": "verification_pending",
+                            "execution_backend": "kaggle-cpu", "detail": "controller_active_elsewhere"}}
+                if self.panel.cleanup_resource_scope(anchor["in_flight"]["resource_scope"]) is not None:
+                    raise ValueError("interrupted formal controller cleanup is unverified")
+            self._repair_formal_mirrors(registered, anchor)
+            if anchor.get("in_flight"):
+                anchor["recovered_step"] = anchor.pop("in_flight")
+                self._commit_formal_anchor(registered, anchor, expected_hash=anchor_hash)
+                anchor, anchor_hash = self._read_formal_anchor(registered)
+            state_path = registered["state_path"]
+            current_hash = remote_formal.digest(remote_formal.regular_bytes(state_path, private=True)) if state_path.exists() else None
+            if (anchor.get("fingerprint") != registered["fingerprint"] or anchor.get("state_path") != str(state_path)
+                    or anchor.get("state_sha256") != current_hash):
+                raise ValueError("remote state changed outside its host-admitted controller step")
+            child_registration = {**registration, "expected_state_sha256": current_hash}
+            child_path_file = self.private_root / ("formal-step-" + secrets.token_hex(16) + ".json")
+            self.panel._secure_write_text(child_path_file, json.dumps(child_registration))
+            script = self.skill_dir / "remote_formal.py"
+            if script.is_symlink() or not _owner_controlled_regular(script.stat()):
+                raise ValueError("exact host formal controller is unavailable")
+            interpreter = _attested_interpreter()
+            argv0, child_path = _skill_python_argv0(interpreter)
+            env = _safe_environment(os.environ)
+            env["PATH"] = child_path
+            env["HOME"] = str(self.private_root)
+            for key in COMPUTE_KEY_MAP["kaggle"]:
+                if self.compute.get(key):
+                    env[key] = self.compute[key]
+            # The controller can read selected host files and perform Kaggle
+            # calls, but cannot see signing authority or host launch-control
+            # sockets. Its broker socket grants only this step's checkpoints.
+            command = self.panel.trusted_local_containment_command(
+                [argv0, str(script), str(child_path_file), purpose], cwd=self.private_root)
+            command, controller_limits, controller_scope = self.panel.resource_limited_command(
+                command, controller_timeout, role="panel")
+            env = self.panel.resource_control_environment(env)
+            # This fence survives a parent crash. Never adopt an unacknowledged
+            # post-image merely because its worker-authored hashes agree.
+            anchor["in_flight"] = {"purpose_key": purpose, "step_id": secrets.token_hex(16), "broker_pid": os.getpid(),
+                                   "resource_scope": controller_scope, "resource_limits": controller_limits}
+            self._commit_formal_anchor(registered, anchor, expected_hash=anchor_hash)
+            step_token = secrets.token_urlsafe(32)
+            with self.lock:
+                self.formal_step_capabilities[step_token] = {"registration_id": identity,
+                    "purpose_key": purpose, "step_id": anchor["in_flight"]["step_id"]}
+            env[BROKER_SOCKET_ENV] = self.socket_path
+            env[BROKER_TOKEN_ENV] = step_token
+            try:
+                require_execution_policy(Path(registration["run_dir"]), "kaggle",
+                    expected=registration["compute_policy_binding"])
+                captured = self.panel._default_runner(command, env, str(self.private_root), controller_timeout,
+                    output_limit_bytes=1024 * 1024, scope_unit=controller_scope)
+            finally:
+                with self.formal_checkpoint_locks[identity]:
+                    with self.lock:
+                        self.formal_step_capabilities.pop(step_token, None)
+            rc, stdout, stderr, evidence = self._filter_process_evidence(*captured, captured.process_evidence,
+                extra_secrets=(step_token,))
+            anchor, anchor_hash = self._read_formal_anchor(registered)
+            if rc != 0:
+                anchor.setdefault("original_failures", []).append({"returncode": rc, "process_evidence": evidence})
+                anchor["cleanup_unverified"] = bool(evidence and evidence.get("cleanup_error"))
+                if not anchor["cleanup_unverified"]:
+                    anchor["interrupted_step"] = anchor.pop("in_flight")
+                self._commit_formal_anchor(registered, anchor, expected_hash=anchor_hash)
+                return {"ok": True, "result": {"status": "verification_pending", "execution_backend": "kaggle-cpu",
+                    "detail": "controller_interrupted_resume_status_first"}}
+            result = json.loads(stdout)
+            if not isinstance(result, dict):
+                raise ValueError("invalid host formal controller result")
+            after_hash = remote_formal.digest(remote_formal.regular_bytes(state_path, private=True)) if state_path.exists() else None
+            if result.pop("controller_state_sha256", "missing") != after_hash or anchor["state_sha256"] != after_hash:
+                raise ValueError("controller result does not bind its final state")
+            anchor.pop("in_flight", None)
+            self._commit_formal_anchor(registered, anchor, expected_hash=anchor_hash)
+            if result.get("status") == "passed":
+                self._sign_formal_admission(result, registration, purpose)
+            return {"ok": True, "result": result}
 
     def _block_secret_output(self, rc: int, stdout: str, stderr: str) -> tuple[int, str, str]:
         values = tuple(value for value in (*self.providers.values(), *self.compute.values()) if value)
@@ -518,7 +991,11 @@ class CredentialState:
             if capability:
                 with self.lock:
                     self.capabilities.pop(capability, None)
-        rc, stdout, stderr = self._block_secret_output(int(rc), output.getvalue(), "")
+        rc, stdout, stderr, evidence = self._filter_process_evidence(
+            int(rc), output.getvalue(), "", metadata.pop("process_evidence", None),
+            extra_secrets=(capability,))
+        if evidence is not None:
+            metadata["process_evidence"] = evidence
         return {"ok": True, "returncode": rc, "timed_out": bool(timed_out), "cleanup_error": cleanup_error, "stdout": stdout, "stderr": stderr, "resource_metadata": metadata}
 
     def panel_run(self, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -573,7 +1050,7 @@ class CredentialState:
             role="panel",
         )
         env = self.panel.resource_control_environment(env)
-        rc, stdout, stderr = self.panel._default_runner(
+        captured_result = self.panel._default_runner(
             execution_command,
             env,
             str(request.get("cwd") or ""),
@@ -582,8 +1059,13 @@ class CredentialState:
             output_limit_bytes=int(limits["output_max_bytes"]),
             scope_unit=scope,
         )
-        rc, stdout, stderr = self._block_secret_output(int(rc), str(stdout), str(stderr))
-        return {"ok": True, "returncode": rc, "stdout": stdout, "stderr": stderr}
+        rc, stdout, stderr = captured_result
+        rc, stdout, stderr, evidence = self._filter_process_evidence(
+            int(rc), str(stdout), str(stderr), getattr(captured_result, "process_evidence", None)
+        )
+        return {"ok": True, "returncode": rc, "stdout": stdout, "stderr": stderr,
+                "process_evidence": evidence, "resource_scope": scope,
+                "resource_limits": limits}
 
     def compute_run(self, request: Mapping[str, Any], token: str) -> dict[str, Any]:
         with self.lock:
@@ -658,6 +1140,8 @@ class BrokerHandler(socketserver.StreamRequestHandler):
             state: CredentialState = self.server.credential_state  # type: ignore[attr-defined]
             if operation == "compute":
                 response = state.compute_run(request, token)
+            elif operation == "formal_checkpoint":
+                response = state.formal_checkpoint(request, token)
             else:
                 if not secrets.compare_digest(token, state.parent_token):
                     raise ValueError("broker capability is invalid")
@@ -665,6 +1149,12 @@ class BrokerHandler(socketserver.StreamRequestHandler):
                     response = state.primary(request)
                 elif operation == "panel":
                     response = state.panel_run(request)
+                elif operation == "formal_register":
+                    response = state.formal_register(request)
+                elif operation == "formal_advance":
+                    response = state.formal_advance(request)
+                elif operation == "formal_validate":
+                    response = state.formal_validate(request)
                 else:
                     raise ValueError("unknown broker operation")
         except Exception as exc:  # noqa: BLE001 - broker boundary returns no traceback
