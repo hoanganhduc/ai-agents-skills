@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+from tests import state_dacl_skip
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,8 @@ sys.path.insert(0, str(ROOT / "canonical/runtime/workspace"))
 sys.path.insert(0, str(ROOT / "canonical/runtime/skills/kaggle-research-compute"))
 import kaggle_driver as driver
 from research_compute import budget_ledger
+
+_STATE_DACL_SKIP = state_dacl_skip()
 
 
 class WorkflowComputeTests(unittest.TestCase):
@@ -188,6 +191,7 @@ class WorkflowComputeTests(unittest.TestCase):
         self.assertEqual(requests["download"].version_number, 3)
         self.assertIs(type(requests["download"].version_number), int)
 
+    @_STATE_DACL_SKIP
     def test_parallel_reservation_cannot_admit_two_sixty_unit_attempts(self):
         with tempfile.TemporaryDirectory() as tmp:
             def reserve(attempt):
@@ -197,6 +201,45 @@ class WorkflowComputeTests(unittest.TestCase):
                 results = list(pool.map(reserve, ["a", "b"]))
             self.assertEqual(sum(row["ok"] for row in results), 1)
             self.assertEqual(budget_ledger.outstanding(Path(tmp), "modal"), 60)
+
+    @unittest.skipUnless(os.name == "posix", "descriptor-relative lock creation")
+    def test_transient_missing_lock_during_create_keeps_reservation_exclusive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_open = budget_ledger.os.open
+            calls = []
+            def racing_open(path, flags, *args, **kwargs):
+                if path == "modal-reservations.lock":
+                    calls.append(flags)
+                    if len(calls) == 1:
+                        raise FileNotFoundError(2, "concurrent lock creation", path)
+                return original_open(path, flags, *args, **kwargs)
+            with mock.patch.object(budget_ledger.os, "open", side_effect=racing_open):
+                first = budget_ledger.check_and_reserve(state_root=Path(tmp), backend="modal",
+                    job_id="a", worst_case=60, available=100, unit="usd")
+                second = budget_ledger.check_and_reserve(state_root=Path(tmp), backend="modal",
+                    job_id="b", worst_case=60, available=100, unit="usd")
+            self.assertTrue(first["ok"])
+            self.assertFalse(second["ok"])
+            self.assertEqual(len(calls), 3)
+            self.assertTrue(all(flags & os.O_CREAT for flags in calls))
+
+    @unittest.skipUnless(os.name == "posix", "descriptor-relative lock creation")
+    def test_persistent_missing_or_denied_lock_is_bounded_and_never_admits(self):
+        for exception, expected_calls in ((FileNotFoundError, 4), (PermissionError, 1)):
+            with self.subTest(exception=exception), tempfile.TemporaryDirectory() as tmp:
+                original_open = budget_ledger.os.open
+                calls = []
+                def failed_open(path, flags, *args, **kwargs):
+                    if path == "modal-reservations.lock":
+                        calls.append(path)
+                        raise exception("injected lock failure")
+                    return original_open(path, flags, *args, **kwargs)
+                with mock.patch.object(budget_ledger.os, "open", side_effect=failed_open), \
+                     mock.patch.object(budget_ledger.time, "sleep"), self.assertRaises(exception):
+                    budget_ledger.check_and_reserve(state_root=Path(tmp), backend="modal",
+                        job_id="a", worst_case=60, available=100, unit="usd")
+                self.assertEqual(len(calls), expected_calls)
+                self.assertFalse((Path(tmp) / "modal-reservations.jsonl").exists())
 
     def test_unknown_or_unenforceable_reservation_amount_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,6 +288,7 @@ class WorkflowComputeTests(unittest.TestCase):
                 result = driver.preflight(job_dir=job, config=cfg)
             self.assertEqual(result["account_status"], "not_checked")
 
+    @_STATE_DACL_SKIP
     def test_reservation_retry_is_idempotent_and_mismatch_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             args = dict(state_root=Path(tmp), backend="modal", job_id="attempt-1",
@@ -256,6 +300,7 @@ class WorkflowComputeTests(unittest.TestCase):
                 budget_ledger.check_and_reserve(**{**args, "worst_case": 20})
             self.assertFalse(budget_ledger.check_and_reserve(**{**args, "job_id": "attempt-2"})["ok"])
 
+    @_STATE_DACL_SKIP
     def test_unknown_spend_keeps_reservation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

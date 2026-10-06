@@ -1316,7 +1316,7 @@ def _validate_notify_registry_file(file_fd: int, path: Path) -> None:
 
 
 def _secure_notification_registry_read(
-    mailbox: Mailbox, *, max_bytes: int = 2_000_000
+    mailbox: Mailbox, *, max_bytes: int = 2_000_000, registry_lock_fd: int | None = None
 ) -> dict[str, Any] | None:
     path = _notify_delivery_path(mailbox)
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
@@ -1326,7 +1326,7 @@ def _secure_notification_registry_read(
         try:
             before = os.lstat(path)
         except FileNotFoundError:
-            return _notification_registry_missing(mailbox)
+            return _notification_registry_missing(mailbox, registry_lock_fd=registry_lock_fd)
         if stat.S_ISLNK(before.st_mode):
             raise OSError(f"notification registry leaf is unsafe: {path}")
         file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
@@ -1362,7 +1362,7 @@ def _secure_notification_registry_read(
                 dir_fd=parent_fd,
             )
         except FileNotFoundError:
-            return _notification_registry_missing(mailbox)
+            return _notification_registry_missing(mailbox, registry_lock_fd=registry_lock_fd)
         try:
             _validate_notify_registry_file(file_fd, path)
             info = os.fstat(file_fd)
@@ -1391,19 +1391,28 @@ def _validate_notification_registry(value: Any) -> dict[str, Any]:
     return value
 
 
-def _notification_registry_marker(mailbox: Mailbox, *, initialize: bool = False) -> bool:
+def _notification_registry_marker(
+    mailbox: Mailbox, *, initialize: bool = False, registry_lock_fd: int | None = None
+) -> bool:
     """Keep initialization continuity in the existing persistent registry lock."""
     path = mailbox.bridge_dir / "notify_locks" / "delivery-registry.lock"
     _ensure_notify_directory_chain(path.parent, create=initialize)
     flags = os.O_RDWR if initialize else os.O_RDONLY
     if initialize:
         flags |= os.O_CREAT
-    try:
-        descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    except FileNotFoundError:
-        return False
+    descriptor = registry_lock_fd
+    if descriptor is None:
+        try:
+            descriptor = os.open(
+                path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600
+            )
+        except FileNotFoundError:
+            return False
     try:
         _validate_notify_registry_file(descriptor, path)
+        # Windows denies access to a locked byte through a second handle, even
+        # in the owning process. Use the registry lock's descriptor while held.
+        os.lseek(descriptor, 0, os.SEEK_SET)
         marker = os.read(descriptor, 16)
         if marker not in {b"", b"0", b"1"}:
             raise OSError("notification registry continuity marker is invalid")
@@ -1413,12 +1422,13 @@ def _notification_registry_marker(mailbox: Mailbox, *, initialize: bool = False)
             os.fsync(descriptor)
         return marker == b"1"
     finally:
-        os.close(descriptor)
+        if registry_lock_fd is None:
+            os.close(descriptor)
 
 
-def _notification_registry_missing(mailbox: Mailbox) -> None:
+def _notification_registry_missing(mailbox: Mailbox, *, registry_lock_fd: int | None = None) -> None:
     try:
-        initialized = _notification_registry_marker(mailbox)
+        initialized = _notification_registry_marker(mailbox, registry_lock_fd=registry_lock_fd)
     except FileNotFoundError:
         initialized = False
     if initialized:
@@ -1426,7 +1436,9 @@ def _notification_registry_missing(mailbox: Mailbox) -> None:
     return None
 
 
-def _secure_notification_registry_write(mailbox: Mailbox, data: dict[str, Any]) -> None:
+def _secure_notification_registry_write(
+    mailbox: Mailbox, data: dict[str, Any], *, registry_lock_fd: int | None = None
+) -> None:
     path = _notify_delivery_path(mailbox)
     payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(payload) > 2_000_000:
@@ -1434,7 +1446,7 @@ def _secure_notification_registry_write(mailbox: Mailbox, data: dict[str, Any]) 
     _validate_notification_registry(data)
     # Mark before publication of the registry: a crash cannot silently turn an
     # initialized outbox into a fresh one. No transport starts before this write.
-    _notification_registry_marker(mailbox, initialize=True)
+    _notification_registry_marker(mailbox, initialize=True, registry_lock_fd=registry_lock_fd)
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
         _ensure_notify_directory_chain(path.parent, create=True)
         for protected in (mailbox.root, mailbox.bridge_dir):
@@ -1587,7 +1599,7 @@ class NotificationDeliveryLock:
             except BaseException:
                 os.close(lock_fd)
                 raise
-            return os.fdopen(lock_fd, "a+b")
+            return os.fdopen(lock_fd, "r+b")
         else:
             pinned_parent_fd = _open_notify_directory_nofollow(
                 self.path.parent, create=True
@@ -1630,7 +1642,7 @@ class NotificationDeliveryLock:
             ):
                 os.close(lock_fd)
                 raise OSError(f"notification lock path is unsafe: {self.path}")
-            return os.fdopen(lock_fd, "a+b")
+            return os.fdopen(lock_fd, "r+b")
 
     def __enter__(self) -> Mailbox:
         deadline = time.monotonic() + NOTIFY_LOCK_OPEN_TIMEOUT_SECONDS
@@ -1728,8 +1740,12 @@ def notification_intent(
     """
     if not re.fullmatch(r"[0-9a-f]{64}", key) or not re.fullmatch(r"[0-9a-f]{64}", payload_hash):
         raise ValueError("invalid notification intent digest")
-    with NotificationDeliveryLock("0" * 64, mailbox, lock_name="delivery-registry"):
-        data = _secure_notification_registry_read(mailbox) or {"schema_version": "1.0", "deliveries": {}}
+    registry_lock = NotificationDeliveryLock("0" * 64, mailbox, lock_name="delivery-registry")
+    with registry_lock:
+        registry_lock_fd = registry_lock.handle.fileno()
+        data = _secure_notification_registry_read(mailbox, registry_lock_fd=registry_lock_fd) or {
+            "schema_version": "1.0", "deliveries": {}
+        }
         intents = data.setdefault("intents", {})
         if not isinstance(intents, dict):
             raise ValueError("invalid notification intent registry")
@@ -1762,7 +1778,7 @@ def notification_intent(
                       "html": previous.get("html") if previous else html}
             record["body_sha256"] = hashlib.sha256(record["text"].encode("utf-8")).hexdigest()
         intents[key] = record
-        _secure_notification_registry_write(mailbox, data)
+        _secure_notification_registry_write(mailbox, data, registry_lock_fd=registry_lock_fd)
         return {**record, "reserved": outcome is None}
 
 
@@ -1788,8 +1804,10 @@ def remember_notification_delivery(
     # The caller's semantic-retry lock serializes check/send/remember for
     # equivalent retries. This registry lock additionally protects the shared
     # read-modify-write map when materially different events complete together.
-    with NotificationDeliveryLock("0" * 64, mb, lock_name="delivery-registry"):
-        data = _secure_notification_registry_read(mb) or {
+    registry_lock = NotificationDeliveryLock("0" * 64, mb, lock_name="delivery-registry")
+    with registry_lock:
+        registry_lock_fd = registry_lock.handle.fileno()
+        data = _secure_notification_registry_read(mb, registry_lock_fd=registry_lock_fd) or {
             "schema_version": "1.0",
             "deliveries": {},
         }
@@ -1836,7 +1854,7 @@ def remember_notification_delivery(
                 )[:200]
             )
         data["retry_deliveries"] = retry_deliveries
-        _secure_notification_registry_write(mb, data)
+        _secure_notification_registry_write(mb, data, registry_lock_fd=registry_lock_fd)
 
 
 # ---------------------------------------------------------------------------

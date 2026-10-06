@@ -3,12 +3,14 @@ import base64
 import concurrent.futures
 import hashlib
 import json
+import ntpath
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ sys.path.insert(0, str(RUNTIME))
 sys.path.insert(0, str(ROOT / "canonical/runtime/runners"))
 import panel_parent as pp
 import provider_resources as resources
+from state_transaction import _safe_relative_path
 if os.name != "nt":
     import arl_credential_broker as broker
 else:
@@ -93,6 +96,68 @@ class ProcessEvidenceTests(unittest.TestCase):
 
 
 class AttemptAndRosterTests(unittest.TestCase):
+    def test_windows_reservation_uses_portable_transaction_keys_on_every_cas_attempt(self):
+        root = PureWindowsPath("C:/loop")
+        for nested in (False, True):
+            for preimage in (None, "a" * 64):
+                with self.subTest(nested=nested, preimage=preimage):
+                    iteration = root / "iterations/iter001" if nested else root
+                    relative = "iterations/iter001/data/panel_attempts.json" if nested else "data/panel_attempts.json"
+                    count = 0 if preimage is None else 1
+                    def read_attempts(path):
+                        return {"schema_version": "panel_attempts.v1", "phases": {"smoke": count}}, preimage
+                    calls = []
+                    def commit(run_dir, **kwargs):
+                        for key in (*kwargs["json_files"], *kwargs["expected_absent"], *kwargs["expected_hashes"]):
+                            _safe_relative_path(key)
+                            self.assertEqual(key, relative)
+                        self.assertEqual(run_dir, root)
+                        self.assertEqual(kwargs["expected_absent"], [relative] if preimage is None else [])
+                        self.assertEqual(kwargs["expected_hashes"], {relative: preimage} if preimage is not None else {})
+                        self.assertEqual(kwargs["json_files"][relative]["phases"]["smoke"], count + 1)
+                        calls.append(kwargs)
+                        if len(calls) == 1:
+                            raise pp.RevisionConflict("retry this reservation")
+                    with mock.patch.object(pp, "Path", PureWindowsPath), mock.patch.object(
+                            pp, "os", SimpleNamespace(path=ntpath)), mock.patch.object(
+                            pp, "_panel_run_root", return_value=root), mock.patch.object(
+                            pp, "_ensure_real_directory"), mock.patch.object(
+                            pp, "_read_panel_attempts", side_effect=read_attempts), mock.patch.object(
+                            pp, "commit_transaction", side_effect=commit):
+                        self.assertEqual(pp.reserve_panel_attempt(iteration, "smoke"), (count + 1, True))
+                    self.assertEqual(len(calls), 2)
+
+    def test_windows_completion_uses_portable_payload_and_preimage_keys_on_retry(self):
+        root = PureWindowsPath("C:/loop")
+        for nested in (False, True):
+            with self.subTest(nested=nested):
+                iteration = root / "iterations/iter001" if nested else root
+                prefix = "iterations/iter001/" if nested else ""
+                context = {"dispatch_id": "current"}
+                state = {"schema_version": "panel_attempts.v1", "phases": {"smoke": 2},
+                         "owners": {"smoke": {**context, "attempt_number": 2}}}
+                payloads = {iteration / "data/panel_dispatch_smoke.json": "summary",
+                            iteration / "panel/smoke/dispatch_summary.json": "detail"}
+                expected = {prefix + "data/panel_dispatch_smoke.json": "summary",
+                            prefix + "panel/smoke/dispatch_summary.json": "detail"}
+                calls = []
+                def commit(run_dir, **kwargs):
+                    for key in (*kwargs["text_files"], *kwargs["expected_hashes"]):
+                        _safe_relative_path(key)
+                    self.assertEqual(run_dir, root)
+                    self.assertEqual(kwargs["text_files"], expected)
+                    self.assertEqual(kwargs["expected_hashes"], {prefix + "data/panel_attempts.json": "a" * 64})
+                    calls.append(kwargs)
+                    if len(calls) == 1:
+                        raise pp.RevisionConflict("retry this completion")
+                with mock.patch.object(pp, "Path", PureWindowsPath), mock.patch.object(
+                        pp, "os", SimpleNamespace(path=ntpath)), mock.patch.object(
+                        pp, "_panel_run_root", return_value=root), mock.patch.object(
+                        pp, "_read_panel_attempts", return_value=(state, "a" * 64)), mock.patch.object(
+                        pp, "commit_transaction", side_effect=commit):
+                    self.assertTrue(pp._publish_panel_attempt(iteration, "smoke", 2, context, payloads))
+                self.assertEqual(len(calls), 2)
+
     def test_corrupt_attempt_counter_never_resets(self):
         for content in ('{broken', '{"schema_version":"panel_attempts.v1","phases":{"smoke":true}}', '{"schema_version":"panel_attempts.v1","phases":{"smoke":-1}}'):
             with self.subTest(content=content), tempfile.TemporaryDirectory() as temporary:

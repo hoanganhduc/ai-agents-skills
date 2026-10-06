@@ -157,6 +157,74 @@ class IntentTests(unittest.TestCase):
         self.assertEqual(registry['intents'][key]['state'], 'outcome_unknown')
 
 
+class RegistryMandatoryLockTests(unittest.TestCase):
+    """Model Windows denying locked-byte I/O through a second file handle."""
+
+    @contextlib.contextmanager
+    def mandatory_registry_lock(self, mod):
+        owners = {}
+        original_enter = mod.NotificationDeliveryLock.__enter__
+        original_exit = mod.NotificationDeliveryLock.__exit__
+        original_read, original_write = os.read, os.write
+
+        def identity(descriptor):
+            info = os.fstat(descriptor)
+            return info.st_dev, info.st_ino
+
+        def enter(lock):
+            mailbox = original_enter(lock)
+            if lock.path.name == 'delivery-registry.lock':
+                owners[identity(lock.handle.fileno())] = lock.handle.fileno()
+            return mailbox
+
+        def exit(lock, *args):
+            if lock.path.name == 'delivery-registry.lock' and lock.handle is not None:
+                owners.pop(identity(lock.handle.fileno()), None)
+            return original_exit(lock, *args)
+
+        def checked_io(operation, descriptor, value):
+            owner = owners.get(identity(descriptor))
+            if owner is not None and descriptor != owner:
+                raise PermissionError(13, 'locked range accessed through a second handle')
+            return operation(descriptor, value)
+
+        with mock.patch.object(mod.NotificationDeliveryLock, '__enter__', enter), \
+             mock.patch.object(mod.NotificationDeliveryLock, '__exit__', exit), \
+             mock.patch.object(mod.os, 'read', side_effect=lambda fd, n: checked_io(original_read, fd, n)), \
+             mock.patch.object(mod.os, 'write', side_effect=lambda fd, data: checked_io(original_write, fd, data)):
+            yield
+
+    def test_intent_continuity_uses_lock_owner_and_preserves_unknown_outcome(self):
+        mod = fixtures.RemoteBridgeStructuredNotify()._mod()
+        with tempfile.TemporaryDirectory() as tmp, self.mandatory_registry_lock(mod):
+            mailbox = mod.Mailbox(Path(tmp) / 'state')
+            key, payload_hash = 'a' * 64, 'b' * 64
+            first = mod.notification_intent(key, payload_hash, mailbox, text='first')
+            self.assertTrue(first['reserved'])
+            mod.notification_intent(key, payload_hash, mailbox, outcome='outcome_unknown')
+            replay = mod.notification_intent(key, payload_hash, mailbox, text='first')
+            self.assertEqual(replay['state'], 'outcome_unknown')
+            self.assertNotIn('reserved', replay)
+            marker = mailbox.bridge_dir / 'notify_locks' / 'delivery-registry.lock'
+            self.assertEqual(marker.read_bytes(), b'1')
+            mod._notify_delivery_path(mailbox).unlink()
+            with self.assertRaisesRegex(OSError, 'initialized notification registry is missing'):
+                mod.notification_intent(key, payload_hash, mailbox, text='first')
+
+    def test_delivery_registry_uses_lock_owner_and_preserves_dedupe(self):
+        mod = fixtures.RemoteBridgeStructuredNotify()._mod()
+        with tempfile.TemporaryDirectory() as tmp, self.mandatory_registry_lock(mod):
+            mailbox = mod.Mailbox(Path(tmp) / 'state')
+            for fingerprint in ['a' * 64, 'b' * 64]:
+                mod.remember_notification_delivery(fingerprint, event_id='event',
+                                                   channel='zulip', mailbox=mailbox)
+                self.assertTrue(mod.notification_was_delivered(fingerprint, mailbox))
+            mod._notify_delivery_path(mailbox).unlink()
+            with self.assertRaisesRegex(OSError, 'initialized notification registry is missing'):
+                mod.remember_notification_delivery('c' * 64, event_id='event',
+                                                   channel='zulip', mailbox=mailbox)
+
+
 class RawIntentTests(unittest.TestCase):
     def test_explicit_milestone_events_use_normal_transport_gate(self):
         import test_autonomous_research_loop as arl_fixtures

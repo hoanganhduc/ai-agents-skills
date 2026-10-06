@@ -597,7 +597,16 @@ def _lock(path: Path) -> Iterator[int | Path]:
     )
     descriptor = -1
     try:
-        descriptor = os.open(lock_name, flags, 0o600, dir_fd=directory_fd)
+        # Concurrent O_CREAT on macOS can report transient ENOENT. Retry only
+        # that failure, within the same pinned directory and before reserving.
+        for attempt in range(4):
+            try:
+                descriptor = os.open(lock_name, flags, 0o600, dir_fd=directory_fd)
+                break
+            except FileNotFoundError:
+                if attempt == 3:
+                    raise
+                time.sleep(0.025)
         opened = os.fstat(descriptor)
         linked = _stat_entry(directory_fd, lock_name)
         if (

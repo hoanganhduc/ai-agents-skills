@@ -3827,7 +3827,8 @@ def reserve_panel_attempt(
     data_dir = Path(os.path.abspath(iter_dir)) / "data"
     _ensure_real_directory(data_dir)
     path = data_dir / "panel_attempts.json"
-    relative = path.relative_to(root)
+    # Transaction keys use slash-separated paths on every host.
+    relative = path.relative_to(root).as_posix()
     for _ in range(64):
         state, preimage = _read_panel_attempts(path)
         count = state["phases"].get(phase, 0)
@@ -3853,7 +3854,7 @@ def _publish_panel_attempt(
 ) -> bool:
     root = _panel_run_root(iter_dir, run_dir)
     path = Path(os.path.abspath(iter_dir)) / "data/panel_attempts.json"
-    relative = path.relative_to(root)
+    relative = path.relative_to(root).as_posix()
     for _ in range(64):
         state, preimage = _read_panel_attempts(path)
         expected_owner = {**dispatch_context, "attempt_number": attempt_number}
@@ -3861,7 +3862,7 @@ def _publish_panel_attempt(
             return False
         try:
             commit_transaction(root,
-                text_files={Path(os.path.abspath(p)).relative_to(root): body for p, body in text_files.items()},
+                text_files={Path(os.path.abspath(p)).relative_to(root).as_posix(): body for p, body in text_files.items()},
                 expected_hashes={relative: preimage})
             return True
         except RevisionConflict:
