@@ -187,3 +187,16 @@ For Calibre write failures, do not run automatic retries. Review the returned
 `calibre_write_result`, run the Calibre `doctor` or `sync` workflow if needed,
 and repeat the `vnthuquan add-to-calibre --dry-run` review before making a
 second execute attempt.
+
+## Repairing a broken local package environment
+
+Start with `diagnose --json` through the managed runner. If an existing console
+script fails to launch, inspect both its shebang and the venv interpreter's
+symlink target; the presence of the script alone does not establish readiness.
+A venv created through a session-temporary Python shim may stop working when
+that temporary directory disappears. Recreate its interpreter using a permanent,
+resolved system Python path, preserving a backup, package/dependency versions,
+configuration and user data. Do not repair it by creating another temporary shim.
+After reinstalling the selected package, verify its version and dependency
+consistency, then rerun managed `diagnose` and the requested read-only live
+checks. Local readiness and live website availability are separate outcomes.

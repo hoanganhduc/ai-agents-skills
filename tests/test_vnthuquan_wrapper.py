@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import errno
+import io
+import json
 import os
 import shutil
 import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,14 +24,20 @@ SCRIPT = RUNTIME_DIR / "vnthuquan_wrapper.py"
 def load_wrapper(data_root: Path):
     """Import the wrapper with its data directories pointed at a temp root.
 
-    Every path the module resolves at import time comes from an environment
-    variable, so a test can keep the wrapper entirely inside its own tempdir.
+    Package discovery and all data paths stay inside the test's tempdir.
     """
 
     env = {
+        "HOME": str(data_root / "home"),
+        "USERPROFILE": str(data_root / "home"),
+        "AAS_DATA_ROOT": str(data_root / "data"),
         "VNTHUQUAN_ASSISTANT_HOME": str(data_root),
         "VNTHUQUAN_RUN_DIR": str(data_root / "runs"),
         "VNTHUQUAN_STATE_DIR": str(data_root / "state"),
+        "VNTHUQUAN_SOURCE_DIR": str(data_root / "source"),
+        "VNTHUQUAN_DOWNLOAD_DIR": str(data_root / "downloads"),
+        "VNTHUQUAN_CALIBRE_RUNNER": str(data_root / "runtime" / "run_skill.sh"),
+        "VNTHUQUAN_CALIBRE_CACHE_PATH": str(data_root / "calibre" / "cache.json"),
     }
     with mock.patch.dict(os.environ, env, clear=False):
         spec = importlib.util.spec_from_file_location("vtq_under_test", SCRIPT)
@@ -411,6 +422,113 @@ class UpstreamDefaultVenvIsFoundTests(unittest.TestCase):
         with mock.patch.object(wrapper.sys, "executable", ""), \
                 mock.patch.object(wrapper.shutil, "which", side_effect=only_python):
             self.assertEqual(wrapper.host_interpreter(), "/usr/bin/python")
+
+
+class PackageLaunchFailureTests(unittest.TestCase):
+    def setUp(self) -> None:
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        self.root = Path(root.name)
+        self.wrapper = load_wrapper(self.root)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = self.wrapper.main(argv)
+        return status, out.getvalue(), err.getvalue()
+
+    def _broken_script(self, contents: str) -> Path:
+        exe = self.wrapper.HOME / ".vnthuquan" / "bin" / "vnthuquan"
+        exe.parent.mkdir(parents=True)
+        exe.write_text(contents, encoding="utf-8")
+        exe.chmod(0o755)
+        return exe
+
+    @unittest.skipIf(os.name == "nt", "POSIX missing installation")
+    def test_loader_keeps_package_discovery_and_data_off_the_host(self) -> None:
+        for name in ("HOME", "SOURCE_DIR", "DEFAULT_DATA_ROOT", "ASSISTANT_HOME",
+                     "RUN_DIR", "STATE_DIR", "CACHE_PATH", "DEFAULT_DOWNLOAD_DIR",
+                     "CALIBRE_RUNNER", "CALIBRE_CACHE_PATH"):
+            self.assertTrue(getattr(self.wrapper, name).is_relative_to(self.root), name)
+        with mock.patch.object(self.wrapper.subprocess, "run", side_effect=AssertionError("host package call")):
+            self.assertIsNone(self.wrapper.package_version())
+
+    def test_metadata_probe_handles_launch_failures_timeout_and_package_failure(self) -> None:
+        outcomes = [
+            FileNotFoundError(errno.ENOENT, "missing interpreter"),
+            PermissionError(errno.EACCES, "permission denied"),
+            OSError(errno.ENOEXEC, "exec format error"),
+            OSError(errno.EIO, "I/O error"),
+            subprocess.TimeoutExpired(["vnthuquan", "--version"], 10),
+            subprocess.CompletedProcess(["vnthuquan"], 5, "", "package failure"),
+        ]
+        with mock.patch.object(self.wrapper, "resolve_vnthuquan", return_value=(["test-vnthuquan"], "test-vnthuquan", sys.executable)):
+            for outcome in outcomes:
+                with self.subTest(outcome=outcome):
+                    kwargs = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+                    with mock.patch.object(self.wrapper.subprocess, "run", **kwargs):
+                        self.assertIsNone(self.wrapper.package_version())
+
+    def test_package_launch_errors_have_shell_exit_codes(self) -> None:
+        with mock.patch.object(self.wrapper, "resolve_vnthuquan", return_value=(["test-vnthuquan"], "test-vnthuquan", sys.executable)):
+            for number, code, status in ((errno.ENOENT, "missing_executable", 127),
+                                          (errno.EACCES, "package_launch_failed", 126),
+                                          (errno.ENOEXEC, "package_launch_failed", 126),
+                                          (errno.EIO, "package_launch_failed", 126)):
+                with self.subTest(errno=number):
+                    with mock.patch.object(self.wrapper.subprocess, "run", side_effect=OSError(number, os.strerror(number))):
+                        with self.assertRaises(self.wrapper.WrapperError) as caught:
+                            self.wrapper.run_pkg(["formats"])
+                    self.assertEqual((caught.exception.code, caught.exception.exit_code), (code, status))
+                    self.assertIn("test-vnthuquan", str(caught.exception))
+
+    @unittest.skipIf(os.name == "nt", "POSIX shebang")
+    def test_broken_interpreter_keeps_json_usage_errors_at_exit_two(self) -> None:
+        self._broken_script(f"#!{self.root}/missing-python\n")
+        for argv in (["--json"], ["__unknown__", "--json"]):
+            with self.subTest(argv=argv):
+                status, out, err = self._run(argv)
+                payload = json.loads(out)
+                self.assertEqual((status, payload["error_code"], payload["exit_code"]), (2, "usage", 2))
+                self.assertIsNone(payload["vnthuquan_version"])
+                self.assertEqual(err, "")
+
+    @unittest.skipIf(os.name == "nt", "POSIX shebang")
+    def test_broken_interpreter_reports_native_help_and_command_errors(self) -> None:
+        exe = self._broken_script(f"#!{self.root}/missing-python\n")
+        for argv in (["doctor", "--help", "--json"], ["formats", "--json"]):
+            with self.subTest(argv=argv):
+                status, out, err = self._run(argv)
+                payload = json.loads(out)
+                self.assertEqual((status, payload["error_code"]), (127, "missing_executable"))
+                self.assertIn(str(exe), payload["message"])
+                self.assertEqual(err, "")
+        status, out, err = self._run(["doctor", "--help"])
+        self.assertEqual((status, out), (127, ""))
+        self.assertIn(str(exe), err)
+        self.assertNotIn("Traceback", err)
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable format")
+    def test_invalid_executable_format_is_reported_without_traceback(self) -> None:
+        self._broken_script("this is not an executable format\n")
+        status, out, err = self._run(["doctor", "--help", "--json"])
+        payload = json.loads(out)
+        self.assertEqual((status, payload["error_code"]), (126, "package_launch_failed"))
+        self.assertEqual(err, "")
+
+    @unittest.skipIf(os.name == "nt", "POSIX shebang")
+    def test_diagnose_preserves_the_resolved_path_when_version_is_unknown(self) -> None:
+        exe = self._broken_script(f"#!{self.root}/missing-python\n")
+        status, out, err = self._run(["diagnose", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(payload["executable"], str(exe))
+        self.assertEqual(payload["resolved_command"], [str(exe)])
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["vnthuquan_version"])
+        self.assertEqual((status, payload["error_code"]), (1, "version_unknown"))
+        self.assertIn("version", payload["message"])
+        self.assertEqual(err, "")
 
 
 class CurrentPackageDefaultsTests(unittest.TestCase):

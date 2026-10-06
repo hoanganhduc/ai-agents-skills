@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import errno
 import os
 import platform
 import re
@@ -298,15 +299,23 @@ def run_pkg(args: list[str], *, json_mode: bool = True) -> tuple[int, str, str]:
     full = [*cmd, "--config", str(CONFIG_PATH), *args]
     if json_mode and "--json" not in full:
         full.append("--json")
-    proc = subprocess.run(
-        full,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-        env=subprocess_env(),
-    )
+    try:
+        proc = subprocess.run(
+            full,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            env=subprocess_env(),
+        )
+    except OSError as exc:
+        missing = exc.errno == errno.ENOENT
+        raise WrapperError(
+            f"Could not launch vnthuquan ({cmd[0]}): {exc}",
+            "missing_executable" if missing else "package_launch_failed",
+            127 if missing else 126,
+        ) from exc
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -336,7 +345,7 @@ def package_version() -> str | None:
             env=subprocess_env(),
             timeout=10,
         )
-    except subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         # Reported as "version unknown", the same as any other failure to ask.
         # Unbounded, this hung `vnthuquan --version` and the doctor payload.
         return None
@@ -786,7 +795,7 @@ def diagnose() -> dict[str, Any]:
         ready = False
         error = str(exc)
     else:
-        error = None
+        error = None if ready else "Could not determine vnthuquan version from the resolved command"
     if ready:
         ensure_config()
     payload = base_payload("diagnose")
@@ -818,8 +827,8 @@ def diagnose() -> dict[str, Any]:
     )
     if error:
         payload["message"] = error
-        payload["error_code"] = "missing_executable"
-        payload["exit_code"] = 127
+        payload["error_code"] = "version_unknown" if cmd else "missing_executable"
+        payload["exit_code"] = 1 if cmd else 127
     return payload
 
 
