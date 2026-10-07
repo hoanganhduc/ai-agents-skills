@@ -1,6 +1,8 @@
 # Lax Formalization And Zenodo Archival
 
-Ordinary Lean/Lake formalization does not require Lax. This page applies when
+Ordinary Lean/Lake formalization does not require Lax; start with
+[Lean formalization](lean-formalization.md) for the native local/remote path.
+This page applies when
 a Lax artifact or optional archive is selected. The existing `from-existing-lean`
 workflow adapts selected source from a normal Lean repository later.
 Keep artifacts per paper. Search pinned Mathlib first; Lax discovery is optional

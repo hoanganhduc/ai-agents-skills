@@ -1,8 +1,8 @@
 # AI Agents Skills Documentation
 
 Shared, sanitized skill bodies, settings metadata, and installers for Codex,
-Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code,
-and restricted OpenClaw targets. The docs describe a research workstation where
+Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok,
+Kimi Code, ChatGPT Local Coder, and restricted OpenClaw targets. The docs describe a research workstation where
 multiple agent frontends share one canonical skill repository, while local
 software such as Python, TeX, optional SageMath, library tools, document
 parsers, and public database clients are detected as external capabilities
@@ -26,10 +26,12 @@ Latest update: {sub-ref}`today`
   adding OpenClaw as a writable target.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
-- Lean paper formalization: use
-  [Lax Formalization And Zenodo Archival](lax-formalization.md) for independently
-  verified reuse, per-paper CI, migration and the secondary archival option.
-  For the complete new-repository job, use [Lax Paper Workflow](lax-paper-workflow.md).
+- Research, review, or formalization jobs: use [Research Jobs And Recovery](research-jobs.md)
+  to select a purpose, executor and artifact format, and handle interrupted work.
+- Lean paper formalization: start with [Native Lean Formalization](lean-formalization.md)
+  for ordinary Lean/Lake and local or authorized remote verification.
+  [Lax Formalization And Zenodo Archival](lax-formalization.md) and
+  [Lax Paper Workflow](lax-paper-workflow.md) cover optional Lax artifacts and publication preparation.
 - Runtime-backed skill questions: use [Installation](installation.md) for
   runtime roots and inventory boundaries, then [Dependencies](dependencies.md)
   for Docling/OCR and local config notes.
@@ -85,7 +87,9 @@ establish factual correctness.
 
 overview
 workflow-overview
+research-jobs
 multi-agent-examples
+lean-formalization
 lax-formalization
 lax-paper-workflow
 lean-formalization-benchmarks

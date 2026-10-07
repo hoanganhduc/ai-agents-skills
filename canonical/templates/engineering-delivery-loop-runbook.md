@@ -72,7 +72,7 @@ budget and credit state stay in this runbook.
 | `max_usd` |  |  |
 | `max_tokens` |  |  |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
-| `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
+| `compute_guard_status` |  | Record each attempted lane and its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle live execution is one-unit CPU only; GPU and multi-run are planning-only. A failed lane falls through to the next permitted lane. |
 | `spent_iterations` |  |  |
 | `spent_usd` |  |  |
 | `spent_tokens` |  |  |
@@ -231,10 +231,11 @@ through `modal-research-compute`.
 
 - The recommended automatic order is `local > Kaggle > Modal > Hetzner > GitHub Actions`;
   a valid custom configured order is honored, with local first and remote lanes unique.
-- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
-  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
-  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
-  `GitHub Actions minutes`.
+- Kaggle live work is limited to reviewed one-unit CPU bundles; GPU and
+  multi-run are planning-only. Before dispatch, record the selected lane and
+  its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`,
+  `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`.
+  `Kaggle GPU-hours` estimates do not authorize live GPU submission.
 - The hardware rule applies to every remote job: its script must **utilize the
   available hardware** (cores, memory, accelerators) of the chosen backend.
 - Re-run the applicable guard at every dispatching loop. If a lane's guard
@@ -247,7 +248,7 @@ through `modal-research-compute`.
 
 Append one row per loop.
 
-| `iteration_id` | Started at | Ended at | `selected_path` (single chosen implementation) | `implementer_provider` | `verifier_provider` (distinct) | Seen-to-fail evidence id (fail -> pass) | Diff verification id | Cleanup status | `compute_backend` (local/Kaggle/Modal/Hetzner/GitHub Actions) | Compute guard checked (`Kaggle GPU-hours` / `Modal USD` / `Hetzner EUR` / `Hetzner teardown` / `GitHub Actions minutes`) | Contradiction? (backtrack target) | Fresh-agent recheck? | Budget spent | Decision | `termination_reason` |
+| `iteration_id` | Started at | Ended at | `selected_path` (single chosen implementation) | `implementer_provider` | `verifier_provider` (distinct) | Seen-to-fail evidence id (fail -> pass) | Diff verification id | Cleanup status | `compute_backend` (local/Kaggle/Modal/Hetzner/GitHub Actions) | Compute guard checked (Kaggle owner/bundle/intent / `Modal USD` / `Hetzner EUR` / `Hetzner teardown` / `GitHub Actions minutes`) | Contradiction? (backtrack target) | Fresh-agent recheck? | Budget spent | Decision | `termination_reason` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | I1 |  |  |  |  |  |  |  |  |  |  |  |  |  | `continue` |  |
 

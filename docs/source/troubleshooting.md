@@ -18,10 +18,12 @@ symlinked skill files when the filesystem supports them. Codex receives copied
 regular skill trees by default because symlinked skill loading is not assumed
 and the installed skills must remain self-contained. DeepSeek and Copilot receive
 reference adapters. OpenCode and Antigravity receive copied regular files;
-Antigravity uses documented flat global Markdown skill files under
-`~/.gemini/antigravity-cli/skills/`. Use
+Antigravity uses flat global Markdown skill files under
+`~/.gemini/antigravity-cli/skills/` or the validated migrated
+`~/.gemini/config/skills/` tree. Use
 `--install-mode symlink` only when you intentionally want to force links for
-every agent. Use `--install-mode reference` to force adapters for every agent.
+supported targets. Copilot and OpenClaw reject forced symlink mode; OpenClaw
+also rejects reference mode. Use reference adapters only on supported targets.
 If an agent requires regular files in its settings directory, use
 `--install-mode copy`.
 
@@ -35,6 +37,31 @@ make lifecycle-test ARGS="--matrix full --platform-shape all"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile full-research --platform-shape all"
 ```
+
+## Vietnam Thu Quan diagnosis
+
+The `vnthuquan` skill is routing guidance, its managed runtime wrapper selects
+and invokes a separate `vnthuquan` Python package, and the website/mirror is an
+external service. Finding a skill file does not prove that the package is
+installed; a website failure does not by itself prove a wrapper defect. Start
+with the managed diagnostic so its selected command and interpreter are visible:
+
+```bash
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/vnthuquan/run_vnthuquan.sh diagnose --json
+```
+
+`diagnose` reports local readiness and the selected package executable/interpreter;
+it does not establish website health. Once local readiness passes, `doctor --json`
+or `mirrors check --json` performs the separately requested live site check.
+For repair, preserve config, downloads, and the
+existing environment/installer backups first. Use a stable interpreter location
+when rebuilding a virtual environment: moving the environment afterward can
+break absolute console-script shebangs. Do not replace managed wrappers with
+ad hoc launchers to hide a package or site error.
+
+Quota exhaustion, retries, interrupted remote acceptance, and pending formal
+verification use the existing [Research jobs](research-jobs.md) recovery policy.
 
 Common cases:
 

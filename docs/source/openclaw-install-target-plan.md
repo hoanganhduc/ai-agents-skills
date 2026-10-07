@@ -106,7 +106,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, Kimi, and OpenClaw
+- default install targets are currently Codex, Claude, DeepSeek, CodeWhale, Copilot, OpenCode, Antigravity, Grok, Kimi, OpenClaw, and chatgpt-local-coder
 - OpenClaw is a default target for restricted fake-root layout tests
 - OpenClaw has a Phase 1 target capability record and central target gate that
   preserves normal installer real-system denials

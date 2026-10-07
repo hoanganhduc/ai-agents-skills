@@ -48,7 +48,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, CodeWhale, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. CodeWhale writes directory-layout skills under `~/.codewhale/skills/<skill>/`; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`; Grok, Kimi, and chatgpt-local-coder write their own directory-layout skill trees. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, CodeWhale, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. CodeWhale writes directory-layout skills under `~/.codewhale/skills/<skill>/`; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md` or the validated migrated `~/.gemini/config/skills/<skill>.md`; Grok, Kimi, and chatgpt-local-coder write their own directory-layout skill trees. Explicit modes remain target-gated: Copilot blocks symlink mode, and OpenClaw blocks symlink and reference modes. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -99,7 +99,10 @@ Antigravity is included in default target detection when
 `~/.gemini/antigravity-cli` exists. The installer writes flat global Markdown
 skills under `~/.gemini/antigravity-cli/skills/`, managed global context blocks
 under `~/.gemini/GEMINI.md`, and the managed `ai-agents-skills` plugin payload
-under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. Project-local
+under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. On a vendor-migrated
+home, the validated skill and plugin roots are `~/.gemini/config/skills/` and
+`~/.gemini/config/plugins/ai-agents-skills/`. The settings scaffold remains
+`~/.gemini/antigravity-cli/settings.json` in either layout. Project-local
 `.agents/` directories remain project/workspace-local and do not activate the
 global Antigravity target.
 

@@ -33,6 +33,8 @@ def generated_doc_texts(manifests: dict[str, Any]) -> dict[str, str]:
         "artifacts.md": artifacts_text(manifests),
         "profiles.md": profiles_text(manifests),
         "dependencies.md": dependencies_text(manifests),
+        "lean-formalization.md": lean_formalization_text(),
+        "research-jobs.md": research_jobs_text(),
         "lax-formalization.md": lax_formalization_text(),
         "lax-paper-workflow.md": (REPO_ROOT / "canonical/templates/lax-paper-workflow.md").read_text(encoding="utf-8"),
         "workflow-overview.md": workflow_overview_text(),
@@ -83,9 +85,6 @@ def write_readme(manifests: dict[str, Any]) -> Path:
 
 
 def readme_text(manifests: dict[str, Any]) -> str:
-    skills_table = skill_table(manifests)
-    profiles_table = profiles_table_text(manifests)
-    artifact_profiles_table = artifact_profiles_table_text(manifests)
     return f"""# AI Agents Skills
 
 <div align="center">
@@ -111,8 +110,8 @@ def readme_text(manifests: dict[str, Any]) -> str:
 > see the [introductory blog post](https://hoanganhduc.github.io/misc/coding-system-rebuild/).
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted
-OpenClaw fake-root targets.
+CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code,
+ChatGPT Local Coder, and restricted OpenClaw fake-root targets.
 
 ## System Summary
 
@@ -123,18 +122,19 @@ versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI,
-Grok, and Kimi Code can each load local skills. OpenClaw participates as a default
+Grok, Kimi Code, and ChatGPT Local Coder can each load local skills. OpenClaw participates as a default
 fake-root-only target for normal installer flows, with a separate reviewed v2
 skill-file path for real-system skill writes, an evidence-gated runtime-install
 path (the `openclaw-runtime-*` commands plus the host `openclaw-broker`) for
-real-system runtime files, and an optional dual-route `/aas` adapter published
-from `remote-bridge` into the OpenClaw workspace. This repository keeps the
+real-system runtime files. Legacy dual-route `/aas` adapter copies may remain
+in an OpenClaw workspace, but the current publisher is blocked and does not
+inspect, replace, or remove those copies. This repository keeps the
 shared research workflows, profiles, delegation settings, dependency metadata,
 and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted OpenClaw
+- agent frontends and targets: Codex, Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, ChatGPT Local Coder, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -211,6 +211,10 @@ behavior but lighter platform-specific guidance.
   eOffice application packages (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
+- [docs/lean-formalization.md](docs/lean-formalization.md): ordinary Lean/Lake,
+  local or authorized remote execution, and separate evidence gates.
+- [docs/research-jobs.md](docs/research-jobs.md): job choices, bounded recovery,
+  pending verification, and resumption.
 - [docs/lax-formalization.md](docs/lax-formalization.md): per-paper Lean/Lax
   setup, independent verification, CI, secondary Zenodo archives, and migration.
 - [docs/lax-paper-workflow.md](docs/lax-paper-workflow.md): executable job runbook
@@ -300,8 +304,10 @@ cd ai-agents-skills
 
 Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
 POSIX bootstrap script. Windows examples use `./make.ps1`, which requires
-`pwsh` or `powershell.exe`. The installer only plans targets for existing
-agent homes; absent homes are reported and skipped.
+`pwsh` or `powershell.exe`. The installer normally plans targets for existing
+agent homes; absent homes are normally reported and skipped. ChatGPT Local
+Coder is an exception: detected runtime config or its CLI can qualify the target
+for creation of `~/.chatgpt-local-coder` during an approved install. See [Agent Locations](docs/agent-locations.md).
 
 Linux/macOS:
 
@@ -366,10 +372,15 @@ manifest-declared platform-inapplicable support files and Antigravity alias coll
 managed skill surface are recorded as declared neutral exclusions:
 
 ```bash
-export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder"
 make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
 ```
+
+The example lists all ten non-OpenClaw registry targets. Before running it,
+choose only targets actually present and intended on this machine;
+`--require-all-requested-agents` is an assertion, not permission to add absent
+agents. ChatGPT Local Coder uses the detection exception described below.
 
 An outer restoration system should close software and Python dependencies next,
 then run `make installed-runtime-smoke ARGS="--require-complete-coverage"`.
@@ -380,10 +391,9 @@ reviewed component/manifests and is not written by this complete-restore flow.
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. `plan --json`
 shows the effective mode, agent policy evidence, apply-time symlink fallback,
-and reason for each target. Use `--install-mode symlink` to force symlinks for
-every agent, `--install-mode reference` to force adapters for every agent, or
-`--install-mode copy` only when files must be materialized inside the agent
-settings directory.
+and reason for each target. Explicit modes apply only to supported targets:
+Copilot rejects forced symlinks; OpenClaw rejects symlink and reference modes.
+Use `--install-mode copy` when files must be materialized inside the agent home.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -402,8 +412,8 @@ dependency-bound artifacts should also install their backing skills.
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
   `installed-runtime-smoke`, `lifecycle-test`, `list-skills`, `list-artifacts`,
   `describe`, `describe-artifact`, `provision-external`,
-  `provision-skill-python`, and `verify-skill-python`.
-- Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
+  `provision-skill-python`, `verify-skill-python`, and `docs-check`.
+- Makefile-only maintainer targets include `docs`, `docs-site`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
   through `make` or `./make.ps1`, not as installer CLI commands.
 
@@ -427,11 +437,12 @@ supported generically. See `docs/skills.md` and the skill references.
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
 local-only by default: sources must be local files and remote service fields
 are rejected from config. Use `scan-heavy` when you want stronger local OCR
-for image-backed papers:
+for image-backed papers. Execute `run_skill.sh` directly so its
+`#!/bin/bash -p` shebang takes effect:
 
 ```bash
-bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh doctor
-bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
+"${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh doctor
+"${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy
@@ -440,7 +451,7 @@ bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_ski
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
+"${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy \\
@@ -452,7 +463,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \\
+"${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \\
   --allow-remote-ocr
 ```
 
@@ -474,7 +485,7 @@ make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
 ```
 
-{profiles_table}
+[Browse the skill profiles](docs/profiles.md).
 
 ## Artifact Profiles
 
@@ -495,23 +506,24 @@ installing skills, also install each skill's curated recommended template(s)
 -> `autonomous-research-loop-runbook`). It is opt-in, so default installs are
 unchanged.
 
-{artifact_profiles_table}
+[Browse the artifact profiles](docs/artifacts.md).
 
 ## Skills
 
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: Claude links to `canonical/skills`; Codex, OpenCode,
-Grok, and Kimi Code receive copied native skill files plus support files;
+targets follow auto mode: Claude links to `canonical/skills`; Codex, CodeWhale, OpenCode,
+Grok, Kimi Code, and ChatGPT Local Coder receive copied native skill files plus support files;
 Grok installs under `~/.grok` and
 disables its `[compat.claude]` ride-along for a self-contained view; Kimi
 installs under `~/.kimi-code` and does not auto-edit `config.toml`. DeepSeek
 receives reference adapters, and
-Antigravity receives flat global Markdown adapters plus native plugin/config
-scaffolds unless native loader evidence
-justifies a different policy. Explicit `symlink`, `reference`, and `copy`
-modes force the same strategy for every agent. Use `--skill` or `--skills` for
+Antigravity receives copied flat global Markdown skills plus native
+plugin/config scaffolds. Vendor-migrated homes use `~/.gemini/config/skills`
+and `~/.gemini/config/plugins`; settings remain in the legacy CLI home. Explicit `symlink`, `reference`, and `copy`
+modes select a strategy only for supported targets: Copilot blocks symlink
+mode, and OpenClaw blocks symlink and reference modes. Use `--skill` or `--skills` for
 narrow installs.
 
 ```bash
@@ -519,7 +531,7 @@ make plan ARGS="--skill zotero"
 make install ARGS="--skills zotero,docling --dry-run"
 ```
 
-{skills_table}
+[Browse the complete skill catalog](docs/skills.md).
 """
 
 
@@ -547,12 +559,12 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
         "`auto` mode links Claude skill files to `canonical/skills`; Codex, "
-        "OpenCode, Grok, Kimi Code, and Antigravity receive copied regular files "
+        "CodeWhale, OpenCode, Grok, Kimi Code, chatgpt-local-coder, and Antigravity receive copied regular files "
         "and support files by default. DeepSeek and Copilot receive reference "
         "adapters unless native loader evidence justifies a different policy. "
         "Explicit "
-        "`symlink`, `reference`, and `copy` modes force the same strategy for every "
-        "agent. In `reference` mode, the installed `SKILL.md` is an adapter "
+        "`symlink`, `reference`, and `copy` modes apply only to supported targets; "
+        "Copilot blocks symlink mode and OpenClaw blocks symlink/reference modes. In `reference` mode, the installed `SKILL.md` is an adapter "
         "that points back to this repo; support files remain in "
         "`canonical/skills/<skill>/` instead of being copied into the agent "
         "home.\n\n"
@@ -620,8 +632,10 @@ def profiles_text(manifests: dict[str, Any]) -> str:
         "make plan ARGS=\"--profile research-core\"\n"
         "make install ARGS=\"--profile research-core --dry-run\"\n"
         "make plan ARGS=\"--profile library --artifact-profile research-entrypoints --with-deps\"\n"
-        "make plan ARGS=\"--agents codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents\"\n"
+        "make plan ARGS=\"--agents codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents\"\n"
         "```\n\n"
+        "Choose only present, intended targets from the ten-target example; "
+        "`--require-all-requested-agents` must not be used to add unavailable agents. "
         "The complete-restore target list deliberately excludes OpenClaw. "
         "Real OpenClaw restoration is delegated to the separately reviewed "
         "OpenClaw component and manifest flow.\n\n"
@@ -654,8 +668,9 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
         "- Python 3.10 or newer.",
         "- A shell that can run the launcher: POSIX shell plus `make` on",
         "  Linux/macOS, or `./make.ps1` with PowerShell on native Windows.",
-        "- Existing agent homes for any agents you want to install into. Missing",
-        "  agent homes are skipped rather than created implicitly.",
+        "- Most targets require an existing agent home; absent targets are skipped.",
+        "  ChatGPT Local Coder can also be detected from its runtime config or CLI,",
+        "  with its artifact home created during installation; see [Agent Locations](agent-locations.md).",
         "",
         "Common commands:",
         "",
@@ -1042,7 +1057,7 @@ make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
-Fast local maintainer checks:
+Fast local maintainer checks (install the CI dependencies below first):
 
 ```bash
 make static-check
@@ -1053,19 +1068,16 @@ make runtime-smoke
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
-Closest single-host CI parity pass:
+Linux CI prerequisites and local checks:
 
-```bash
-make static-check
-make sanitize-check
-make test
-make docs-check
-python3 -m pip install networkx psutil
-make runtime-smoke
-python3 -m pip install -r docs/requirements.txt
-make docs-site
-make lifecycle-test ARGS="--matrix stress --platform-shape all"
-```
+Use Python 3.11 and install `networkx`, `psutil`, `requests`, and
+`shapely==2.1.2` before tests or runtime smoke. Linux CI also provisions
+containment support and an attested system Node runtime before unit tests;
+without those prerequisites a local run is not CI parity. Follow the
+[actual CI workflow](https://github.com/hoanganhduc/ai-agents-skills/blob/main/.github/workflows/tests.yml)
+for its checkout wrapper, platform jobs, and provisioning steps. Python 3.10
+has a separate compatibility job with `tomli`. The lifecycle stress matrix is
+a separate Linux job; docs rendering additionally needs `docs/requirements.txt`.
 
 Linux CI runs the stress lifecycle matrix across all platform shapes. Python
 3.10 compatibility, macOS, and Windows jobs run narrower subsets that still
@@ -1162,9 +1174,13 @@ doctors, and the agent's own diagnostics for those layers.
 
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
-On Windows it exercises `run_skill.ps1`. CMD runtime entrypoints are not
-published because CMD cannot preserve arbitrary argument vectors safely. On
-Linux and macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+On native Windows this temporary install is blocked by the same `apply_plan`
+mutation gate as normal installation; it does not reach `run_skill.ps1`.
+`installed-runtime-smoke` can inspect an already installed runtime and run
+eligible native PowerShell contracts, subject to their prerequisites. Native
+PowerShell wrapper checks are separate evidence from temporary installation.
+CMD runtime entrypoints are not published because CMD cannot preserve arbitrary
+argument vectors safely. On Linux and macOS temporary smoke exercises `run_skill.sh`. The default runtime smoke currently covers
 {runtime_smoke_skills}, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
@@ -1835,7 +1851,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, Kimi, and OpenClaw
+- default install targets are currently Codex, Claude, DeepSeek, CodeWhale, Copilot, OpenCode, Antigravity, Grok, Kimi, OpenClaw, and chatgpt-local-coder
 - OpenClaw is a default target for restricted fake-root layout tests
 - OpenClaw has a Phase 1 target capability record and central target gate that
   preserves normal installer real-system denials
@@ -2380,10 +2396,107 @@ Related pages: [OpenClaw Integration Plan](openclaw-integration-plan.md),
 """
 
 
+def lean_formalization_text() -> str:
+    return """# Lean formalization
+
+Ordinary Lean/Lake is the default for a paper's formal artifacts. Keep the
+project and its evidence per paper. Search the pinned Mathlib and existing
+project dependencies before adding declarations. Lax catalog discovery is
+optional; independently verify any Lax result actually reused, including its
+statement, definitions, and proof dependencies.
+
+Use the [informal-to-Lean runbook](https://github.com/hoanganhduc/ai-agents-skills/blob/main/canonical/templates/informal-to-lean-formalization-runbook.md)
+for intake, declaration mapping, proof work, and acceptance. Record the selected
+source revision, Lean/Mathlib pins, theorem targets, assumptions, and open
+obligations before verification. Report these evidence layers separately:
+
+| Layer | Evidence and limit |
+|---|---|
+| Source scan | Inspects proof escapes and suspicious source patterns; does not establish elaboration or semantic correspondence. |
+| Build/typecheck | Checks the selected formal project with the recorded toolchain; compilation alone does not establish the paper's claim. |
+| Axiom audit | Reports axioms used transitively by the selected declarations and checks the allowed trust base; this is not a full inventory of imported definitions. |
+| Optional kernel replay | Runs the separately selected checker on the specified modules; unavailable required replay remains unmet. |
+| Correspondence review | Compares the checked declarations, definitions, quantifiers, and assumptions with the informal claim. |
+
+Local execution and an authorized remote executor can produce these checks.
+The [native remote Lean reference](https://github.com/hoanganhduc/ai-agents-skills/blob/main/canonical/skills/autonomous-research-loop-runtime/references/native-lean-remote.md)
+describes the existing Kaggle CPU path, pinned host request, dependency setup,
+and exact-version evidence admission. Network access for setup requires explicit
+policy permission; the kernel's Internet setting is not a setup-only sandbox.
+Keep setup, build, audit, replay, and correspondence outcomes separate, and
+identify which checks actually ran remotely. A job-written PASS does not replace
+host admission of the bound evidence. Live executor qualification is distinct
+from offline controller tests.
+
+Pending verification preserves the candidate and its evidence. Resume or
+reconcile the existing attempt under the job policy; do not treat a pending
+result as success or automatically submit a replacement. See
+[Research jobs](research-jobs.md) for bounded recovery and stop behavior.
+
+If a Lax artifact is requested later, use the existing
+[per-paper workflow](lax-paper-workflow.md) operation `from-existing-lean`.
+It adds export, adaptation, independent verification, and readiness requirements;
+native Lean success does not imply Lax readiness. Lax submission/registration,
+GitHub publication, and Zenodo archival publication remain separate requests.
+"""
+
+
+def research_jobs_text() -> str:
+    return """# Research jobs
+
+A job brief chooses purpose, executor, and artifact format independently.
+The existing [research job presets](https://github.com/hoanganhduc/ai-agents-skills/blob/main/canonical/templates/research-job-presets.md)
+compose current workflows; they are not a new scheduler or permission to spend,
+publish, notify, or execute a remote job.
+
+| Choice | Guidance |
+|---|---|
+| Purpose | `research`, `review`, or `lean-formalize`; research/review do not implicitly request formalization. |
+| Executor | Current host tools or a backend permitted by the task's compute policy. |
+| Artifact | Ordinary Lean/Lake by default for formalization; Lax only when its artifact format is selected. |
+| Network and assurance | Record explicit network permission and required validators; an unavailable required check remains unmet. |
+
+Before dispatch, record owner, exact inputs and versions, allowed actions,
+resource/time budgets, attempt limits, evidence outputs, and acceptance gates.
+A candidate, template, or provider reply cannot grant authority. Independent
+sessions are not automatically independent model families; resuming a reviewer
+continues that review rather than creating a new independent assessment.
+
+## Bounded recovery
+
+- Inspect quota and remaining time before dispatch. Hard exhaustion has no
+  automatic retry; throttling uses bounded cooldown. New unattended phases
+  default to at most three attempts unless a stricter existing cap applies.
+  Restart or provider rotation does not reset accounting.
+- Correct deterministic errors before retrying. Extend time only with progress
+  evidence and remaining authorization; silence alone does not prove a hang.
+- Check cleanup before replacing a worker. If remote acceptance or spending is
+  uncertain, reconcile the existing attempt and keep unknown spending reserved;
+  do not resubmit automatically.
+- Preserve stop/pause across restarts. Late results can supply evidence or
+  reconcile accounting but cannot resume work under a successor attempt.
+- Keep pending formal verification pending. The existing native remote path
+  uses exit 19 for pending and 21 for incomplete; both preserve the candidate
+  and stop automatic producer failover. Resume the bound verification attempt
+  using the workflow's documented operation.
+
+Use the [autonomous-loop runbook](https://github.com/hoanganhduc/ai-agents-skills/blob/main/canonical/templates/autonomous-research-loop-runbook.md)
+and [native remote Lean reference](https://github.com/hoanganhduc/ai-agents-skills/blob/main/canonical/skills/autonomous-research-loop-runtime/references/native-lean-remote.md)
+for the existing dispatch, journal, checkpoint, and resumption mechanisms.
+Report process completion, artifact quality, review acceptance, formal evidence,
+and publication as separate outcomes. Preserve original failure evidence during
+recovery. For installer and wrapper failures, start with
+[Troubleshooting](troubleshooting.md); for proof evidence, use
+[Lean formalization](lean-formalization.md).
+"""
+
+
 def lax_formalization_text() -> str:
     return r"""# Lax Formalization And Zenodo Archival
 
-Ordinary Lean/Lake formalization does not require Lax. This page applies when
+Ordinary Lean/Lake formalization does not require Lax; start with
+[Lean formalization](lean-formalization.md) for the native local/remote path.
+This page applies when
 a Lax artifact or optional archive is selected. The existing `from-existing-lean`
 workflow adapts selected source from a normal Lean repository later.
 Keep artifacts per paper. Search pinned Mathlib first; Lax discovery is optional
@@ -2630,7 +2743,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, and Kimi receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`, plus an optional dual-route `/aas` adapter published from remote-bridge. |
+| Agent frontends and targets | Codex, Claude, DeepSeek, CodeWhale, Copilot, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`, legacy dual-route `/aas` workspace copies may still exist, but new publishing is blocked and existing copies are not replaced or removed. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
@@ -2727,29 +2840,35 @@ CLIs under its sandbox”:
 3. **Host parent** runs **result review** on new artifacts.
 4. **Host evidence gates** bank claims; panel consensus is not evidence.
 5. **Notify** (remote-bridge when configured) is progress messaging only;
-   force-loop apply defaults leave notify **auto/on**.
+   force-loop fills an absent notification choice with **auto/on**.
 
 ### Default scripted force-loop (Linux/WSL enforce execution)
 
-Use the installed **force-loop** kit first. It applies Goal Focus **enforce**,
-goal_priority **hard**, and **notify auto**. The enforced execution path requires
+Use the installed **force-loop** kit first. For new loops it fills absent
+settings with Goal Focus **enforce**, goal_priority **hard**, and **notify auto**.
+Existing explicit monitor/off, notification, compute, formal, and panel choices
+are preserved; bootstrap is not a reset of existing policy. The enforced execution path requires
 Linux/WSL resource controls and does not require systemd. Portable shell and
 PowerShell wrappers do not qualify native macOS or Windows for `enforce`;
 native execution there is refused. Discovery template: `arl-scripted-force-loop`.
 
 ```bash
-# Bootstrap pins + smoke (init if needed)
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
+# Absolute, owner-private host policy outside the loop tree
+AAS_EXAMPLE_POLICY="/absolute/host-policy/force-loop.env"
+# Bootstrap pins + smoke (goal and criteria required on first init)
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
-  bootstrap --loop research/run --root "$PWD" --profile formal --goal "…"
+  bootstrap --loop research/run --root "$PWD" --profile formal \\
+  --goal "…" --success-criteria "…" --policy-file "$AAS_EXAMPLE_POLICY"
 
 # Foreground start (default supervision mode)
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
-  start --loop research/run --root "$PWD" --provider codex
+  start --loop research/run --root "$PWD" --provider codex \\
+  --policy-file "$AAS_EXAMPLE_POLICY"
 
 # Status / stuck dispatch or quarantine
-… force-loop/run_force_loop.sh status --loop research/run
+… force-loop/run_force_loop.sh status --loop research/run --policy-file "$AAS_EXAMPLE_POLICY"
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
@@ -2765,7 +2884,7 @@ compositions. Prefer force-loop for new campaigns.
 
 ```bash
 # Enable host panel around each drive iteration
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh \\
   drive --dir research/run --provider codex --panel on
 
@@ -2780,7 +2899,7 @@ Panel provider budgets default to **adaptive** timeouts (prompt size, provider
 multipliers, recent elapsed history, hard max). Set `"timeout_mode": "fixed"` for
 legacy flat caps.
 
-**Discipline defaults (force-loop apply):** Goal Focus `enforcement_mode=enforce`,
+**Defaults for absent settings (force-loop apply):** Goal Focus `enforcement_mode=enforce`,
 `goal_priority.enabled=true` with `discipline_mode=hard`, and notify auto/on.
 Legacy soft **goal priority** (`goal_priority.json` with explicit enable) still
 injects goal-EV / campaign / streak warnings without v2 enforce gates; see
@@ -3230,7 +3349,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, CodeWhale, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. CodeWhale writes directory-layout skills under `~/.codewhale/skills/<skill>/`; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`; Grok, Kimi, and chatgpt-local-coder write their own directory-layout skill trees. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, CodeWhale, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. CodeWhale writes directory-layout skills under `~/.codewhale/skills/<skill>/`; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md` or the validated migrated `~/.gemini/config/skills/<skill>.md`; Grok, Kimi, and chatgpt-local-coder write their own directory-layout skill trees. Explicit modes remain target-gated: Copilot blocks symlink mode, and OpenClaw blocks symlink and reference modes. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -3281,7 +3400,10 @@ Antigravity is included in default target detection when
 `~/.gemini/antigravity-cli` exists. The installer writes flat global Markdown
 skills under `~/.gemini/antigravity-cli/skills/`, managed global context blocks
 under `~/.gemini/GEMINI.md`, and the managed `ai-agents-skills` plugin payload
-under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. Project-local
+under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. On a vendor-migrated
+home, the validated skill and plugin roots are `~/.gemini/config/skills/` and
+`~/.gemini/config/plugins/ai-agents-skills/`. The settings scaffold remains
+`~/.gemini/antigravity-cli/settings.json` in either layout. Project-local
 `.agents/` directories remain project/workspace-local and do not activate the
 global Antigravity target.
 
@@ -3618,10 +3740,11 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
-Fake-root plans detect only agent homes that exist under the fake root. Create
+Fake-root plans normally detect agent homes that exist under the fake root;
+ChatGPT Local Coder can also qualify through runtime-config detection. Create
 `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`,
 `.gemini/antigravity-cli`, or `.openclaw` inside the fake root for the agents
-you want to exercise; a fake root with no agent homes produces no install actions,
+you want to exercise; a fake root with no eligible targets produces no install actions,
 no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
@@ -3644,11 +3767,16 @@ support files and Antigravity aliases that collide with the managed skill
 surface remain visible as declared neutral exclusions:
 
 ```bash
-export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder"
 make precheck ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
 ```
+
+The example names all ten non-OpenClaw registry targets. Select only targets
+present and intended on this machine; `--require-all-requested-agents` must not
+be used to add unavailable agents. ChatGPT Local Coder may qualify through
+runtime config or CLI detection before its artifact home exists.
 
 The integrity-only post-install mode is appropriate when an outer restoration
 workflow installs the declared software/Python closure immediately afterward.
@@ -3731,12 +3859,13 @@ the canonical repo skill. `plan --json` shows the effective `install_mode`, `mod
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
-Use `--install-mode symlink` to force symlinked skill files for every agent.
+Use `--install-mode symlink` only for targets that support it. Copilot and
+OpenClaw reject this mode; OpenClaw also rejects reference mode.
 This is useful for testing future loader behavior, but it can produce Codex
 skill targets that current Codex will not discover.
 
 Use `--install-mode reference` for agents or environments that should not load
-symlinked skills. This mode writes a thin adapter into every agent settings
+symlinked skills. For supported targets this mode writes a thin adapter into the settings
 directory, using `SKILL.md` for directory-shaped targets and `<skill>.md` for
 Antigravity. The adapter tells the agent where the canonical repo skill file is
 and does not copy support files. If a previously managed skill is switched to
@@ -3806,7 +3935,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `--install-mode reference` to force adapters for every agent or `copy` for a self-contained install. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `reference` on supported targets or `copy` for a self-contained install; OpenClaw rejects reference mode and both OpenClaw and Copilot reject forced symlinks. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
@@ -3994,8 +4123,14 @@ Related pages: [Dependencies](dependencies.md), [Windows](windows.md),
 def agent_locations_text() -> str:
     return """# Agent Locations
 
-The installer detects agent homes first. If an agent home is absent, that agent
-is skipped and its target-specific files are not planned.
+The default registry includes Codex, Claude, DeepSeek, CodeWhale, Copilot,
+OpenCode, Antigravity, Grok, Kimi, OpenClaw, and chatgpt-local-coder. The installer
+normally requires an existing eligible agent home; absent targets are skipped.
+ChatGPT Local Coder is an exception: a detected runtime config directory or
+(on a real-system root) `chatgpt-local-coder`/`clc` CLI can qualify the target
+before `~/.chatgpt-local-coder` exists. An approved install may create that
+artifact home. On real-system roots the artifact home alone is insufficient
+without runtime evidence.
 
 Use this page when checking where files will be installed or why one agent was
 skipped. The paths below are target locations, not source locations. Canonical
@@ -4009,7 +4144,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | CodeWhale | `~/.codewhale` | `~/.codewhale/skills/<skill>/` | not modified |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
 | OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
-| Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
+| Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md`, or `~/.gemini/config/skills/<skill>.md` after vendor migration | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
 | Kimi | `~/.kimi-code` | `~/.kimi-code/skills/<skill>/` | `~/.kimi-code/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
@@ -4059,7 +4194,7 @@ Optional artifact-class target directories:
 | CodeWhale | `~/.codewhale/agents` | `~/.codewhale/templates` | not managed | `~/.codewhale/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
 | OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
-| Antigravity | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/templates` | `~/.gemini/antigravity-cli/skills/<alias>.md` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/tools` |
+| Antigravity | `<plugin-root>/agents` | `<plugin-root>/templates` | `<skills-root>/<alias>.md` | `<plugin-root>/tools` |
 | Grok | `~/.grok/agents` | `~/.grok/templates` | `~/.grok/commands` | `~/.grok/tools` |
 | Kimi | `~/.kimi-code/agents` | `~/.kimi-code/templates` | not supported | `~/.kimi-code/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
@@ -4111,8 +4246,14 @@ Antigravity is included in default target detection when
 workspace-local and do not activate the global Antigravity target. The
 installer writes flat global Markdown skills, managed global context, and the
 managed `ai-agents-skills` plugin payload under
-`~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
-hook, and settings scaffolds.
+`~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP and
+hook scaffolds. In the table, `<skills-root>` is the legacy
+`~/.gemini/antigravity-cli/skills` or validated migrated `~/.gemini/config/skills`;
+`<plugin-root>` is the legacy `~/.gemini/antigravity-cli/plugins/ai-agents-skills`
+or migrated `~/.gemini/config/plugins/ai-agents-skills`. Vendor migration markers
+and path validation select the layout; arbitrary compatibility links are not
+followed. Settings remain at `~/.gemini/antigravity-cli/settings.json` in both
+layouts.
 
 Grok is included in default target detection when `~/.grok` exists. Project
 `.agents/` directories are workspace-local and do not activate the global Grok
@@ -4331,9 +4472,11 @@ Common commands from a native Windows shell:
 ```
 
 Do not use `--apply` or `--real-system` on native Windows while this gate is in
-place. The installer still detects only agent homes that already exist under
-`--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
-before planning. A fake root with no detected agent homes produces no actions.
+place. Most targets require agent homes that already exist under `--root`,
+so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek` before
+planning. ChatGPT Local Coder also supports runtime-config detection; see
+[Agent Locations](agent-locations.md). A fake root with no eligible targets
+produces no actions.
 
 For Windows-shaped lifecycle tests, run these from Linux/WSL:
 
@@ -4356,8 +4499,8 @@ actually enforcing path safety.
 
 ```sh
 cd /mnt/c/Users/.../ai-agents-skills
-cp /mnt/c/Users/.../.ai-agents-skills/state.json \\
-   /mnt/c/Users/.../.ai-agents-skills/state.json.bak
+cp -a /mnt/c/Users/.../.ai-agents-skills \\
+   /mnt/c/Users/.../.ai-agents-skills.before-restore
 python3 -m installer.ai_agents_skills --root /mnt/c/Users/... \\
   --platform windows install --runtime-profile auto --dry-run --json
 AAS_INSTALL_CONFIRM="I understand the installation and uninstall process" \\
@@ -4373,9 +4516,11 @@ under an OpenClaw workspace that is a sync replica must not be written.
 path reports mode `0777` and the POSIX check refuses each one as
 group/world-writable. Confirm with `mount | grep ' /mnt/c '` before applying.
 
-Back up `state.json` first. It is the one file that cannot be reconstructed
-from the repository, and it is rewritten after every action, so applies must
-run one at a time.
+Before applying, back up the entire `.ai-agents-skills` directory to a fresh
+location, including `state.json`, `backups/`, and state journals. Pre-install
+content in backups and recovery metadata cannot be reconstructed from this
+repository. Run applies one at a time and retain the whole backup until
+verification and any rollback are resolved.
 
 ## Runtime paths that differ on native Windows
 
@@ -4530,10 +4675,12 @@ symlinked skill files when the filesystem supports them. Codex receives copied
 regular skill trees by default because symlinked skill loading is not assumed
 and the installed skills must remain self-contained. DeepSeek and Copilot receive
 reference adapters. OpenCode and Antigravity receive copied regular files;
-Antigravity uses documented flat global Markdown skill files under
-`~/.gemini/antigravity-cli/skills/`. Use
+Antigravity uses flat global Markdown skill files under
+`~/.gemini/antigravity-cli/skills/` or the validated migrated
+`~/.gemini/config/skills/` tree. Use
 `--install-mode symlink` only when you intentionally want to force links for
-every agent. Use `--install-mode reference` to force adapters for every agent.
+supported targets. Copilot and OpenClaw reject forced symlink mode; OpenClaw
+also rejects reference mode. Use reference adapters only on supported targets.
 If an agent requires regular files in its settings directory, use
 `--install-mode copy`.
 
@@ -4547,6 +4694,31 @@ make lifecycle-test ARGS="--matrix full --platform-shape all"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile full-research --platform-shape all"
 ```
+
+## Vietnam Thu Quan diagnosis
+
+The `vnthuquan` skill is routing guidance, its managed runtime wrapper selects
+and invokes a separate `vnthuquan` Python package, and the website/mirror is an
+external service. Finding a skill file does not prove that the package is
+installed; a website failure does not by itself prove a wrapper defect. Start
+with the managed diagnostic so its selected command and interpreter are visible:
+
+```bash
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
+  skills/vnthuquan/run_vnthuquan.sh diagnose --json
+```
+
+`diagnose` reports local readiness and the selected package executable/interpreter;
+it does not establish website health. Once local readiness passes, `doctor --json`
+or `mirrors check --json` performs the separately requested live site check.
+For repair, preserve config, downloads, and the
+existing environment/installer backups first. Use a stable interpreter location
+when rebuilding a virtual environment: moving the environment afterward can
+break absolute console-script shebangs. Do not replace managed wrappers with
+ad hoc launchers to hide a package or site error.
+
+Quota exhaustion, retries, interrupted remote acceptance, and pending formal
+verification use the existing [Research jobs](research-jobs.md) recovery policy.
 
 Common cases:
 

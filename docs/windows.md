@@ -30,9 +30,11 @@ Common commands from a native Windows shell:
 ```
 
 Do not use `--apply` or `--real-system` on native Windows while this gate is in
-place. The installer still detects only agent homes that already exist under
-`--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
-before planning. A fake root with no detected agent homes produces no actions.
+place. Most targets require agent homes that already exist under `--root`,
+so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek` before
+planning. ChatGPT Local Coder also supports runtime-config detection; see
+[Agent Locations](agent-locations.md). A fake root with no eligible targets
+produces no actions.
 
 For Windows-shaped lifecycle tests, run these from Linux/WSL:
 
@@ -55,8 +57,8 @@ actually enforcing path safety.
 
 ```sh
 cd /mnt/c/Users/.../ai-agents-skills
-cp /mnt/c/Users/.../.ai-agents-skills/state.json \
-   /mnt/c/Users/.../.ai-agents-skills/state.json.bak
+cp -a /mnt/c/Users/.../.ai-agents-skills \
+   /mnt/c/Users/.../.ai-agents-skills.before-restore
 python3 -m installer.ai_agents_skills --root /mnt/c/Users/... \
   --platform windows install --runtime-profile auto --dry-run --json
 AAS_INSTALL_CONFIRM="I understand the installation and uninstall process" \
@@ -72,9 +74,11 @@ under an OpenClaw workspace that is a sync replica must not be written.
 path reports mode `0777` and the POSIX check refuses each one as
 group/world-writable. Confirm with `mount | grep ' /mnt/c '` before applying.
 
-Back up `state.json` first. It is the one file that cannot be reconstructed
-from the repository, and it is rewritten after every action, so applies must
-run one at a time.
+Before applying, back up the entire `.ai-agents-skills` directory to a fresh
+location, including `state.json`, `backups/`, and state journals. Pre-install
+content in backups and recovery metadata cannot be reconstructed from this
+repository. Run applies one at a time and retain the whole backup until
+verification and any rollback are resolved.
 
 ## Runtime paths that differ on native Windows
 

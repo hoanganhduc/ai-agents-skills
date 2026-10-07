@@ -139,7 +139,7 @@ budget and credit state stay in this runbook.
 | `max_usd` |  | Hard spend cap; hitting it is terminal condition (c). `0.0` or null is the uncapped sentinel: (c) cannot fire on it even when `spent_usd` is positive. |
 | `max_tokens` |  | Hard token cap; hitting it is terminal condition (c). Same sentinel rule: `0` or null means uncapped. |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
-| `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
+| `compute_guard_status` |  | Record each attempted lane and its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle live execution is one-unit CPU only; GPU and multi-run are planning-only. A failed lane falls through to the next permitted lane. |
 | `credit_checked_at` |  | Timestamp of the last applicable budget, quota, or teardown-guard check. |
 | `spent_iterations` |  |  |
 | `spent_portfolio_iterations` |  |  |
@@ -361,10 +361,11 @@ When a step needs heavy computation, route it through `modal-research-compute`.
 
 - The recommended automatic order is `local > Kaggle > Modal > Hetzner > GitHub Actions`;
   a valid custom configured order is honored, with local first and remote lanes unique.
-- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
-  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
-  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
-  `GitHub Actions minutes`.
+- Kaggle live work is limited to reviewed one-unit CPU bundles; GPU and
+  multi-run are planning-only. Before dispatch, record the selected lane and
+  its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`,
+  `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`.
+  `Kaggle GPU-hours` estimates do not authorize live GPU submission.
 - The hardware rule applies to every remote script: it must **always implement
   the work in a way that utilizes the current hardware resources** (cores,
   memory, accelerators) of the chosen backend.
@@ -415,7 +416,7 @@ Detail fields recorded per iteration:
 - backtrack trigger (contradiction / refutation / stall) and backtrack target, if any
 - fresh-agent recheck result (`pass` / `not-applicable`)
 - `compute_backend` (local / Kaggle / Modal / Hetzner / GitHub Actions)
-- attempted-lane compute guards: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`,
+- attempted-lane compute guards: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`,
   `Hetzner teardown`, `GitHub Actions minutes`, plus `credit_checked_at` and the
   selected lane after fall-through
 - budget spent this loop, including `spent_portfolio_iterations`

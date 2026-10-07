@@ -5,9 +5,10 @@ by available resources and safety gates. Its recommended default priority is:
 
 > **local > Kaggle > Modal > Hetzner > GitHub Actions**
 
-Kaggle sits right behind local because its CPU compute is **free** and does **not** consume
-the GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the paid/quota'd
-lanes (Modal, Hetzner, GitHub Actions).
+Kaggle sits right behind local as the broker's **free CPU** lane. Live Kaggle
+submission is limited to one-unit CPU bundles; GPU and multi-run remain
+planning-only. No CPU cost gate is applied, but this does not establish unlimited
+provider quota or availability.
 
 The broker honors a valid configured `routing_order` or explicit `policy.backend` override;
 otherwise it walks the recommended default order and takes the **first backend that is AVAILABLE**
@@ -84,15 +85,14 @@ below are the shape of the comparison, not a substitute for reading them.
 
 | Lane | Per unit | Parallel units | Aggregate | Cost |
 |---|---|---|---|---|
-| Kaggle CPU | `kernel_cores` (4) / `kernel_ram_gb` (32 GB), 12 h session | `concurrency` (5) | **20 vCPU / 160 GB** | free, quota-free |
+| Kaggle CPU | Configured `kernel_cores`, `kernel_ram_gb`, `session_hours` estimates | 1 live CPU unit; configured `concurrency` is planning-only | One kernel live; aggregate fan-out is planning-only | free CPU model; provider limits require qualification |
 | Modal `run_cpu_job` | `cpu=4.0`, `memory=8192` | per-call | 4 vCPU / 8 GB | paid |
 | Modal `run_highmem_job` | `cpu=16.0`, `memory=65536` | per-call | 16 vCPU / 64 GB | paid |
 | Modal `run_gpu_job` | `gpu="L4"`, `cpu=8.0`, `memory=32768` | per-call | 8 vCPU / 32 GB + L4 | paid |
 
-Kaggle's aggregate free capacity exceeds Modal's paid high-memory tier in core
-count, which is why Kaggle sits ahead of Modal in the default order. Sizing a
-job to one kernel instead of the fan-out understates the free lane by 5x and
-misroutes work to a paid lane.
+Kaggle's configured capacity is an estimate, not a current provider specification.
+Qualify the actual account/image and size live work for one CPU kernel with
+`total_units = 1`. Do not use planned aggregate capacity to admit a live job.
 
 ## Keep work local when
 
@@ -114,7 +114,7 @@ only control is the worker count.
 ## Backend selection (non-secret work)
 
 1. **local** -- chosen only when the self-preservation projection proves it stays safe for the whole run.
-2. **Kaggle** -- the first offload tier: free Kaggle Kernels for CPU batch. CPU sessions are **free and quota-free**, so a CPU job that fits one kernel's ~32 GB and is chunkable/resumable to <=12h per run is preferred over the paid lanes. Multi-run and live GPU submission remain fail-closed until their recovery and atomic quota gates are complete. No cost gate, no teardown -- kernels auto-stop at 12h. Available when the guarded `KAGGLE_API_TOKEN` environment projection is present; kagglehub validates it and the selected trusted Python 3.11+ runs the Kaggle CLI module via `python -I -m kaggle`.
+2. **Kaggle** -- the first offload tier for free CPU batch work that fits one configured kernel's RAM/session estimates. Live submission requires a reviewed one-unit CPU bundle, matching owner and bundle SHA-256, and a qualified POSIX controller. The guarded `KAGGLE_API_TOKEN` projection and account checks establish host readiness, not a guaranteed provider allocation. GPU and multi-run remain disabled even when a plan reports them as feasible.
 3. **Modal** -- the next offload tier: remote CPU, high-memory CPU, or GPU, when the host has authenticated Modal API liveness and the job estimate is within the configured per-job USD cap. Modal is the paid on-demand GPU workhorse (see GPU policy below).
 4. **Hetzner** -- the next offload tier after Modal, for CPU / high-memory work, when `HCLOUD_TOKEN` is present and the budget allows. A disposable server runs the portable bundle at full cores, then is destroyed. Hetzner Cloud has no on-demand GPU, so GPU-requested jobs skip it (see GPU policy below).
 5. **GitHub Actions** -- the last automatic lane: a private research repo's own committed experiment code, budget-gated on included minutes, proportionate, never a general compute pool.
@@ -146,8 +146,9 @@ for automatic routing). User-named resources win until they are all exhausted.
 
 ## GPU policy (router-wide)
 
-GPU is enabled on every backend that supports on-demand GPU, and is used when either the
-job auto-signals GPU or the user explicitly requests it:
+GPU routing considers backends modeled as GPU-capable when either the job
+auto-signals GPU or the user explicitly requests it. This is a planning decision;
+Kaggle GPU live execution remains disabled:
 
 > `gpu_requested = auto_gpu_signal OR policy.gpu`
 
@@ -161,23 +162,26 @@ A GPU-requested job walks `routing_order` and takes the **first GPU-capable and 
 lane, so GPU routing is cheapest-first by the same priority as CPU routing:
 
 - **local** -- GPU-capable only when the resource snapshot shows a local GPU.
-- **Kaggle** -- GPU-capable and **free**, within a self-imposed weekly GPU-hour cap (12h
-  sessions). A GPU-quota-exhausted lane is unavailable and the router falls through.
+- **Kaggle** -- modeled as a free GPU lane within a self-imposed weekly cap for
+  planning only. Live GPU push is refused pending atomic reservation; a passing
+  GPU plan is not dispatch readiness.
 - **Modal** -- always GPU-capable; the paid on-demand GPU destination.
 - **Hetzner** -- never: Hetzner Cloud has no on-demand GPU, so a GPU job always skips it.
 - **GitHub Actions** -- GPU only via paid "larger runners" (Team/Enterprise; not free minutes,
   not public repos). Opt-in through `[gha].gpu_enabled`, **off by default**; when on, the lane
   is GPU-capable but still bounded by the cumulative Actions-minutes cap.
 
-With the default order this resolves to **local-GPU (if present) then Kaggle-GPU (free, within
-the weekly cap) then Modal-GPU**, with Hetzner skipped and GitHub Actions used only when its
-GPU is opted in. If no GPU-capable lane is available -- for example a GPU job when the box has
-no GPU, the Kaggle weekly GPU-hour cap is exhausted, and Modal is unavailable -- the job is
-rejected rather than silently run on CPU. The Kaggle weekly GPU-hour cap, Modal's USD budget,
-and (when opted in) the GitHub Actions minutes cap all still apply, so a GPU choice never
-bypasses the budget gate.
+The planner may select Kaggle GPU before Modal under the default order, but the
+Kaggle driver will refuse that live shape. Select an enabled GPU executor within
+the user's authorized resources and re-plan; do not bypass the refusal or silently
+change the resource allowlist. A GPU request must not silently become CPU work.
+Applicable per-lane budgets still bind.
 
 ## Multi-backend parallel fan-out (v2)
+
+**Kaggle participation is planning-only.** The scheduler can model Kaggle chunks,
+but the Kaggle driver refuses live multi-run and GPU execution. The design below
+does not authorize dispatch or establish recovery for those shapes.
 
 The sections above route ONE job to ONE lane. For a LARGE divisible batch job -- M
 independent, resumable chunks (a sweep or enumeration split into shards) -- the v2 fan-out
@@ -218,13 +222,14 @@ declares at least `[fanout].min_chunks` chunks.
 The scheduler is `research_compute/fanout.py`; its allocator is a pure, deterministic
 function (identical lane probes + M + weight give an identical split) separated from all IO.
 `run fanout-plan job.json` returns the split, makespan, cost, and each lane's chunk-id range
-without dispatching -- execution reuses the per-lane drivers above.
+without dispatching. Any later execution remains subject to each driver's live
+capabilities; Kaggle fan-out is not enabled.
 
 ## Budget and teardown discipline
 
-- Every paid/quota'd offload lane is **guarded, fail-closed** before dispatch. Hetzner and GitHub Actions reserve pessimistic worst-case EUR/minutes in the shared ledger, and Kaggle GPU reserves GPU-hours against its weekly cap, so concurrent submissions cannot exceed those configured rails. Modal requires authenticated API liveness and enforces the lower of the job's USD cap and broker per-job USD cap at planning time; it does not claim a shared monthly reservation ledger. **Kaggle CPU is free and quota-free, so it has no cost gate.**
+- Every paid/quota'd offload lane is **guarded, fail-closed** before dispatch. Hetzner and GitHub Actions reserve pessimistic worst-case EUR/minutes in the shared ledger. Kaggle GPU has planning-time cap checks only; live GPU submission is refused pending an atomic reservation gate. Modal requires authenticated API liveness and enforces the lower of the job's USD cap and broker per-job USD cap at planning time; it does not claim a shared monthly reservation ledger. **The broker models Kaggle CPU as free with no CPU cost gate; provider limits still apply.**
 - Within the auto-approve envelope the agent may submit alone (logged); spend above it needs out-of-band human confirmation the agent cannot mint.
-- **Teardown is mandatory on Hetzner.** A powered-off server still bills; only DELETE stops it. Teardown must run on every terminal path (success, failure, timeout, boot-fail, push-fail, crash), and failure or timeout paths fetch checkpoints before destroy so the run is resumable. Modal, GitHub Actions, and Kaggle are metered/free per run and need no explicit teardown -- Kaggle kernels auto-stop at the 12h session cap and cost nothing, so Kaggle needs no reaper.
+- **Teardown is mandatory on Hetzner.** A powered-off server still bills; only DELETE stops it. Teardown must run on every terminal path (success, failure, timeout, boot-fail, push-fail, crash), and failure or timeout paths fetch checkpoints before destroy so the run is resumable. Modal, GitHub Actions, and Kaggle do not provision a persistent rented server through these lanes. For Kaggle, retain exact-version polling/evidence and enforce the workflow budget; the configured session duration is an estimate to qualify.
 - Never print or copy remote credentials into prompts, logs, docs, or managed repo files. Tokens and API keys are read from the environment, never passed on argv, and never placed on a server or kernel.
 
 ## Setup and commands
@@ -245,10 +250,23 @@ hz() { "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.
 run doctor                 # routing_order + Modal / GitHub Actions readiness
 run plan job.json          # the router's backend choice
 kg preflight --job ./bundle --json   # the Kaggle plan (no kernel)
-kg run --job ./bundle --confirm      # multi-run resume loop across concurrent kernels (free CPU)
+kg push --job ./bundle --owner USER --dry-run     # review one-unit CPU bundle and emitted digest
+kg push --job ./bundle --owner USER \
+  --bundle-sha256 HEX --confirm
+kg status USER/KERNEL --submission-intent /path/from-push.json
+kg wait USER/KERNEL --submission-intent /path/from-push.json
+kg fetch USER/KERNEL --submission-intent /path/from-push.json \
+  --job ./bundle --dest ./output
 hz preflight --job ./bundle --json   # the Hetzner plan (no server)
 hz oneshot --job ./bundle --confirm  # provision -> run -> fetch -> destroy (teardown guaranteed)
 ```
+
+The Kaggle commands require the reviewed owner and bundle SHA-256; preserve the
+returned submission intent for its exact accepted version. Pending or ambiguous
+acceptance never permits repeated push. Internet defaults off and requires both
+job opt-in and host `[kaggle].allow_internet`; permission is kernel-wide. Live
+operations require a qualified POSIX main-thread controller. Native Windows is
+limited to offline doctor, preflight and dry-run; live SDK calls are refused.
 
 When restoration configures `AAS_COMPUTE_SECRETS_FILE`, the managed broker and
 Hetzner wrappers strictly load its exact four-key compute authority

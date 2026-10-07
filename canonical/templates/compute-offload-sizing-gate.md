@@ -49,7 +49,7 @@ from the source of truth below, and treat container self-reports as unverified.
 
 | Lane | Ground truth for its size | Per-unit | Parallel units | Aggregate |
 |---|---|---|---|---|
-| Kaggle | `config/research-compute.toml` `[kaggle]`, echoed by `preflight` | `kernel_cores`, `kernel_ram_gb` | `concurrency` | `aggregate_cores` |
+| Kaggle | `[kaggle]` configuration estimates, echoed by `preflight`; qualify the actual account/image separately | `kernel_cores`, `kernel_ram_gb` | 1 for live CPU; configured `concurrency` is planning-only | One kernel live; `aggregate_cores` is planning-only |
 | Modal | `modal_backend.FUNCTION_CAPACITY` | declared `cpu`/`memory` | per-call | n/a |
 | Hetzner | server type in `[hetzner]` | vCPU / RAM of the type | 1 server | n/a |
 | GitHub Actions | runner label | 2–4 vCPU | matrix cells | cells × vCPU |
@@ -57,9 +57,11 @@ from the source of truth below, and treat container self-reports as unverified.
 The Kaggle driver's `preflight` returns `kernel_cores`, `kernel_ram_gb` and
 `aggregate_cores`, so a bundled job can be sized without opening the config.
 
-Kaggle capacity is **per-kernel × concurrency**, not per-kernel. Quoting only
-the per-kernel figure understates the free lane badly and misroutes work to a
-paid one.
+Live Kaggle execution is limited to **one CPU kernel with `total_units = 1`**.
+Configured concurrency and aggregate capacity describe the intended multi-run
+design only; they are not dispatchable capacity. GPU and multi-run remain
+disabled even when a plan reports them as feasible. Configuration values are
+estimates, not a guarantee of the current provider allocation.
 
 | Field | Value |
 |---|---|
@@ -70,7 +72,7 @@ paid one.
 | Session/timeout ceiling |  |
 | Cost per unit |  |
 | Does the workload's peak RSS fit the per-unit RAM? |  |
-| Does `total_units` use the available fan-out? |  |
+| Does `total_units` match the enabled execution shape (Kaggle live: 1 CPU unit)? |  |
 
 ---
 
@@ -95,13 +97,15 @@ loudly at plan time instead of planning as if it requested nothing.
 ```
 
 Set `cores` / `memory_mb` to the **declared per-unit spec from Step 2**, not to
-a round number, and set `total_units` to match the fan-out.
+a round number, and set `total_units` to match the enabled execution shape.
+Kaggle live bundles require `total_units = 1` and GPU disabled; fan-out estimates
+remain planning-only.
 
 ---
 
 ## Step 4 — Assert the plan before dispatch
 
-Run `plan` (or `preflight`) and check all four. Any failure means fix the
+Run `plan` (or `preflight`) and check all five. Any failure means fix the
 manifest and re-plan — not submit and see.
 
 | # | Assertion | Pass? |
@@ -109,10 +113,18 @@ manifest and re-plan — not submit and see.
 | 1 | The plan echoes a **non-empty** `constraints` block equal to what you wrote |  |
 | 2 | `routing_trail` gives a per-lane adequacy reason that **references your numbers** (`modal_capacity_ok:cores=4 ram_gb=8 …`, `peak_ram … kernel RAM …`) |  |
 | 3 | No lane in the trail reports `cores_oversubscribed=` — if one does, your worker count exceeds the reserved cores and the runtime estimate is wrong by that ratio |  |
-| 4 | `est_kernels` / `est_rounds` match the fan-out you expect from `total_units`, not just from `core_hours` |  |
+| 4 | Estimates match `total_units` and the enabled execution shape; Kaggle GPU/multi-run estimates do not authorize live dispatch |  |
 | 5 | Estimated cost and runtime are within the intended envelope |  |
 
 Record the decision: lane ______, declared size ______, est. cost ______.
+
+For Kaggle, use reviewed one-unit CPU `push` followed by intent-bound
+`status`/`wait`/`fetch`; see `kaggle-research-compute` for the exact command path.
+Review `--owner` and the dry-run `--bundle-sha256` before push. Do not repush pending
+or ambiguously accepted submissions. Internet defaults off; enabling it requires
+explicit job opt-in and host policy permission, and applies to the whole kernel.
+Live SDK operations require a qualified POSIX controller; native Windows supports
+offline planning only.
 
 ---
 

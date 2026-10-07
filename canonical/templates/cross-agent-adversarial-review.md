@@ -89,9 +89,12 @@ executing tests, or sweeping inputs.
 |---|---|---|
 | Local resources sufficient | Confirm CPU, memory, disk before local build, test, or sweep |  |
 | Backend selection | Use the recommended order `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique |  |
-| Compute guard preflight | Verify each candidate's applicable guard before dispatch: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`; Kaggle CPU is free/quota-free |  |
+| Compute guard preflight | Verify each candidate's applicable guard before dispatch: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`; Kaggle live execution is one-unit CPU only; GPU and multi-run are planning-only |  |
 | Hardware utilization | Confirm the offloaded job actually uses the requested cores, memory, or GPU; idle paid hardware is a failure |  |
 | Cheapest sufficient tier | Pick the smallest tier that meets the need; do not over-provision |  |
+
+`Kaggle GPU-hours` estimates are planning-only and do not authorize live GPU
+submission.
 
 If a lane's compute-guard preflight fails, do not start that lane. Record the
 result and fall through to the next permitted lane in configured order. For

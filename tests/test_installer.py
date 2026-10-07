@@ -5410,15 +5410,19 @@ class DocsAndLauncherTests(unittest.TestCase):
         }
         self.assertFalse(expected - set(target), expected - set(target))
 
-    def test_generated_docs_include_manifest_skills(self) -> None:
+    def test_generated_catalogs_include_manifest_skills_and_readme_links(self) -> None:
         manifests = load_manifests()
         rendered = render_docs(manifests)
         self.assertIn(REPO_ROOT / "README.md", rendered)
         readme = rendered[REPO_ROOT / "README.md"]
-        for skill in ("deep-research-workflow", "draft-writing", "source-research", "zotero", "vnthuquan"):
-            self.assertIn(f"`{skill}`", readme)
-        self.assertIn("`cross-provider-delegation`", readme)
-        self.assertIn("`template:cross-provider-research-panel`", readme)
+        catalog = rendered[REPO_ROOT / "docs" / "skills.md"]
+        for skill in manifests["skills"]["skills"]:
+            self.assertIn(f"`{skill}`", catalog)
+        artifacts = rendered[REPO_ROOT / "docs" / "artifacts.md"]
+        self.assertIn("`cross-provider-delegation`", artifacts)
+        self.assertIn("`template:cross-provider-research-panel`", artifacts)
+        for page in ("skills", "profiles", "artifacts", "lean-formalization", "research-jobs"):
+            self.assertIn(f"docs/{page}.md", readme)
         self.assertNotIn("`openclaw-research`", readme)
         self.assertIn("docs/workflow-overview.md", readme)
         self.assertIn("docs/multi-agent-examples.md", readme)

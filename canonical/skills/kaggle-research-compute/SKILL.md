@@ -2,7 +2,7 @@
 name: kaggle-research-compute
 description: Use when a research or engineering task needs automatic heavy-compute routing to free Kaggle Kernels through the local broker, with exact-version CPU push, poll and fetch, explicit Internet policy, and resumable host evidence; live GPU and multi-run remain disabled.
 metadata:
-  short-description: Route heavy compute to free Kaggle Kernels through the local broker (free CPU; GPU under a weekly cap)
+  short-description: Route heavy compute to free Kaggle Kernels through the local broker (one-unit CPU live; GPU and multi-run planning only)
 ---
 
 # Kaggle Research Compute
@@ -35,7 +35,8 @@ Use this skill when the task is about:
 - object enumeration
 - counterexample hunting
 - large parameter sweeps
-- long-running CPU or GPU batch work that a throttled local run cannot finish in time
+- long-running CPU batch work that a throttled local run cannot finish in time
+- planning GPU or multi-run work; those live submission shapes remain disabled
 
 This skill is the Kaggle Kernels lane of the local `research_compute` broker.
 It packages a portable job bundle, submits one CPU kernel, polls its exact
@@ -45,36 +46,32 @@ the Modal, Hetzner, and GitHub Actions lanes, subject to the selected policy.
 
 ## When to prefer this skill
 
-- the workload is CPU-heavy batch work: Kaggle CPU is FREE and does NOT consume the GPU quota, so it is preferred over the paid/quota'd lanes for any CPU job that fits Kaggle's constraints
-- the workload wants a GPU and fits within the self-imposed weekly GPU-hour cap (Kaggle GPU is free under the ~30h/week floating quota)
-- the job is chunkable and resumable to at most a 12h session per kernel run on ~4 vCPU / ~32 GB
-- routing order is `local > Kaggle > Modal > Hetzner > GitHub Actions`, so Kaggle is the FIRST offload tier (right behind local) whenever credentials are present and the job fits
+- the workload is CPU-heavy batch work and fits one CPU kernel; the broker treats this as a free lane without a CPU cost gate, not a promise of unlimited provider quota
+- the measured workload fits the configured per-kernel RAM and session estimates; qualify the actual account/image before relying on those estimates
+- routing policy permits Kaggle: the default order is `local > Kaggle > Modal > Hetzner > GitHub Actions`
 
 ## Unified routing
 
 The umbrella doc `compute-offload-routing.md` explains backend selection across the five lanes
 (local, Kaggle, Modal, Hetzner, GitHub Actions), the keep-local rules, and the local
-self-preservation veto. The per-lane contract for Kaggle — driver verbs, the multi-run resume
-loop, the concurrency fan-out, the free-CPU / weekly-GPU-cap model, and guardrails — is in
-`references/kaggle-offload.md`. The broker router is the decision boundary: `plan` and `doctor`
-choose the backend; this skill pushes kernels only after that choice lands on Kaggle.
+self-preservation veto. The per-lane contract for Kaggle — enabled CPU driver verbs,
+planning-only GPU/multi-run estimates, and guardrails — is in
+`references/kaggle-offload.md`. The broker router is the decision boundary: `plan`
+chooses the backend and `doctor` checks readiness; this skill pushes kernels only after that choice lands on Kaggle.
 
 ## Core workflow
 
-Work through `compute-offload-sizing-gate` first. Size against the lane's
-**aggregate** capacity — `kernel_cores` x `concurrency`, not one kernel — and
-set `total_units` so the fan-out is actually used; sizing to a single kernel
-understates the free lane by the concurrency factor. `preflight` reports
-`kernel_cores`, `kernel_ram_gb` and `aggregate_cores` alongside `est_kernels`
-and `est_rounds`, which are derived from `total_units` as well as `core_hours`,
-so the estimate matches the kernels the run loop will actually launch.
+Work through `compute-offload-sizing-gate` first. Size live work against **one
+CPU kernel**, with `total_units = 1`. `preflight` reports configured
+`kernel_cores`, `kernel_ram_gb`, `aggregate_cores`, `est_kernels` and `est_rounds`;
+aggregate and multi-run figures are planning-only, not enabled dispatch capacity.
 
 1. If local resources matter, run `get-available-resources` and let the broker apply the self-preservation veto.
-2. Build a portable job bundle (`manifest.json` with `total_units`, `worker`, `run.sh`, `merge`, writable `out/`) — the same bundle runs unchanged on any lane; each completed work unit leaves a checkpoint in `out/` so a re-pushed kernel resumes.
-3. Run `preflight` (free, no kernel) to get the Kaggle plan: kind (CPU/GPU), estimated resume rounds and kernel count, concurrency, the 12h session cap, the GPU-hour estimate vs the weekly cap, adequacy, and availability.
-4. Live submission is currently limited to one-unit CPU bundles through the manual `push` -> `status`/`wait` -> `fetch` path. Record and review the bundle SHA-256 from dry-run before push.
-5. `run --dry-run` still reports the bounded multi-run shape, but live multi-run fails closed until crash-safe status-first recovery and verified checkpoint merging are implemented.
-6. No teardown: kernels auto-stop at the 12h session cap and cost nothing, so there is no reaper and nothing to destroy.
+2. Build a portable one-unit CPU bundle (`manifest.json`, explicit `upload_files`, `worker`, `run.sh`, `merge`, writable `out/`) with bounded outputs.
+3. Run `preflight` (no kernel) and review per-kernel adequacy, configured session estimate, and account readiness. A feasible plan does not enable GPU or multi-run submission.
+4. Use `push --dry-run` to review the bundle SHA-256, owner and Internet policy, then use the manual `push` -> `status`/`wait` -> `fetch` path below.
+5. Retain the host submission intent and use its exact accepted version for polling and fetching. Pending or ambiguous acceptance never permits repush.
+6. `run --dry-run` reports the intended bounded multi-run design only; live multi-run remains disabled. No paid server is provisioned or destroyed by this lane.
 
 ## Runtime commands
 
@@ -91,18 +88,19 @@ run bootstrap                          # one-time: check kaggle CLI + kagglehub 
 run doctor                             # lane + credentials + kaggle CLI + configured caps (offline)
 run preflight --job /path/to/jobdir --json     # the plan the router consumes (no kernel)
 run run     --job /path/to/jobdir --dry-run    # plan only; live multi-run currently fails closed
-run push    --job /path/to/jobdir --dry-run    # emits the reviewed bundle_sha256
-run push    --job /path/to/jobdir --owner USER --bundle-sha256 HEX --confirm  # one-unit live push
-run status  <user/kernel-slug> --submission-intent /path/from-push.json
-run wait    <user/kernel-slug> --submission-intent /path/from-push.json
-run fetch   <user/kernel-slug> --submission-intent /path/from-push.json \
+run push    --job /path/to/jobdir --owner USER --dry-run    # emits the reviewed bundle_sha256
+run push    --job /path/to/jobdir --owner USER \
+  --bundle-sha256 HEX --confirm                # reviewed one-unit CPU push
+run status  USER/KERNEL --submission-intent /path/from-push.json
+run wait    USER/KERNEL --submission-intent /path/from-push.json
+run fetch   USER/KERNEL --submission-intent /path/from-push.json \
   --job /path/to/jobdir --dest /path/to/output
 ```
 
 `doctor`, `preflight` and dry-run verbs are offline and never authenticate or push a kernel.
 `bootstrap` is an explicit host readiness/account check; it may contact Kaggle but never pushes a kernel.
-Only `push` submits; it requires the API token, explicit `--confirm`, a one-unit bundle, and
-the reviewed `--bundle-sha256` emitted by preflight/dry-run. `status`, `wait`, and `fetch` act
+Only `push` submits; it requires the API token, explicit `--confirm`, a one-unit CPU bundle,
+the reviewed `--owner`, and the `--bundle-sha256` emitted by dry-run. `status`, `wait`, and `fetch` act
 on the host-recorded immutable kernel/version identity in `--submission-intent`. Bare-ref
 status remains diagnostic; bare-ref fetch is refused. Fetch requires the reviewed bundle
 and admits only exact bounded output names from its manifest, with byte hashes and
@@ -152,19 +150,19 @@ Kaggle image/account is separate from offline installation smoke.
 ## Operational notes
 
 - The broker is the decision boundary. Push kernels on Kaggle only when the router chose this lane.
-- Auth is the new single Kaggle API token, projected as `KAGGLE_API_TOKEN` by the guarded runtime launcher (never argv, never logged) — NOT a pathname-read `access_token` and not the legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair. `bootstrap` validates/primes via kagglehub (`kagglehub.whoami()` proves the token and yields the username the kaggle CLI uses for kernel ops). Do not write a `kaggle.json` into the repo or a kernel; a redaction filter covers surfaced output.
+- Auth is the new single Kaggle API token, projected as `KAGGLE_API_TOKEN` by the guarded runtime launcher (never argv, never logged) — NOT a pathname-read `access_token` and not the legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair. `bootstrap` validates the account via `kagglehub.whoami()`; live push checks that identity against the reviewed owner before SDK submission. Do not write a `kaggle.json` into the repo or a kernel; a redaction filter covers surfaced output.
 - When `AAS_COMPUTE_SECRETS_FILE` names the shared protected compute authority,
   the managed wrapper validates its full schema but projects only
   `KAGGLE_API_TOKEN` and `KAGGLE_CONFIG_DIR`; Hetzner values and the pointer are
   removed before the Kaggle child starts.
-- Caps live under `[kaggle]` in `research-compute.toml`: `weekly_gpu_hours_cap`, `max_runs`, `concurrency`, `session_hours`, and the free-tier `kernel_cores` / `kernel_ram_gb`. CPU work is free and quota-free; GPU work passes a fail-closed weekly GPU-hour gate that reserves the estimate in a local usage ledger before the first push, so concurrent GPU submits cannot collectively blow the weekly cap.
+- Configuration under `[kaggle]` supplies `session_hours`, `kernel_cores` and `kernel_ram_gb` estimates. `weekly_gpu_hours_cap`, `max_runs` and `concurrency` support planning only. Live GPU is refused pending an atomic reservation gate; live multi-run is refused pending hardened recovery. The broker has no CPU cost gate; provider availability and limits still require account/image qualification.
 - The multi-run design remains documented and dry-runnable, but live multi-run is deliberately disabled until ambiguous submissions recover status-first and every resumed checkpoint is manifest-bound.
 - `manifest.upload_files` is a required explicit allowlist. Reparse points, hardlinks, secret-like filenames, oversized bundles, and files changed during descriptor-bound snapshotting are rejected.
-- No reaper, no dead-man's-switch, no teardown: kernels auto-stop at the 12h session cap and cost nothing, so this lane is materially lower-risk than a paid rented-server lane. There is no cost gate — Kaggle is free.
+- No paid server or server teardown is involved. Bound polling by the authorized workflow budget; do not treat the configured session estimate as a verified provider guarantee.
 - `doctor` and `preflight` work without a token and without a kernel. Live one-unit CPU `push`, plus `status`, `wait`, and `fetch`, need the host to be Kaggle-ready: the selected trusted Python must be 3.11+ with `kaggle>=2.2.4,<3` and `kagglehub>=1.0.2,<2`, and the guarded `KAGGLE_API_TOKEN` environment projection must be present. Live GPU push and multi-run remain disabled.
 - The bounded official SDK/account path currently requires a POSIX main-thread controller. Native Windows and worker-thread SDK calls fail before SDK import or authentication; use a qualified Linux/WSL controller for live operations. Native Windows wrappers still support offline doctor, preflight and dry-run. `AAS_KAGGLE_PYTHON`, `AAS_KAGGLE_PYTHON_SHA256` and `AAS_KAGGLE_PYTHON_SIGNER_THUMBPRINT` select and attest the Windows interpreter without qualifying live SDK execution.
 - HTTP calls use connect/read limits of at most 10/60 seconds and preserve stricter SDK limits. Overall operation limits are 120 seconds for account lookup, status and listing, 300 seconds for push, and 600 seconds per selected output download. They cover import-time authentication and streaming; no watchdog thread remains running after a timeout. `wait --timeout` supplies its remaining budget to status and sleep. These are per-operation ceilings; the controller must also enforce the authorized whole-workflow budget. A timeout after dispatch retains unknown acceptance and never authorizes resubmission.
-- The driver invokes `python -I -m kaggle` and never falls back to `kaggle.exe` or another executable discovered on `PATH`.
+- Enabled kernel operations use the official SDK in the host controller. CLI version and legacy diagnostic helpers invoke `python -I -m kaggle` and never fall back to `kaggle.exe` or another executable discovered on `PATH`.
 - One-time per machine, run `bootstrap`: it checks the `kaggle` CLI and kagglehub, confirms the API token is present, and validates/primes via kagglehub (`kagglehub.whoami()`), then reports `doctor`. It never pushes a kernel.
 - ToS: Kaggle compute is intended for its data-science / competition platform. Keep to modest, legitimate research workloads and verify the current Kaggle terms permit this use before the first live run. The build and its tests make no live Kaggle calls.
 

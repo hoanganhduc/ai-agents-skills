@@ -658,7 +658,8 @@ def add_install_mode_args(parser: argparse.ArgumentParser) -> None:
         default="auto",
         help=(
             "skill installation mode; auto is the default and resolves per "
-            "agent, symlink forces links, reference writes thin adapters, copy "
+            "agent; explicit modes remain subject to target restrictions. "
+            "Symlink uses links where supported, reference writes thin adapters, copy "
             "writes full files"
         ),
     )

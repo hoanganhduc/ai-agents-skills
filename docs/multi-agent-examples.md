@@ -30,29 +30,35 @@ CLIs under its sandbox”:
 3. **Host parent** runs **result review** on new artifacts.
 4. **Host evidence gates** bank claims; panel consensus is not evidence.
 5. **Notify** (remote-bridge when configured) is progress messaging only;
-   force-loop apply defaults leave notify **auto/on**.
+   force-loop fills an absent notification choice with **auto/on**.
 
 ### Default scripted force-loop (Linux/WSL enforce execution)
 
-Use the installed **force-loop** kit first. It applies Goal Focus **enforce**,
-goal_priority **hard**, and **notify auto**. The enforced execution path requires
+Use the installed **force-loop** kit first. For new loops it fills absent
+settings with Goal Focus **enforce**, goal_priority **hard**, and **notify auto**.
+Existing explicit monitor/off, notification, compute, formal, and panel choices
+are preserved; bootstrap is not a reset of existing policy. The enforced execution path requires
 Linux/WSL resource controls and does not require systemd. Portable shell and
 PowerShell wrappers do not qualify native macOS or Windows for `enforce`;
 native execution there is refused. Discovery template: `arl-scripted-force-loop`.
 
 ```bash
-# Bootstrap pins + smoke (init if needed)
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+# Absolute, owner-private host policy outside the loop tree
+AAS_EXAMPLE_POLICY="/absolute/host-policy/force-loop.env"
+# Bootstrap pins + smoke (goal and criteria required on first init)
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  bootstrap --loop research/run --root "$PWD" --profile formal --goal "…"
+  bootstrap --loop research/run --root "$PWD" --profile formal \
+  --goal "…" --success-criteria "…" --policy-file "$AAS_EXAMPLE_POLICY"
 
 # Foreground start (default supervision mode)
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  start --loop research/run --root "$PWD" --provider codex
+  start --loop research/run --root "$PWD" --provider codex \
+  --policy-file "$AAS_EXAMPLE_POLICY"
 
 # Status / stuck dispatch or quarantine
-… force-loop/run_force_loop.sh status --loop research/run
+… force-loop/run_force_loop.sh status --loop research/run --policy-file "$AAS_EXAMPLE_POLICY"
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
@@ -68,7 +74,7 @@ compositions. Prefer force-loop for new campaigns.
 
 ```bash
 # Enable host panel around each drive iteration
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh \
   drive --dir research/run --provider codex --panel on
 
@@ -83,7 +89,7 @@ Panel provider budgets default to **adaptive** timeouts (prompt size, provider
 multipliers, recent elapsed history, hard max). Set `"timeout_mode": "fixed"` for
 legacy flat caps.
 
-**Discipline defaults (force-loop apply):** Goal Focus `enforcement_mode=enforce`,
+**Defaults for absent settings (force-loop apply):** Goal Focus `enforcement_mode=enforce`,
 `goal_priority.enabled=true` with `discipline_mode=hard`, and notify auto/on.
 Legacy soft **goal priority** (`goal_priority.json` with explicit enable) still
 injects goal-EV / campaign / streak warnings without v2 enforce gates; see

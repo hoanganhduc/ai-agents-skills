@@ -23,8 +23,8 @@
 > see the [introductory blog post](https://hoanganhduc.github.io/misc/coding-system-rebuild/).
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted
-OpenClaw fake-root targets.
+CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code,
+ChatGPT Local Coder, and restricted OpenClaw fake-root targets.
 
 ## System Summary
 
@@ -35,18 +35,19 @@ versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI,
-Grok, and Kimi Code can each load local skills. OpenClaw participates as a default
+Grok, Kimi Code, and ChatGPT Local Coder can each load local skills. OpenClaw participates as a default
 fake-root-only target for normal installer flows, with a separate reviewed v2
 skill-file path for real-system skill writes, an evidence-gated runtime-install
 path (the `openclaw-runtime-*` commands plus the host `openclaw-broker`) for
-real-system runtime files, and an optional dual-route `/aas` adapter published
-from `remote-bridge` into the OpenClaw workspace. This repository keeps the
+real-system runtime files. Legacy dual-route `/aas` adapter copies may remain
+in an OpenClaw workspace, but the current publisher is blocked and does not
+inspect, replace, or remove those copies. This repository keeps the
 shared research workflows, profiles, delegation settings, dependency metadata,
 and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted OpenClaw
+- agent frontends and targets: Codex, Claude, DeepSeek, CodeWhale, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, ChatGPT Local Coder, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -123,6 +124,10 @@ behavior but lighter platform-specific guidance.
   eOffice application packages (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
+- [docs/lean-formalization.md](docs/lean-formalization.md): ordinary Lean/Lake,
+  local or authorized remote execution, and separate evidence gates.
+- [docs/research-jobs.md](docs/research-jobs.md): job choices, bounded recovery,
+  pending verification, and resumption.
 - [docs/lax-formalization.md](docs/lax-formalization.md): per-paper Lean/Lax
   setup, independent verification, CI, secondary Zenodo archives, and migration.
 - [docs/lax-paper-workflow.md](docs/lax-paper-workflow.md): executable job runbook
@@ -212,8 +217,10 @@ cd ai-agents-skills
 
 Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
 POSIX bootstrap script. Windows examples use `./make.ps1`, which requires
-`pwsh` or `powershell.exe`. The installer only plans targets for existing
-agent homes; absent homes are reported and skipped.
+`pwsh` or `powershell.exe`. The installer normally plans targets for existing
+agent homes; absent homes are normally reported and skipped. ChatGPT Local
+Coder is an exception: detected runtime config or its CLI can qualify the target
+for creation of `~/.chatgpt-local-coder` during an approved install. See [Agent Locations](docs/agent-locations.md).
 
 Linux/macOS:
 
@@ -278,10 +285,15 @@ manifest-declared platform-inapplicable support files and Antigravity alias coll
 managed skill surface are recorded as declared neutral exclusions:
 
 ```bash
-export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder"
 make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
 ```
+
+The example lists all ten non-OpenClaw registry targets. Before running it,
+choose only targets actually present and intended on this machine;
+`--require-all-requested-agents` is an assertion, not permission to add absent
+agents. ChatGPT Local Coder uses the detection exception described below.
 
 An outer restoration system should close software and Python dependencies next,
 then run `make installed-runtime-smoke ARGS="--require-complete-coverage"`.
@@ -292,10 +304,9 @@ reviewed component/manifests and is not written by this complete-restore flow.
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. `plan --json`
 shows the effective mode, agent policy evidence, apply-time symlink fallback,
-and reason for each target. Use `--install-mode symlink` to force symlinks for
-every agent, `--install-mode reference` to force adapters for every agent, or
-`--install-mode copy` only when files must be materialized inside the agent
-settings directory.
+and reason for each target. Explicit modes apply only to supported targets:
+Copilot rejects forced symlinks; OpenClaw rejects symlink and reference modes.
+Use `--install-mode copy` when files must be materialized inside the agent home.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -314,8 +325,8 @@ dependency-bound artifacts should also install their backing skills.
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
   `installed-runtime-smoke`, `lifecycle-test`, `list-skills`, `list-artifacts`,
   `describe`, `describe-artifact`, `provision-external`,
-  `provision-skill-python`, and `verify-skill-python`.
-- Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
+  `provision-skill-python`, `verify-skill-python`, and `docs-check`.
+- Makefile-only maintainer targets include `docs`, `docs-site`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
   through `make` or `./make.ps1`, not as installer CLI commands.
 
@@ -339,11 +350,12 @@ supported generically. See `docs/skills.md` and the skill references.
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
 local-only by default: sources must be local files and remote service fields
 are rejected from config. Use `scan-heavy` when you want stronger local OCR
-for image-backed papers:
+for image-backed papers. Execute `run_skill.sh` directly so its
+`#!/bin/bash -p` shebang takes effect:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy
@@ -352,7 +364,7 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy \
@@ -364,7 +376,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
   --allow-remote-ocr
 ```
 
@@ -386,25 +398,7 @@ make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
 ```
 
-| Profile | Description | Skills |
-|---|---|---|
-| `complete-restore` | Every skill declared by this pinned repository revision for closure-complete restoration of supported non-OpenClaw targets. | `*` |
-| `course-management` | Course management toolkit skills: Classroom50, Canvas, Google Classroom, and local student DB agents. | `classroom50`, `course-canvas`, `course-google-classroom`, `course-db` |
-| `digest` | Tracked-topic and RSS digest workflows. | `research-digest-wrapper`, `rss-news-digest`, `digest-bridge` |
-| `document` | Document conversion and structured database lookup. | `docling`, `database-lookup` |
-| `ebook` | Ebook discovery and library handoff. | `calibre`, `vnthuquan` |
-| `figure` | Structural figure generation and checking. | `tikz-draw` |
-| `formal-research` | Optional Lean formalization lane with local checks and declaration-search setup. | `formal-skeleton-helper`, `lean-formalization-intake`, `lax-formalization`, `zenodo-artifact`, `lean-explore-mcp`, `lean-strict-verification-gate`, `opengauss` |
-| `formal-research-remote` | Optional remote formal lane setup for LeanExplore and AXLE MCP plus local formal-lane skills; install is inert and does not start remote services. | `formal-skeleton-helper`, `lean-formalization-intake`, `lax-formalization`, `zenodo-artifact`, `lean-explore-mcp`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `opengauss` |
-| `full-research` | All research-related skills. | `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `venue-ranking-evidence`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lax-formalization`, `zenodo-artifact`, `lean-explore-mcp`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `opengauss`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs`, `intent-interview`, `decision-doubt-loop`, `source-grounded-decisions`, `adversarial-boundary-gate`, `behavior-preserving-cleanup`, `slides-to-video`, `manim-math-animation`, `url-to-screenshot`, `url-to-screenshot-runtime` |
-| `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
-| `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier`, `formal-skeleton-helper` |
-| `media` | Narrated, captioned presentation and lecture videos from prepared slides, with optional Manim math animation. | `slides-to-video`, `manim-math-animation`, `url-to-screenshot`, `url-to-screenshot-runtime` |
-| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `decision-doubt-loop` |
-| `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `intent-interview` |
-| `serious-research` | Source-preserving research workflow with local libraries, document parsing, validation, multi-agent orchestration, and Lean skeleton support only; use formal-research for Lean verification. | `research-briefing`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `venue-ranking-evidence`, `docling`, `database-lookup`, `paper-review`, `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `get-available-resources`, `formal-skeleton-helper`, `workspace-rearranger`, `intent-interview`, `decision-doubt-loop`, `source-grounded-decisions`, `adversarial-boundary-gate`, `behavior-preserving-cleanup` |
-| `workflow-tools` | Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization. | `autonomous-research-loop`, `autonomous-research-loop-runtime`, `get-available-resources`, `model-router`, `formal-skeleton-helper`, `workspace-rearranger` |
-| `writing-workflow` | Claim-preserving draft writing, rewriting, and revision-audit workflow. | `draft-writing` |
+[Browse the skill profiles](docs/profiles.md).
 
 ## Artifact Profiles
 
@@ -425,33 +419,24 @@ installing skills, also install each skill's curated recommended template(s)
 -> `autonomous-research-loop-runbook`). It is opt-in, so default installs are
 unchanged.
 
-| Artifact Profile | Description | Artifacts |
-|---|---|---|
-| `cross-provider-delegation` | Templates and guidance for true cross-provider delegation runs. | `instruction-doc:cross-provider-delegation`, `instruction-doc:provider-credit-quota`, `template:cross-provider-research-panel`, `template:manager-worker-research-review`, `template:repo-comparison-research`, `template:evidence-synthesis-critique`, `template:engineering-delivery-loop-runbook`, `template:reversible-decision-memo`, `template:cross-agent-adversarial-review` |
-| `repo-management` | Top-level managed notice blocks for agent instruction files. | `management-notice:repo-management` |
-| `research-entrypoints` | Optional command or quick-action aliases that point to backing skills. | `entrypoint-alias:deep-research`, `entrypoint-alias:research-team`, `entrypoint-alias:review`, `entrypoint-alias:tikz`, `entrypoint-alias:sage`, `entrypoint-alias:zotero`, `entrypoint-alias:docling`, `entrypoint-alias:calibre`, `entrypoint-alias:vnthuquan`, `entrypoint-alias:research-compute`, `entrypoint-alias:rss`, `entrypoint-alias:digest`, `entrypoint-alias:getscipapers`, `entrypoint-alias:slides-to-video`, `entrypoint-alias:manim-math-animation`, `entrypoint-alias:url-to-screenshot` |
-| `review-personas` | Reviewer and research role personas rendered to each agent's supported format. | `agent-persona:literature-scout`, `agent-persona:math-explorer`, `agent-persona:proof-checker`, `agent-persona:paper-reviewer`, `agent-persona:code-reviewer`, `agent-persona:test-reviewer`, `agent-persona:security-reviewer` |
-| `serious-research` | Templates and guidance for source-preserving, validated research runs. | `template:research-scope-brief`, `template:research-evidence-matrix`, `template:research-verification-checklist`, `template:research-workflow-runbook`, `template:evidence-synthesis-critique`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report`, `template:autonomous-research-loop-runbook`, `template:autonomous-research-loop-portfolio-runbook`, `template:arl-scripted-force-loop`, `template:cross-provider-research-panel`, `template:manager-worker-research-review`, `template:informal-to-lean-formalization-runbook`, `template:cross-agent-adversarial-review`, `template:writing-review`, `instruction-doc:research-quick-actions`, `instruction-doc:cross-provider-delegation`, `instruction-doc:writing-style-settings`, `instruction-doc:math-manuscript-style`, `instruction-doc:graph-combinatorics-style`, `instruction-doc:mathscinet-zbmath-review-style`, `instruction-doc:autonomous-loop-formal-policy`, `template:research-job-presets` |
-| `workflow-artifacts` | All portable templates, workflow docs, personas, and entrypoint aliases. | `template:spec`, `template:tasks-plan`, `template:tasks-todo`, `template:draft-claim-ledger`, `template:draft-revision-map`, `template:writing-review`, `template:research-scope-brief`, `template:research-evidence-matrix`, `template:research-verification-checklist`, `template:research-workflow-runbook`, `template:hierarchical-agent-delegation`, `template:cross-provider-research-panel`, `template:manager-worker-research-review`, `template:repo-comparison-research`, `template:evidence-synthesis-critique`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report`, `template:autonomous-research-loop-runbook`, `template:autonomous-research-loop-portfolio-runbook`, `template:arl-scripted-force-loop`, `template:engineering-delivery-loop-runbook`, `template:reversible-decision-memo`, `template:informal-to-lean-formalization-runbook`, `template:cross-agent-adversarial-review`, `template:tikz-figure-verification-runbook`, `template:compute-offload-sizing-gate`, `template:goal-focus`, `template:goal-priority`, `template:goal-priority-example`, `instruction-doc:engineering-lifecycle`, `instruction-doc:operating-discipline`, `instruction-doc:risk-gated-confirmation`, `instruction-doc:delivery-verification-gate`, `instruction-doc:failure-recovery-discipline`, `instruction-doc:context-discipline`, `instruction-doc:writing-style-settings`, `instruction-doc:math-manuscript-style`, `instruction-doc:graph-combinatorics-style`, `instruction-doc:mathscinet-zbmath-review-style`, `instruction-doc:research-quick-actions`, `instruction-doc:cross-provider-delegation`, `instruction-doc:python-quality-gates`, `instruction-doc:modal-offload-routing`, `instruction-doc:github-actions-offload-routing`, `instruction-doc:compute-offload-routing`, `instruction-doc:scrapling-integration`, `instruction-doc:autonomous-loop-enforcement`, `instruction-doc:provider-credit-quota`, `agent-persona:literature-scout`, `agent-persona:math-explorer`, `agent-persona:proof-checker`, `agent-persona:paper-reviewer`, `agent-persona:code-reviewer`, `agent-persona:test-reviewer`, `agent-persona:security-reviewer`, `entrypoint-alias:deep-research`, `entrypoint-alias:research-team`, `entrypoint-alias:review`, `entrypoint-alias:tikz`, `entrypoint-alias:sage`, `entrypoint-alias:zotero`, `entrypoint-alias:docling`, `entrypoint-alias:calibre`, `entrypoint-alias:vnthuquan`, `entrypoint-alias:research-compute`, `entrypoint-alias:rss`, `entrypoint-alias:digest`, `entrypoint-alias:getscipapers`, `entrypoint-alias:slides-to-video`, `entrypoint-alias:manim-math-animation`, `entrypoint-alias:url-to-screenshot`, `management-notice:repo-management`, `instruction-doc:autonomous-loop-formal-policy`, `template:lax-paper-artifact`, `template:lax-paper-workflow`, `template:research-job-presets` |
-| `workflow-instructions` | Agent-readable workflow guidance documents copied outside skill folders. | `instruction-doc:engineering-lifecycle`, `instruction-doc:operating-discipline`, `instruction-doc:risk-gated-confirmation`, `instruction-doc:delivery-verification-gate`, `instruction-doc:failure-recovery-discipline`, `instruction-doc:context-discipline`, `instruction-doc:writing-style-settings`, `instruction-doc:math-manuscript-style`, `instruction-doc:graph-combinatorics-style`, `instruction-doc:mathscinet-zbmath-review-style`, `instruction-doc:research-quick-actions`, `instruction-doc:cross-provider-delegation`, `instruction-doc:python-quality-gates`, `instruction-doc:modal-offload-routing`, `instruction-doc:github-actions-offload-routing`, `instruction-doc:compute-offload-routing`, `instruction-doc:scrapling-integration`, `instruction-doc:autonomous-loop-enforcement`, `instruction-doc:provider-credit-quota` |
-| `workflow-templates` | Reusable research, specification, and task templates. | `template:spec`, `template:tasks-plan`, `template:tasks-todo`, `template:draft-claim-ledger`, `template:draft-revision-map`, `template:writing-review`, `template:research-scope-brief`, `template:research-evidence-matrix`, `template:research-verification-checklist`, `template:research-workflow-runbook`, `template:hierarchical-agent-delegation`, `template:cross-provider-research-panel`, `template:manager-worker-research-review`, `template:repo-comparison-research`, `template:evidence-synthesis-critique`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report`, `template:autonomous-research-loop-runbook`, `template:autonomous-research-loop-portfolio-runbook`, `template:arl-scripted-force-loop`, `template:engineering-delivery-loop-runbook`, `template:reversible-decision-memo`, `template:informal-to-lean-formalization-runbook`, `template:cross-agent-adversarial-review`, `template:tikz-figure-verification-runbook`, `template:compute-offload-sizing-gate`, `instruction-doc:autonomous-loop-formal-policy`, `template:lax-paper-artifact`, `template:lax-paper-workflow`, `template:research-job-presets` |
-| `writing-workflow` | Claim-preserving writing workflow instructions and templates. | `instruction-doc:writing-style-settings`, `instruction-doc:math-manuscript-style`, `instruction-doc:graph-combinatorics-style`, `instruction-doc:mathscinet-zbmath-review-style`, `template:draft-claim-ledger`, `template:draft-revision-map`, `template:writing-review` |
+[Browse the artifact profiles](docs/artifacts.md).
 
 ## Skills
 
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: Claude links to `canonical/skills`; Codex, OpenCode,
-Grok, and Kimi Code receive copied native skill files plus support files;
+targets follow auto mode: Claude links to `canonical/skills`; Codex, CodeWhale, OpenCode,
+Grok, Kimi Code, and ChatGPT Local Coder receive copied native skill files plus support files;
 Grok installs under `~/.grok` and
 disables its `[compat.claude]` ride-along for a self-contained view; Kimi
 installs under `~/.kimi-code` and does not auto-edit `config.toml`. DeepSeek
 receives reference adapters, and
-Antigravity receives flat global Markdown adapters plus native plugin/config
-scaffolds unless native loader evidence
-justifies a different policy. Explicit `symlink`, `reference`, and `copy`
-modes force the same strategy for every agent. Use `--skill` or `--skills` for
+Antigravity receives copied flat global Markdown skills plus native
+plugin/config scaffolds. Vendor-migrated homes use `~/.gemini/config/skills`
+and `~/.gemini/config/plugins`; settings remain in the legacy CLI home. Explicit `symlink`, `reference`, and `copy`
+modes select a strategy only for supported targets: Copilot blocks symlink
+mode, and OpenClaw blocks symlink and reference modes. Use `--skill` or `--skills` for
 narrow installs.
 
 ```bash
@@ -459,65 +444,4 @@ make plan ARGS="--skill zotero"
 make install ARGS="--skills zotero,docling --dry-run"
 ```
 
-| Skill | Description | Profiles |
-|---|---|---|
-| `adversarial-boundary-gate` | Pre-delivery threat-model of trust boundaries and an abuse-case/injection check, delegating to a fresh-context security reviewer. | `serious-research`, `full-research` |
-| `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `serious-research`, `full-research` |
-| `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
-| `autonomous-research-loop` | Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary; scripted force-loop defaults (Goal Focus enforce, hard goal_priority, notify ON). | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
-| `autonomous-research-loop-runtime` | Offline runtime helper for loop ledgers plus headless drive, host-owned panel phases (--panel on, auto, or off), and the default cross-platform force-loop kit (bootstrap/start/drain with enforce/hard/notify defaults). | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
-| `axiom-axle-mcp` | Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance. | `formal-research-remote`, `full-research` |
-| `behavior-preserving-cleanup` | Clarity-only edit pass behind a comprehension gate with verify-after-each-change so behavior stays fixed. | `serious-research`, `full-research` |
-| `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |
-| `classroom50` | Route Classroom50 workflows through the restricted agent entrypoint. Explicitly confirmed assignment add/update may run only through a pre-reviewed, checksum-pinned, exact-scope script; all other raw teacher/student CLI use and destructive operations remain forbidden. | `course-management` |
-| `course-canvas` | Route Canvas LMS course operations through the course_hoanganhduc canvas agent: preflight, list assignments/members, search users, and roster sync. Refuses unenroll, grade, invite, announce, messages, pages, and bulk download. | `course-management` |
-| `course-db` | Route local course student-database operations through the course_hoanganhduc db agent: search, details, domain/duplicate/missing-id lists, roster and email export. Refuses interactive modify, restore, and destructive import apply. | `course-management` |
-| `course-google-classroom` | Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses unenroll, grade, and submission download. | `course-management` |
-| `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `serious-research`, `full-research` |
-| `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `serious-research`, `full-research` |
-| `decision-doubt-loop` | In-flight fresh-context adversarial review of a non-trivial decision before it stands. | `serious-research`, `full-research`, `multi-agent` |
-| `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `serious-research`, `full-research` |
-| `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
-| `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `serious-research`, `full-research` |
-| `draft-writing` | Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits. | `writing-workflow`, `full-research` |
-| `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `formal-research`, `formal-research-remote`, `serious-research`, `full-research` |
-| `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `serious-research`, `full-research` |
-| `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `serious-research`, `full-research` |
-| `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
-| `hetzner-research-compute` | Route heavy CPU or high-memory compute to a disposable Hetzner Cloud server through the local broker, with agent-driven provision, run, collect, and destroy under hard cost caps. | `full-research` |
-| `intent-interview` | Elicit and confirm real intent one question at a time before any brief, spec, or code. | `research-core`, `serious-research`, `full-research` |
-| `kaggle-research-compute` | Use when a research or engineering task needs automatic heavy-compute routing to free Kaggle Kernels through the local broker, with exact-version CPU push, poll and fetch, explicit Internet policy, and resumable host evidence; live GPU and multi-run remain disabled. | `full-research` |
-| `lax-formalization` | Formalize mathematical results as Lax submissions, find reusable declarations, and independently verify selected Lax dependencies. Use for a selected Lax artifact or Lax reuse; ordinary Lean formalization does not require this lane. | `formal-research`, `formal-research-remote`, `full-research` |
-| `lean-explore-mcp` | Optional inert LeanExplore MCP setup helper for Lean declaration search. | `formal-research`, `formal-research-remote`, `full-research` |
-| `lean-formalization-intake` | Optional local-first Lean formalization intake and suitability decision workflow. | `formal-research`, `formal-research-remote`, `full-research` |
-| `lean-strict-verification-gate` | Scanner-first Lean artifact verification gate that separates typecheck status from claim support. | `formal-research`, `formal-research-remote`, `full-research` |
-| `manim-math-animation` | Render Manim math animations (handwritten-style equation Write, equation morphing, emphasis) to a silent clip normalized for splicing into slides-to-video or standalone use. | `media`, `full-research` |
-| `modal-research-compute` | Route heavy compute through the unified local broker, including Modal-backed remote CPU, high-memory CPU, and GPU execution. | `full-research` |
-| `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `serious-research`, `full-research` |
-| `opengauss` | Optional inert readiness helper for Math Inc. OpenGauss Lean prove/formalize workflows; live install is manual-native. | `formal-research`, `formal-research-remote`, `full-research` |
-| `paper-lookup` | External paper metadata and discovery fallback. | `library`, `serious-research`, `full-research` |
-| `paper-review` | Single-agent paper review workflow. | `serious-research`, `full-research` |
-| `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `serious-research`, `full-research` |
-| `remote-bridge` | Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not an OpenClaw skill target; optional dual-route /aas adapter is published from canonical runtime into OpenClaw workspace. |  |
-| `research-briefing` | Scope nontrivial research before execution with evidence plan and workflow recommendation. | `research-core`, `serious-research`, `full-research` |
-| `research-digest-wrapper` | Run tracked-topic research digests. | `digest`, `full-research` |
-| `research-report-reviewer` | Review draft research reports for unsupported claims, ambiguity, and evidence gaps. | `research-core`, `serious-research`, `full-research` |
-| `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `serious-research`, `full-research` |
-| `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
-| `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
-| `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
-| `send-email` | Send email over SMTP using only the Python standard library: plain-text and HTML bodies, attachments, cc/bcc, reply-to, dry-run preview, connection verification, and redacted config inspection. |  |
-| `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
-| `slides-to-video` | Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering. | `media`, `full-research` |
-| `source-grounded-decisions` | Ground version- and spec-sensitive decisions in cited authoritative sources; flag when unverified. | `serious-research`, `full-research` |
-| `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
-| `submission-venue-selector` | Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence. | `serious-research`, `full-research` |
-| `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
-| `url-to-screenshot` | Capture a URL to a clean PNG screenshot with browser detection, cookie-consent dismissal, viewport or full-page modes, timeouts, SSRF-safe URL admission, and blank-output verification across Linux, macOS, and Windows. | `media`, `full-research` |
-| `url-to-screenshot-runtime` | Runtime engine for url-to-screenshot: headless-browser CDP capture, SSRF-safe URL admission, consent dismissal, blank-output detection, and an offline self-test of the deterministic core. | `media`, `full-research` |
-| `venue-ranking-evidence` | Resolve partial journal and conference names and preserve source-specific rank/index observations. ICORE alone has built-in live edition discovery and verified browser-print proof; nine other built-ins accept authorized normalized imports without establishing latest status, and Conference Ranks remains legacy. | `serious-research`, `full-research` |
-| `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
-| `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and hand explicit file delivery to the authenticated host queue. |  |
-| `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
-| `zenodo-artifact` | Prepare and validate an offline source-and-evidence bundle for optional Zenodo archival; no uploads, DOI reservation or publication. | `formal-research`, `formal-research-remote`, `full-research` |
-| `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |
+[Browse the complete skill catalog](docs/skills.md).

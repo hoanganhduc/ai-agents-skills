@@ -242,10 +242,11 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
-Fake-root plans detect only agent homes that exist under the fake root. Create
+Fake-root plans normally detect agent homes that exist under the fake root;
+ChatGPT Local Coder can also qualify through runtime-config detection. Create
 `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`,
 `.gemini/antigravity-cli`, or `.openclaw` inside the fake root for the agents
-you want to exercise; a fake root with no agent homes produces no install actions,
+you want to exercise; a fake root with no eligible targets produces no install actions,
 no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
@@ -268,11 +269,16 @@ support files and Antigravity aliases that collide with the managed skill
 surface remain visible as declared neutral exclusions:
 
 ```bash
-export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder"
 make precheck ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
 ```
+
+The example names all ten non-OpenClaw registry targets. Select only targets
+present and intended on this machine; `--require-all-requested-agents` must not
+be used to add unavailable agents. ChatGPT Local Coder may qualify through
+runtime config or CLI detection before its artifact home exists.
 
 The integrity-only post-install mode is appropriate when an outer restoration
 workflow installs the declared software/Python closure immediately afterward.
@@ -355,12 +361,13 @@ the canonical repo skill. `plan --json` shows the effective `install_mode`, `mod
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
-Use `--install-mode symlink` to force symlinked skill files for every agent.
+Use `--install-mode symlink` only for targets that support it. Copilot and
+OpenClaw reject this mode; OpenClaw also rejects reference mode.
 This is useful for testing future loader behavior, but it can produce Codex
 skill targets that current Codex will not discover.
 
 Use `--install-mode reference` for agents or environments that should not load
-symlinked skills. This mode writes a thin adapter into every agent settings
+symlinked skills. For supported targets this mode writes a thin adapter into the settings
 directory, using `SKILL.md` for directory-shaped targets and `<skill>.md` for
 Antigravity. The adapter tells the agent where the canonical repo skill file is
 and does not copy support files. If a previously managed skill is switched to
@@ -430,7 +437,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `--install-mode reference` to force adapters for every agent or `copy` for a self-contained install. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `reference` on supported targets or `copy` for a self-contained install; OpenClaw rejects reference mode and both OpenClaw and Copilot reject forced symlinks. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |

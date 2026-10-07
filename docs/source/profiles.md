@@ -11,10 +11,10 @@ make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
 make plan ARGS="--profile library --artifact-profile research-entrypoints --with-deps"
-make plan ARGS="--agents codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make plan ARGS="--agents codex,claude,deepseek,codewhale,copilot,opencode,antigravity,grok,kimi,chatgpt-local-coder --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 ```
 
-The complete-restore target list deliberately excludes OpenClaw. Real OpenClaw restoration is delegated to the separately reviewed OpenClaw component and manifest flow.
+Choose only present, intended targets from the ten-target example; `--require-all-requested-agents` must not be used to add unavailable agents. The complete-restore target list deliberately excludes OpenClaw. Real OpenClaw restoration is delegated to the separately reviewed OpenClaw component and manifest flow.
 
 | Profile | Description | Skills |
 |---|---|---|

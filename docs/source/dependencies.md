@@ -17,8 +17,9 @@ Minimum installer prerequisites:
 - Python 3.10 or newer.
 - A shell that can run the launcher: POSIX shell plus `make` on
   Linux/macOS, or `./make.ps1` with PowerShell on native Windows.
-- Existing agent homes for any agents you want to install into. Missing
-  agent homes are skipped rather than created implicitly.
+- Most targets require an existing agent home; absent targets are skipped.
+  ChatGPT Local Coder can also be detected from its runtime config or CLI,
+  with its artifact home created during installation; see [Agent Locations](agent-locations.md).
 
 Common commands:
 

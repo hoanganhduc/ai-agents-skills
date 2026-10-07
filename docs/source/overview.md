@@ -2,8 +2,8 @@
 
 AI Agents Skills is an experimental, personal-use repository for sharing
 research-oriented agent skills and settings across Codex, Claude, DeepSeek,
-OpenCode, Antigravity CLI, Grok, Kimi Code, GitHub Copilot, and restricted
-OpenClaw.
+CodeWhale, OpenCode, Antigravity CLI, Grok, Kimi Code, GitHub Copilot,
+ChatGPT Local Coder, and restricted OpenClaw.
 It is designed for combinatorics and graph theory workflows, but the installer
 and documentation are written so other users can inspect, dry-run, and install
 only the parts that fit their own machines.
@@ -16,8 +16,8 @@ and target-specific rendering logic in one source tree. Agent homes such as
 Claude links back to the canonical repo files; Codex, OpenCode, Grok, and Kimi
 receive copied native skill files plus support files; and DeepSeek receives
 reference adapters unless native loader evidence justifies a different policy.
-Explicit symlink, reference, and copy modes are available when you need to force
-one strategy.
+Explicit symlink, reference, and copy modes remain subject to target restrictions:
+Copilot refuses symlink mode, and OpenClaw has separate install gates.
 
 Most checked-in documentation is generated from
 `installer/ai_agents_skills/docs.py`, with manifest-derived tables inserted
@@ -30,10 +30,9 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - Canonical skills live under `canonical/skills/`. Runtime helpers live under
   `canonical/runtime/`. Agent homes and `~/.openclaw/workspace/skills/*` are
   **install products** — edit the checkout first, then install or publish.
-- OpenClaw dual-route `/aas` for remote-bridge is published from
-  `canonical/runtime/skills/remote-bridge/` via `publish_openclaw_adapter.py`
-  into `~/.openclaw/workspace/skills/aas-remote-bridge/` (not a managed
-  `openclaw-target-*` skill-file install).
+- Older OpenClaw `/aas` workspace adapters may still exist, but they are retired.
+  The publisher and dispatcher under `canonical/runtime/skills/remote-bridge/`
+  are blocked revocation stubs; they neither install nor clean up legacy copies.
 - Profiles in `manifest/profiles.yaml` select useful skill bundles.
 - Optional artifacts add templates, personas, instruction docs, entrypoint
   aliases, and management notices outside normal skill directories.
@@ -52,7 +51,7 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
   must not depend on the source checkout. DeepSeek uses reference adapters
   because native symlinked skill loading has not been verified, and OpenCode,
   Grok, and Kimi use copied native skill files.
-  `symlink`, `reference`, and `copy` force one strategy for every agent.
+  Explicit install modes apply only where the selected target supports them.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
 - The Docling document/OCR runtime is local-only by default. Stronger scanned
@@ -96,8 +95,12 @@ make verify ARGS="--root <fake-or-real-root>"
   entrypoints, and management notices.
 - [Dependencies](dependencies.md): logical tools, Python packages, and
   platform-specific detection behavior.
-- [Lax Formalization And Zenodo Archival](lax-formalization.md): independent
-  Lean verification, per-paper CI, safe migration and secondary archival.
+- [Research Jobs And Recovery](research-jobs.md): purpose-specific workflows,
+  provider availability, bounded recovery and honest completion status.
+- [Native Lean Formalization](lean-formalization.md): ordinary Lean/Lake,
+  selected-executor checks and separate correspondence review.
+- [Lax Formalization And Zenodo Archival](lax-formalization.md): optional Lax
+  artifacts, per-paper CI, safe migration and secondary archival.
 - [Lax Paper Workflow](lax-paper-workflow.md): new publication repositories from
   read-only source, selected code reuse, privacy and version-bound acceptance.
 - [Workflow Overview](workflow-overview.md): how the research stack connects

@@ -62,8 +62,11 @@ Apply every phase, in order.
 Run `lean-formalization-intake` before writing any Lean.
 
 - **Local-first.** Resolve the Lean package, toolchain, and any project context
-  from the local environment before reaching for external help. Do not start a
-  formalization that the local toolchain cannot build.
+  from the local environment before reaching for external help. Qualify the
+  selected executor before proof work: either a working local toolchain or an
+  authorized remote executor with pinned toolchain/dependencies and retained
+  setup/build evidence. Missing local Lean does not rule out qualified remote
+  execution. Record local and remote readiness separately.
 - **Decide whether to formalize at all.** Some informal proofs are not worth
   formalizing now (too large, depends on unformalized theory, or the informal
   argument has a gap that must be fixed first). Record the decision and reason.
@@ -78,7 +81,10 @@ Run `lean-formalization-intake` before writing any Lean.
 | Reason |  |
 | Chosen granularity |  |
 | Known informal gaps to resolve first |  |
-| Local toolchain builds? |  |
+| Selected executor (`local` / authorized remote) |  |
+| Local toolchain readiness / build evidence (or unavailable) |  |
+| Remote executor authorization / qualification evidence (or not selected) |  |
+| Pinned toolchain and dependency readiness on selected executor |  |
 
 If intake says `no` or `defer`, set status `blocked` or `abandoned` and stop; do
 not produce a skeleton for a proof that should not be formalized yet.
@@ -174,27 +180,38 @@ statuses that are never collapsed into one.
 | Status | What it means | How it is set |
 |---|---|---|
 | Typecheck status | The Lean file builds with no errors. | Toolchain build result. |
-| Claim-support status | The compiled artifact actually proves the informal claim. | Scanner output: no `sorry`/`admit`, no vacuous hypotheses, no added axioms beyond the allowed set, statement matches the informal claim. |
+| Claim-support status | The compiled artifact supports the informal claim under the declared trust policy. | Source scan, compiled axiom audit, and independent statement/hypothesis review; record optional kernel replay separately. |
 
 A clean typecheck with any escape present yields **claim-support = NOT
 supported**, even though the file compiles.
 
-### Scanner escape checks
+### Evidence checks and limits
+
+The static source scanner checks the supplied source scope. It does not audit
+compiled transitive dependencies or establish hypothesis consistency or statement
+equivalence. `axiom-audit` runs `#print axioms` on the compiled target declarations
+and reports their inherited axiom dependencies, including `sorryAx`. Record target
+coverage and audit limitations. Optional `kernel-check` replays compiled modules
+with `lean4checker`; a clean build is not kernel replay. Neither compiled check
+replaces independent review of the definitions, hypotheses, quantifiers and
+conclusion against the informal claim.
 
 | Escape | Detection | Effect on claim-support |
 |---|---|---|
-| `sorry` / `admit` present | Scanner over the declaration and its transitive deps | NOT supported |
-| Vacuous / contradictory hypotheses (statement provable because the premise is unsatisfiable) | Hypothesis sanity check | NOT supported |
-| Added / unexpected `axiom` (or `#print axioms` shows escapes) | Axiom scan vs. allowed set | NOT supported |
-| Statement does not match the informal claim (wrong quantifiers, weakened conclusion, missing hypothesis) | Statement-vs-informal comparison | NOT supported |
-| `native_decide` / unsafe escape where disallowed by project policy | Scanner over tactic usage | flag; NOT supported unless policy allows |
+| `sorry` / `admit` present | Static scan of supplied source; compiled axiom audit for inherited `sorryAx` | NOT supported |
+| Vacuous / contradictory hypotheses (statement provable because the premise is unsatisfiable) | Independent hypothesis review, with consistency/nonvacuity evidence where needed | NOT supported |
+| Added / unexpected `axiom` (or `#print axioms` shows escapes) | Source scan plus compiled axiom audit against the declared allowed set | NOT supported |
+| Statement does not match the informal claim (wrong quantifiers, weakened conclusion, missing hypothesis) | Independent statement/definition correspondence review | NOT supported |
+| `native_decide` / unsafe escape where disallowed by project policy | Source scan plus compiled compiler-trust axiom audit | flag; NOT supported unless policy allows |
 
 | Gate field | Value |
 |---|---|
 | Typecheck status (`pass` / `fail`) |  |
 | Claim-support status (`supported` / `not-supported`) |  |
-| Scanner output ref |  |
-| `#print axioms` ref |  |
+| Static source scan scope / output ref |  |
+| Compiled axiom-audit targets / coverage / output ref |  |
+| Optional kernel replay status / checker provenance / output ref |  |
+| Independent correspondence and hypothesis review ref |  |
 | Open sorry-ledger rows at scan time |  |
 
 Do not advance to acceptance while typecheck = `fail` or claim-support =
@@ -262,10 +279,12 @@ it through `modal-research-compute`. The recommended automatic order is
 `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored,
 with local first and remote lanes unique.
 
-- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
-  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
-  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
-  `GitHub Actions minutes`.
+- Kaggle live work is limited to reviewed one-unit CPU bundles; GPU and
+  multi-run are planning-only. CPU has no broker cost gate, but provider limits
+  still require qualification. Before dispatch, record the lane and its
+  applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`,
+  `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`.
+- `Kaggle GPU-hours` estimates are planning-only and do not authorize live GPU submission.
 - Any offloaded build script must **utilize the available hardware** (cores,
   memory) of the chosen backend.
 - Re-run the applicable guard at each dispatching step. If a lane's guard
@@ -291,13 +310,13 @@ with local first and remote lanes unique.
 | Failure mode | Detection point | Recovery |
 |---|---|---|
 | Typecheck conflated with claim support | Strict verification gate | Report both statuses separately; a clean compile with an escape is `not-supported`. |
-| `sorry`/`admit`-bearing theorem accepted as proved | Scanner escape checks, sorry ledger | Reject; keep the ledger row `open`; do not set `verified` until discharged. |
-| Vacuous or contradictory hypothesis makes the statement trivially provable | Hypothesis sanity check | Reject claim-support; fix the statement to match the informal hypotheses. |
-| Added axiom slips in (escape via `axiom` / `#print axioms`) | Axiom scan | Reject claim-support; remove the axiom or justify it against the allowed set. |
+| `sorry`/`admit`-bearing theorem accepted as proved | Source scan, compiled axiom audit, sorry ledger | Reject; keep the ledger row `open`; do not set `verified` until discharged. |
+| Vacuous or contradictory hypothesis makes the statement trivially provable | Independent hypothesis review, with consistency/nonvacuity evidence where needed | Reject claim-support; fix the statement to match the informal hypotheses. |
+| Added axiom slips in (escape via `axiom` / `#print axioms`) | Source scan and compiled axiom audit | Reject claim-support; remove the axiom or justify it against the allowed set. |
 | Re-proved an existing Mathlib lemma | Declaration map reuse search | Replace the new lemma with the existing declaration; record its name in the map. |
 | Formalizer self-confirmed the proof | Fresh-context cross-check | Reject; require a different family / clean context to run the build and scanner itself. |
 | Cross-checker merely restated the producer's claim | Cross-check gate | Reject; require an independent build + scanner run and statement-vs-claim check. |
-| Statement drifted from the informal claim | Statement-vs-informal comparison | Mark `not-supported`; realign the Lean statement before acceptance. |
+| Statement drifted from the informal claim | Independent statement/definition correspondence review | Mark `not-supported`; realign the Lean statement before acceptance. |
 | Skeleton written for a proof that should not be formalized yet | Intake gate | Stop at F1; set `blocked`/`abandoned` and record the reason. |
 | Parallel speculative proofs kept alive | Single-path discipline | Collapse to the single highest-probability approach; drop the rest. |
 | Fresh context unavailable for acceptance | Cross-check gate | Output `BLOCKED-FRESH-CONTEXT-UNAVAILABLE` and ask for direction; do not self-confirm. |

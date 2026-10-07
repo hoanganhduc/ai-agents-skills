@@ -51,7 +51,7 @@ make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
-Fast local maintainer checks:
+Fast local maintainer checks (install the CI dependencies below first):
 
 ```bash
 make static-check
@@ -62,19 +62,16 @@ make runtime-smoke
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
-Closest single-host CI parity pass:
+Linux CI prerequisites and local checks:
 
-```bash
-make static-check
-make sanitize-check
-make test
-make docs-check
-python3 -m pip install networkx psutil
-make runtime-smoke
-python3 -m pip install -r docs/requirements.txt
-make docs-site
-make lifecycle-test ARGS="--matrix stress --platform-shape all"
-```
+Use Python 3.11 and install `networkx`, `psutil`, `requests`, and
+`shapely==2.1.2` before tests or runtime smoke. Linux CI also provisions
+containment support and an attested system Node runtime before unit tests;
+without those prerequisites a local run is not CI parity. Follow the
+[actual CI workflow](https://github.com/hoanganhduc/ai-agents-skills/blob/main/.github/workflows/tests.yml)
+for its checkout wrapper, platform jobs, and provisioning steps. Python 3.10
+has a separate compatibility job with `tomli`. The lifecycle stress matrix is
+a separate Linux job; docs rendering additionally needs `docs/requirements.txt`.
 
 Linux CI runs the stress lifecycle matrix across all platform shapes. Python
 3.10 compatibility, macOS, and Windows jobs run narrower subsets that still
@@ -171,9 +168,13 @@ doctors, and the agent's own diagnostics for those layers.
 
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
-On Windows it exercises `run_skill.ps1`. CMD runtime entrypoints are not
-published because CMD cannot preserve arbitrary argument vectors safely. On
-Linux and macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+On native Windows this temporary install is blocked by the same `apply_plan`
+mutation gate as normal installation; it does not reach `run_skill.ps1`.
+`installed-runtime-smoke` can inspect an already installed runtime and run
+eligible native PowerShell contracts, subject to their prerequisites. Native
+PowerShell wrapper checks are separate evidence from temporary installation.
+CMD runtime entrypoints are not published because CMD cannot preserve arbitrary
+argument vectors safely. On Linux and macOS temporary smoke exercises `run_skill.sh`. The default runtime smoke currently covers
 `autonomous-research-loop-runtime`, `axiom-axle-mcp`, `calibre`, `deep-research-workflow`, `docling`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `hetzner-research-compute`, `kaggle-research-compute`, `lax-formalization`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `manim-math-animation`, `modal-research-compute`, `opengauss`, `remote-bridge`, `research-digest-wrapper`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, `vnthuquan`, `zenodo-artifact`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing

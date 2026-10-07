@@ -1,7 +1,13 @@
 # Agent Locations
 
-The installer detects agent homes first. If an agent home is absent, that agent
-is skipped and its target-specific files are not planned.
+The default registry includes Codex, Claude, DeepSeek, CodeWhale, Copilot,
+OpenCode, Antigravity, Grok, Kimi, OpenClaw, and chatgpt-local-coder. The installer
+normally requires an existing eligible agent home; absent targets are skipped.
+ChatGPT Local Coder is an exception: a detected runtime config directory or
+(on a real-system root) `chatgpt-local-coder`/`clc` CLI can qualify the target
+before `~/.chatgpt-local-coder` exists. An approved install may create that
+artifact home. On real-system roots the artifact home alone is insufficient
+without runtime evidence.
 
 Use this page when checking where files will be installed or why one agent was
 skipped. The paths below are target locations, not source locations. Canonical
@@ -15,7 +21,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | CodeWhale | `~/.codewhale` | `~/.codewhale/skills/<skill>/` | not modified |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
 | OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
-| Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
+| Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md`, or `~/.gemini/config/skills/<skill>.md` after vendor migration | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
 | Kimi | `~/.kimi-code` | `~/.kimi-code/skills/<skill>/` | `~/.kimi-code/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
@@ -65,7 +71,7 @@ Optional artifact-class target directories:
 | CodeWhale | `~/.codewhale/agents` | `~/.codewhale/templates` | not managed | `~/.codewhale/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
 | OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
-| Antigravity | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/templates` | `~/.gemini/antigravity-cli/skills/<alias>.md` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/tools` |
+| Antigravity | `<plugin-root>/agents` | `<plugin-root>/templates` | `<skills-root>/<alias>.md` | `<plugin-root>/tools` |
 | Grok | `~/.grok/agents` | `~/.grok/templates` | `~/.grok/commands` | `~/.grok/tools` |
 | Kimi | `~/.kimi-code/agents` | `~/.kimi-code/templates` | not supported | `~/.kimi-code/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
@@ -117,8 +123,14 @@ Antigravity is included in default target detection when
 workspace-local and do not activate the global Antigravity target. The
 installer writes flat global Markdown skills, managed global context, and the
 managed `ai-agents-skills` plugin payload under
-`~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
-hook, and settings scaffolds.
+`~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP and
+hook scaffolds. In the table, `<skills-root>` is the legacy
+`~/.gemini/antigravity-cli/skills` or validated migrated `~/.gemini/config/skills`;
+`<plugin-root>` is the legacy `~/.gemini/antigravity-cli/plugins/ai-agents-skills`
+or migrated `~/.gemini/config/plugins/ai-agents-skills`. Vendor migration markers
+and path validation select the layout; arbitrary compatibility links are not
+followed. Settings remain at `~/.gemini/antigravity-cli/settings.json` in both
+layouts.
 
 Grok is included in default target detection when `~/.grok` exists. Project
 `.agents/` directories are workspace-local and do not activate the global Grok

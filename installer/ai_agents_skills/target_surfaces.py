@@ -196,7 +196,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "native-command",
         "Claude command file",
         "renderer",
-        "Claude is the only current target that receives native command files for entrypoint aliases.",
+        "Claude receives native command files for entrypoint aliases; OpenCode and Grok have their own native command surfaces.",
     ),
     TargetSurface(
         "deepseek",

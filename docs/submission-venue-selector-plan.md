@@ -248,7 +248,6 @@ Add runtime files under
 - `submission_venue_selector.py`
 - `run_submission_venue_selector.sh`
 - `run_submission_venue_selector.ps1`
-- `run_submission_venue_selector.ps1`
 - fixture files under a safe runtime fixture path, avoiding denied names such
   as `config.*`, `provider*`, `.env`, PDFs, DBs, and archives.
 
@@ -260,7 +259,6 @@ Runtime manifest requirements:
   - `.py`: all platforms, `lf`, `0644`
   - `.sh`: Linux/macOS/WSL, `lf`, `0755`
   - `.ps1`: Windows, `crlf`, `0644`
-  - `.ps1`: Windows, `lf`, `0644`
 - Add a `runtime-smoke.v1` contract with command keys for `linux`, `macos`,
   `wsl`, `windows`, and `windows_ps1`.
 - Add `submission-venue-selector` output validation in
@@ -277,8 +275,8 @@ Wrapper requirements:
   existing POSIX runner convention.
 - PowerShell wrapper must invoke Python as `& $python $script @SkillArgs`, not
   by reconstructing a command string.
-- CMD wrapper must use the robust env-argument marshalling pattern used by
-  runtime-backed skills with path-heavy CLIs, not naive `%*` forwarding.
+- Native Windows uses the PowerShell wrapper. CMD entrypoints are not published,
+  because CMD does not preserve arbitrary argument vectors safely.
 
 ## Install Targets
 
@@ -359,7 +357,7 @@ navigation. Examples must cover:
 Example POSIX command:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+"${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/submission-venue-selector/run_submission_venue_selector.sh \
   run --dir ~/venue-selection/run-001 --draft ~/drafts/paper.tex --offline
 ```
@@ -367,7 +365,8 @@ bash ~/.codex/runtime/run_skill.sh \
 Example PowerShell command:
 
 ```powershell
-& "$env:USERPROFILE\.codex\runtime\workspace\skills\submission-venue-selector\run_submission_venue_selector.ps1" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" "skills/submission-venue-selector/run_submission_venue_selector.ps1" `
   run --dir "$env:USERPROFILE\venue-selection\run-001" `
   --draft "$env:USERPROFILE\drafts\paper.tex" --offline
 ```

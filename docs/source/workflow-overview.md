@@ -14,7 +14,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, and Kimi receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`, plus an optional dual-route `/aas` adapter published from remote-bridge. |
+| Agent frontends and targets | Codex, Claude, DeepSeek, CodeWhale, Copilot, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`, legacy dual-route `/aas` workspace copies may still exist, but new publishing is blocked and existing copies are not replaced or removed. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 

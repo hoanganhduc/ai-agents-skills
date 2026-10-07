@@ -1514,7 +1514,7 @@
       ]
     },
     "remote-bridge": {
-      "description": "Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not an OpenClaw skill target; optional dual-route /aas adapter is published from canonical runtime into OpenClaw workspace.",
+      "description": "Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not an OpenClaw skill target; legacy /aas workspace adapters are retired and new publication is disabled.",
       "profiles": [],
       "supported_agents": [
         "codex",
