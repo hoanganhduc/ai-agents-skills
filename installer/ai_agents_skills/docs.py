@@ -20,7 +20,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
 def render_docs(manifests: dict[str, Any]) -> dict[Path, str]:
     docs_dir = REPO_ROOT / "docs"
     source_dir = docs_dir / "source"
-    rendered: dict[Path, str] = {REPO_ROOT / "README.md": readme_text(manifests)}
+    rendered: dict[Path, str] = {REPO_ROOT / "README.md": readme_text()}
     for name, text in generated_doc_texts(manifests).items():
         rendered[docs_dir / name] = text
         rendered[source_dir / name] = text
@@ -78,13 +78,13 @@ def write_doc_pair(docs_dir: Path, source_dir: Path, name: str, text: str) -> li
     ]
 
 
-def write_readme(manifests: dict[str, Any]) -> Path:
+def write_readme() -> Path:
     path = REPO_ROOT / "README.md"
-    path.write_text(readme_text(manifests), encoding="utf-8")
+    path.write_text(readme_text(), encoding="utf-8")
     return path
 
 
-def readme_text(manifests: dict[str, Any]) -> str:
+def readme_text() -> str:
     return f"""# AI Agents Skills
 
 <div align="center">
