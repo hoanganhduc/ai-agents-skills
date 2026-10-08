@@ -8878,6 +8878,12 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
                     f" ({payload.get('remaining_iterations', '?')} remaining)"
                 ),
                 f"- Loop status: `{payload.get('status') or '?'}`",
+                *(
+                    ["- Driver invocation: **stopped**",
+                     f"- Driver stop reason: `{payload.get('terminal_reason') or 'unspecified'}`"]
+                    if payload.get("event") == "drive_stop"
+                    else []
+                ),
                 f"- Last decision: `{payload.get('decision') or '?'}`",
                 f"- Last banked iteration: **{payload.get('last_completed_iteration', payload.get('iteration', '?'))}**",
                 (
