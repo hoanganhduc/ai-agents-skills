@@ -23,8 +23,24 @@ its stop reason. A resumable loop may retain logical status `running`; this
 does not establish process liveness.
 
 The change does not alter model choice, scientific acceptance, research budgets,
-retry accounting, Goal Focus enforcement or authentication. A provider probe
+retry accounting or Goal Focus enforcement. A provider probe
 and an actual campaign continuation are required before claiming recovery.
+
+The native check also exposed OAuth refresh loss between isolated role calls.
+The native client refreshed a private credential copy, while a later call
+copied an expired original and failed authentication. A request using the
+refreshed copy passed. `claude_credentials.credential_session` retains refreshed
+OAuth data in a campaign-private checkpoint under a host lock. The checkpoint
+is initialized from an explicitly selected source, and subsequent role calls
+use that checkpoint. Global native credentials are not overwritten. Other
+native clients sharing the same refresh-token lineage can still invalidate it;
+that external concurrency is outside the campaign lock.
+
+Native calls use private streaming logs so initialization, tool activity and
+provider events remain observable before the final result. The managed
+`claude_output.result_envelope` parser requires exactly one terminal result
+and rejects partial or malformed streams. The adapter retains its separate
+schema and model checks. Raw events remain private.
 
 ## Tasks and verification
 
@@ -33,7 +49,16 @@ and an actual campaign continuation are required before claiming recovery.
 - [x] Test explicit stopped-driver presentation with a still-running loop.
 - [x] Propagate only reviewed files through installer state; preserve other work.
 - [x] Update the custom driver and test its output cap and timeout cleanup.
-- [ ] Verify a full-size Claude request and resume the existing pending iteration.
+- [x] Verify private credential rotation, failure cleanup and serialization.
+- [x] Propagate the credential helper and verify native authentication.
+- [x] Verify a full-size Claude request and resume the existing pending iteration.
+- [x] Propagate the streaming parser and retain strict result validation.
+
+The Linux campaign verification passed 61 tests after credential and stream integration.
+A native 136 KB input probe returned both endpoint markers, and the actual
+Navigator subsequently returned a schema-validated research result. The
+campaign moved to its next Claude control phase. These checks establish
+transport recovery, not mathematical completion or cross-platform execution.
 
 The source change is developed in an isolated worktree because the main
 checkout contains unrelated changes. Install plans and changed-file hashes
