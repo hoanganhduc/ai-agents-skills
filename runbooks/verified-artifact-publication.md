@@ -37,9 +37,9 @@ The change does not modify already checked scientific artifacts or receipts.
 - [x] Check forged receipts, mutations, secrets, binary data and the hard cap.
 - [x] Verify local Git publication and recovery without new model calls.
 - [x] Review the trust boundary and the exact installer mutation sets.
-- [ ] Propagate through both managed runtime roots and push source changes.
-- [ ] Bank and push the completed cycle without changing its evidence.
-- [ ] Resume the next research iteration and verify notification delivery.
+- [x] Propagate through both managed runtime roots and push source changes.
+- [x] Bank and push the completed cycle without changing its evidence.
+- [x] Resume the next research iteration and verify notification delivery.
 
 Linux is the local execution platform. Other operating systems require their
 own execution evidence. Existing unrelated checkout changes must be preserved;
