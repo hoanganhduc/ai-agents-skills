@@ -70,6 +70,40 @@ repeat the reviewed bundle SHA-256 and owner; any changed bundle or existing sub
 intent is refused. Pending or ambiguously accepted submissions must be polled/reconciled,
 never repeatedly pushed.
 
+### Generated source admission
+
+`preflight`, `push --dry-run`, `run --dry-run` and live `push` check the actual
+generated Python script before credentials, authentication or submission intent.
+`kernel_source_bytes` measures UTF-8 bytes, including the base64 ZIP and runner;
+`kernel_source_limit_bytes` is 1,000,000, with equality refused. This conservative
+decimal bound implements the provider's strict source-size limit independently
+of the 16 MiB uncompressed bundle cap. Kernel packaging repeats the same check
+and writes the measured bytes without platform newline translation.
+
+An oversized job fails locally with its measured size and limit. Keep the
+allowlist small: worker code, the manifest, setup scripts, lockfiles and required
+data. Remove unnecessary data, build products, vendored trees or old outputs
+from the proposed bundle, then review its new digest. Compression may let large
+repetitive inputs fit; uncompressed input size alone does not predict admission.
+There is no automatic dataset upload, file omission or Internet-policy change.
+
+### Failure diagnostics and recovery
+
+Error evidence and the durable submission event contain `provider_error` with
+the stage and at most eight chained exception records. Each selected scalar is
+sanitized and limited to 512 characters. Records retain exception type, observed
+HTTP status and allowlisted code/message fields; only already-buffered JSON
+error envelopes of at most 64 KiB are inspected. Raw payloads, headers, signed
+URLs, arbitrary exception strings and traceback locals are not recorded.
+Some failures therefore have only their exception type and stage.
+
+Provider failures, response-checkpoint failures and identity-admission failures
+remain `acceptance_unknown`; an HTTP status is diagnostic evidence, not proof that
+no version was created. Existing intent still refuses another push. Reconcile
+the recorded attempt or recover an already-captured save response. Successful
+SDK replies retain their original identity fields for the existing admission
+and recovery checks; diagnostic sanitization does not rewrite those replies.
+
 ## The multi-run resume loop (`run`)
 
 This is the intended multi-run design, currently available for planning only. Live execution

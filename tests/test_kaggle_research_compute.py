@@ -1179,6 +1179,159 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertFalse(out["enable_internet"])
         self.assertEqual(runner.calls, [])
 
+    def test_oversized_generated_source_refused_before_credentials_or_intent(self) -> None:
+        bundle = self._bundle(total_units=1)
+        (bundle / "data.bin").write_bytes(os.urandom(800_000))
+        path = bundle / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["upload_files"].append("data.bin")
+        path.write_text(json.dumps(manifest))
+        calls = [
+            lambda: kaggle_driver.preflight(job_dir=bundle, config=self.config),
+            lambda: kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True),
+            lambda: kaggle_driver.push(job_dir=bundle, config=self.config, state_root=self.state),
+            lambda: kaggle_driver.run(job_dir=bundle, config=self.config,
+                                      state_root=self.state, dry_run=True),
+        ]
+        with mock.patch.object(kaggle_driver, "token_present", side_effect=AssertionError("token read")), \
+             mock.patch.object(kaggle_driver, "_resolve_username", side_effect=AssertionError("auth")), \
+             mock.patch.object(kaggle_driver, "_write_submission_intent", side_effect=AssertionError("intent")):
+            for call in calls:
+                with self.subTest(call=call):
+                    with self.assertRaisesRegex(
+                            kaggle_driver.KaggleDriverError, "generated Python source") as caught:
+                        call()
+                    self.assertGreaterEqual(caught.exception.evidence["kernel_source_bytes"], 1_000_000)
+                    self.assertEqual(caught.exception.evidence["kernel_source_limit_bytes"], 1_000_000)
+                    self.assertIn("upload_files", str(caught.exception))
+        self.assertEqual(self.provider_calls, [])
+        self.assertFalse((self.state / "kaggle-submissions").exists())
+
+    def test_source_limit_is_strict_utf8_and_matches_written_code(self) -> None:
+        bundle = self._bundle(total_units=1)
+        for size in (999_999, 1_000_000, 1_000_001):
+            # Non-ASCII text catches character counting in place of UTF-8 bytes.
+            source = "é" * (size // 2) + "x" * (size % 2)
+            with self.subTest(size=size), mock.patch.object(
+                    kaggle_driver, "_thin_runner_embedded", return_value=source):
+                if size >= 1_000_000:
+                    with self.assertRaises(kaggle_driver.KaggleDriverError):
+                        kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True)
+                else:
+                    result = kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True)
+                    self.assertEqual(result["kernel_source_bytes"], size)
+                    dest = kaggle_driver.build_kernel_dir(
+                        job_id="jobX", job_dir=bundle, round_idx=0, chunk_idx=0,
+                        num_chunks=1, gpu=False, checkpoints_dir=None, dest_root=self.tmp / "kernel")
+                    self.assertEqual((dest / "run-r0-c0.py").read_bytes(), source.encode("utf-8"))
+
+    def test_large_compressible_bundle_fits_generated_source(self) -> None:
+        bundle = self._bundle(total_units=1)
+        (bundle / "data.txt").write_bytes(b"a" * 2_000_000)
+        path = bundle / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["upload_files"].append("data.txt")
+        path.write_text(json.dumps(manifest))
+        result = kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True)
+        self.assertLess(result["kernel_source_bytes"], 1_000_000)
+        self.assertFalse(result["enable_internet"])
+        dest = kaggle_driver.build_kernel_dir(
+            job_id="jobX", job_dir=bundle, round_idx=0, chunk_idx=0, num_chunks=1,
+            gpu=False, checkpoints_dir=None, dest_root=self.tmp / "kernel")
+        self.assertEqual(result["kernel_source_bytes"], (dest / "run-r0-c0.py").stat().st_size)
+
+    def test_provider_http_error_diagnostics_survive_and_redact(self) -> None:
+        import requests
+        self._creds()
+        bundle = self._bundle(total_units=1)
+        response = requests.Response()
+        response.status_code = 400
+        response._content = json.dumps({"error": {"code": "INVALID_ARGUMENT",
+            "message": "The kernel source must be less than 1 megabytes in size."},
+            "headers": {"Authorization": "Bearer NEVER_KEEP_HEADER"},
+            "payload": "NEVER_KEEP_PAYLOAD"}).encode()
+        inner = requests.HTTPError(
+            "400 Bad Request https://example.invalid/?token=NEVER_KEEP_QUERY " + DRIVER_TOKEN,
+            response=response)
+        outer = RuntimeError("NEVER_KEEP_ARBITRARY_EXCEPTION_PAYLOAD")
+        outer.message = 'provider failure password="QUOTED SECRET_SUFFIX"'
+        outer.reason = "provider failure; locals: PRIVATE_LOCALS_SENTINEL"
+        outer.error_message = "provider failure; request: POST /upload REQUEST_SENTINEL"
+        outer.failure_message = "provider failure; body: BODY_SENTINEL"
+        outer.__cause__ = inner
+        kaggle_driver.PROVIDER_RUNNER = kaggle_driver._official_provider_operation
+        with mock.patch.object(kaggle_driver, "_sdk_provider_operation", side_effect=outer):
+            with self.assertRaises(kaggle_driver.KaggleDriverError) as caught:
+                kaggle_driver.push(job_dir=bundle, config=self.config, state_root=self.state,
+                    expected_owner="tester", expected_bundle_sha256=kaggle_driver.bundle_sha256(bundle),
+                    confirm=True, work_root=self.tmp / "work")
+        evidence = caught.exception.evidence
+        self.assertEqual(evidence["state"], "acceptance_unknown")
+        diagnostic = evidence["provider_error"]
+        self.assertEqual(diagnostic["stage"], "provider_push")
+        blob = json.dumps(diagnostic)
+        self.assertIn('"http_status": 400', blob)
+        self.assertIn("INVALID_ARGUMENT", blob)
+        self.assertIn("The kernel source must be less than 1 megabytes in size.", blob)
+        intent_text = Path(evidence["submission_intent"]).read_text()
+        self.assertEqual(json.loads(intent_text)["events"][-1]["provider_error"], diagnostic)
+        for secret in (DRIVER_TOKEN, "NEVER_KEEP_QUERY", "NEVER_KEEP_HEADER",
+                       "NEVER_KEEP_PAYLOAD", "NEVER_KEEP_ARBITRARY_EXCEPTION_PAYLOAD",
+                       "QUOTED", "SECRET_SUFFIX", "PRIVATE_LOCALS_SENTINEL",
+                       "REQUEST_SENTINEL", "BODY_SENTINEL"):
+            self.assertNotIn(secret, blob + intent_text + str(caught.exception))
+
+    def test_timeout_keeps_unknown_acceptance_and_refuses_second_push(self) -> None:
+        self._creds()
+        bundle = self._bundle(total_units=1)
+        args = dict(job_dir=bundle, config=self.config, state_root=self.state,
+                    expected_owner="tester", expected_bundle_sha256=kaggle_driver.bundle_sha256(bundle),
+                    confirm=True, work_root=self.tmp / "work")
+        with mock.patch.object(kaggle_driver, "PROVIDER_RUNNER", side_effect=TimeoutError("hidden")) as provider:
+            with self.assertRaises(kaggle_driver.KaggleDriverError) as caught:
+                kaggle_driver.push(**args)
+            self.assertEqual(caught.exception.evidence["state"], "acceptance_unknown")
+            self.assertIn("TimeoutError", json.dumps(caught.exception.evidence["provider_error"]))
+            with self.assertRaisesRegex(kaggle_driver.KaggleDriverError, "query status"):
+                kaggle_driver.push(**args)
+            self.assertEqual(provider.call_count, 1)
+
+    def test_provider_diagnostics_bound_chain_and_never_stream_response(self) -> None:
+        class Response:
+            status_code = 400
+            _content = b"x" * 65_537
+
+            def json(self):
+                raise AssertionError("must not parse/stream via response API")
+
+            @property
+            def content(self):
+                raise AssertionError("must not read stream")
+
+        exc = RuntimeError("omitted")
+        exc.response = Response()
+        exc.message = "word " * 1000 + "Bearer HEADER_SECRET"
+        for _ in range(12):
+            wrapper = RuntimeError("omitted")
+            wrapper.__cause__ = exc
+            exc = wrapper
+        diagnostic = kaggle_driver._provider_error(exc, stage="provider_push")
+        self.assertEqual(len(diagnostic["exception_chain"]), 8)
+        leaf = exc
+        while leaf.__cause__ is not None:
+            leaf = leaf.__cause__
+        leaf.__cause__ = leaf
+        diagnostic = kaggle_driver._provider_error(leaf, stage="provider_push")
+        self.assertEqual(len(diagnostic["exception_chain"]), 1)
+        self.assertLessEqual(len(diagnostic["exception_chain"][0]["fields"]["message"]), 512)
+        self.assertNotIn("HEADER_SECRET", json.dumps(diagnostic))
+
+    def test_provider_success_reply_is_not_sanitized_or_rewritten(self) -> None:
+        reply = {"kernel_id": 123, "version_number": 4, "ref": "tester/example",
+                 "url": "https://www.kaggle.com/code/tester/example?scriptVersionId=7", "error": ""}
+        with mock.patch.object(kaggle_driver, "_sdk_provider_operation", return_value=reply):
+            self.assertIs(kaggle_driver._official_provider_operation("push", kernel="tester/example"), reply)
+
     def test_run_multi_run_resume_loop_two_rounds(self) -> None:
         """Live multi-run stays fail-closed until status-first crash recovery is durable."""
         runner = _FakeRunner(units_per_output=1)

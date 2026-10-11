@@ -66,6 +66,8 @@ MAX_FETCH_FILES = 10_000
 MAX_FETCH_BYTES = 1024 * 1024 * 1024
 MAX_BUNDLE_FILES = 256
 MAX_BUNDLE_BYTES = 16 * 1024 * 1024
+# Provider requires source strictly below 1 MB; use the conservative decimal bound.
+MAX_KERNEL_SOURCE_BYTES = 1_000_000
 SAFE_OUTPUT_PATTERN = r"^out/(?:unit-[0-9]{4,8}\.json|result\.json)\Z"
 SAFE_OUTPUT_BASENAME_PATTERN = r"^(?:unit-[0-9]{4,8}\.json|result\.json)\Z"
 DENIED_UPLOAD_NAMES = frozenset({".env", "kaggle.json"})
@@ -296,8 +298,9 @@ def _official_provider_operation(operation: str, **kwargs: Any) -> Any:
     try:
         return _sdk_provider_operation(operation, **kwargs)
     except Exception as exc:
-        # Do not surface signed URLs, response bodies or SDK configuration.
-        raise KaggleDriverError(f"official provider {operation} failed ({type(exc).__name__})") from exc
+        diagnostic = _provider_error(exc, stage=f"provider_{operation}")
+        raise KaggleDriverError(f"official provider {operation} failed ({type(exc).__name__})",
+                                evidence={"provider_error": diagnostic}) from exc
 
 
 PROVIDER_RUNNER: Callable[..., Any] = _official_provider_operation
@@ -327,6 +330,73 @@ def _redact(text: str | None) -> str:
     if token:
         text = text.replace(token, "<REDACTED_KAGGLE_TOKEN>")
     return text
+
+
+def _diagnostic_scalar(value: Any) -> str | None:
+    """Bound and redact selected scalars; never stringify SDK objects or payloads."""
+    if type(value) not in {str, int}:
+        return None
+    text = str(value)
+    # Redact before truncation so a credential crossing the boundary cannot leak.
+    for key, secret in os.environ.items():
+        if secret and re.search(r"token|password|secret|api.?key|credential", key, re.I):
+            text = text.replace(secret, "[REDACTED]")
+    text = re.sub(r"(?i)\b(?:https?|s3|gs)://[^\s<>\"']+", "[URL REDACTED]", text)
+    text = re.sub(r"(?i)\b(?:authorization|cookie|set-cookie|headers?|request[_ -]?body|request|body|payload|locals)"
+                  r"\s*[\"']?\s*[:=].*", "[SENSITIVE FIELD REDACTED]", text, flags=re.S)
+    text = re.sub(r"(?i)\b(?:bearer|basic)\s+\S+", "[CREDENTIAL REDACTED]", text)
+    text = re.sub(r"(?i)\b[\w-]*(?:token|secret|password|credential|signature|api[_-]?key|access[_-]?key)"
+                  r"[\w-]*\s*[\"']?\s*[:=].*", "[CREDENTIAL REDACTED]", text, flags=re.S)
+    text = re.sub(r"[?&][^\s]+", "[QUERY REDACTED]", text)
+    text = re.sub(r"\{.*|\[\s*[\"'].*", "[STRUCTURED CONTENT REDACTED]", text, flags=re.S)
+    text = re.sub(r"\b[A-Za-z0-9_+/=-]{24,}\b", "[OPAQUE VALUE REDACTED]", text)
+    return " ".join(text.split())[:512]
+
+
+def _diagnostic_fields(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for key in ("code", "error_code", "message", "error_message", "reason", "failure_message"):
+        scalar = _diagnostic_scalar(value.get(key))
+        if scalar is not None:
+            result[key] = scalar
+    return result
+
+
+def _provider_error(exc: BaseException, *, stage: str) -> dict[str, Any]:
+    """Select bounded diagnostic fields from at most eight chained exceptions.
+
+    Buffered JSON error envelopes are inspected without streaming or retaining raw
+    bodies/headers. Arbitrary exception strings and traceback locals are omitted.
+    """
+    chain, seen = [], set()
+    while exc is not None and id(exc) not in seen and len(chain) < 8:
+        seen.add(id(exc))
+        row = {"error_type": _diagnostic_scalar(type(exc).__name__),
+               "fields": _diagnostic_fields(vars(exc))}
+        response = getattr(exc, "response", None)
+        for status_code in (getattr(response, "status_code", None),
+                            getattr(exc, "status", None), getattr(exc, "status_code", None)):
+            if type(status_code) is int and 100 <= status_code <= 599:
+                row["http_status"] = status_code
+                break
+        content = getattr(response, "_content", None)
+        if type(content) in {bytes, str} and len(content) <= 65_536:
+            try:
+                envelope = json.loads(content)
+                row["fields"].update(_diagnostic_fields(envelope))
+                if isinstance(envelope, dict):
+                    row["fields"].update(_diagnostic_fields(envelope.get("error")))
+            except (ValueError, UnicodeError, RecursionError):
+                pass
+        if (type(exc).__module__ == "requests.exceptions" and type(exc).__name__ == "HTTPError"
+                and len(exc.args) == 1 and type(exc.args[0]) is str):
+            row["fields"].setdefault("message", _diagnostic_scalar(exc.args[0]))
+        chain.append(row)
+        exc = exc.__cause__ if exc.__cause__ is not None else (
+            None if exc.__suppress_context__ else exc.__context__)
+    return {"stage": stage, "exception_chain": chain}
 
 
 # --- authenticated username via kagglehub (mockable through the backend hook) --
@@ -680,6 +750,20 @@ def _bundle_manifest(bundle: bytes) -> dict[str, Any]:
     return value
 
 
+def _kernel_source(bundle: bytes, job_id: str, round_idx: int = 0,
+                   chunk_idx: int = 0, num_chunks: int = 1) -> tuple[bytes, dict[str, int]]:
+    source = _thin_runner_embedded(job_id, round_idx, chunk_idx, num_chunks,
+        base64.b64encode(bundle).decode("ascii"), hashlib.sha256(bundle).hexdigest()).encode("utf-8")
+    size = {"kernel_source_bytes": len(source), "kernel_source_limit_bytes": MAX_KERNEL_SOURCE_BYTES}
+    if len(source) >= MAX_KERNEL_SOURCE_BYTES:
+        raise KaggleDriverError(
+            f"generated Python source is {len(source)} bytes; must be less than "
+            f"{MAX_KERNEL_SOURCE_BYTES} bytes. Shrink the job's upload_files: remove unnecessary "
+            "data/build artifacts or supply a smaller explicit input bundle, then review a new dry-run. "
+            "No inputs were dropped and Internet was not enabled.", evidence=size)
+    return source, size
+
+
 def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                      num_chunks: int, gpu: bool, checkpoints_dir: str | Path | None,
                      dest_root: str | Path, username: str | None = None,
@@ -690,25 +774,14 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
     shipped. The portable job is base64-embedded and extracted at runtime.
     """
     dest = Path(dest_root) / f"kernel-r{round_idx}-c{chunk_idx}"
-    dest.mkdir(parents=True, exist_ok=True)
     bundle_zip = bytes(bundle_zip) if bundle_zip is not None else _zip_job_bytes(Path(job_dir))
     requested = _bundle_manifest(bundle_zip).get("enable_internet", False)
     if type(enable_internet) is not bool or type(requested) is not bool or requested != enable_internet:
         raise KaggleDriverError("Internet metadata differs from approved bundle")
-    bundle_digest = hashlib.sha256(bundle_zip).hexdigest()
-    zip_b64 = base64.b64encode(bundle_zip).decode("ascii")
+    source, _ = _kernel_source(bundle_zip, job_id, round_idx, chunk_idx, num_chunks)
+    dest.mkdir(parents=True, exist_ok=True)
     code_file = f"run-r{round_idx}-c{chunk_idx}.py"
-    (dest / code_file).write_text(
-        _thin_runner_embedded(
-            job_id,
-            round_idx,
-            chunk_idx,
-            num_chunks,
-            zip_b64,
-            bundle_digest,
-        ),
-        encoding="utf-8",
-    )
+    (dest / code_file).write_bytes(source)
 
     dataset_sources: list[str] = []
     if checkpoints_dir and units_done(Path(checkpoints_dir)) > 0:
@@ -811,6 +884,7 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     a budget verdict. No kernel is pushed and nothing is reserved."""
     bundle = _zip_job_bytes(Path(job_dir))
     manifest = _bundle_manifest(bundle)
+    _, source_size = _kernel_source(bundle, str(manifest.get("job_id") or _new_job_id()))
     enable_internet = internet_policy(manifest, config)
     output_allowlist(manifest)
     estimate = estimate_from_manifest(manifest)
@@ -833,6 +907,7 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
         "backend": "kaggle",
         "job_id": manifest.get("job_id"),
         "bundle_sha256": hashlib.sha256(bundle).hexdigest(),
+        **source_size,
         "enable_internet": enable_internet,
         "internet_scope": "kernel-wide" if enable_internet else "disabled",
         "account_status": "not_checked",
@@ -1241,6 +1316,7 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
     bundle_zip = _zip_job_bytes(Path(job_dir))
     manifest = _bundle_manifest(bundle_zip)
     job_id = str(manifest.get("job_id") or _new_job_id())
+    _, source_size = _kernel_source(bundle_zip, job_id, round_idx, chunk_idx, num_chunks)
     enable_internet = internet_policy(manifest, config)
     output_allowlist(manifest)
     digest = hashlib.sha256(bundle_zip).hexdigest()
@@ -1250,6 +1326,7 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         return {"dry_run": True, "job_id": job_id,
                 "kernel": kernel_ref(job_id, round_idx, chunk_idx, username=expected_owner),
                 "bundle_sha256": digest,
+                **source_size,
                 "gpu": gpu, "enable_internet": enable_internet,
                 "internet_scope": "kernel-wide" if enable_internet else "disabled",
                 "provider_operation": "official-sdk.kernels_push"}
@@ -1305,12 +1382,14 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         "attempt_id": uuid.uuid4().hex,
         "kernel": kernel,
         "bundle_sha256": digest,
+        **source_size,
         "gpu": gpu,
         "enable_internet": enable_internet,
         "events": [{"stage": "dispatch", "outcome": "prepared"}],
     }
     writer = checkpoint_writer or _write_submission_intent
     writer(intent_path, intent, create=True)
+    stage = "provider_push"
     try:
         result = _push_kernel(
             job_id=job_id, job_dir=job_dir, round_idx=round_idx, chunk_idx=chunk_idx,
@@ -1319,21 +1398,27 @@ def push(*, job_dir: str | Path, config: Any, round_idx: int = 0, chunk_idx: int
         intent["provider_response"] = result.pop("provider_response")
         intent["submitted_source"] = result["submitted_source"]
         intent["events"].append({"stage": "save_response", "outcome": "captured"})
+        stage = "save_response_checkpoint"
         writer(intent_path, intent, create=False)
+        stage = "acceptance_validation"
         identity = _bind_saved_response(intent)
     except Exception as exc:
-        intent["events"].append({"stage": "submission", "outcome": "acceptance_unknown", "error_type": type(exc).__name__})
+        diagnostic = _provider_error(exc, stage=stage)
+        intent["events"].append({"stage": "submission", "outcome": "acceptance_unknown",
+                                 "error_type": type(exc).__name__, "provider_error": diagnostic})
         try:
             writer(intent_path, intent, create=False)
         except Exception:
             pass  # Preserve the initial durable fence even if diagnostics cannot be updated.
         raise KaggleDriverError("provider acceptance unknown; query/reconcile the recorded attempt, never repush",
                                 evidence={"state": "acceptance_unknown", "submission_intent": str(intent_path),
-                                          "attempt_id": intent["attempt_id"], "error_type": type(exc).__name__}) from exc
+                                          "attempt_id": intent["attempt_id"], "error_type": type(exc).__name__,
+                                          "provider_error": diagnostic, **source_size}) from exc
     intent.update(state="submitted", accepted_identity=identity)
     intent["events"].append({"stage": "acceptance", "outcome": "identity_bound"})
     writer(intent_path, intent, create=False)
     result["bundle_sha256"] = digest
+    result.update(source_size)
     result["submission_intent"] = str(intent_path)
     result["accepted_identity"] = identity
     result["host_provenance"] = {"source": "official-sdk-save-response", "accepted_identity": identity,
@@ -1433,8 +1518,10 @@ def run(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = F
     GPU jobs pass the fail-closed weekly GPU-hour gate once, before the first push; CPU jobs
     are free and quota-free. `--dry-run` prints the planned first round + the loop shape with
     nothing submitted."""
-    manifest = _read_manifest(job_dir)
+    bundle = _zip_job_bytes(Path(job_dir))
+    manifest = _bundle_manifest(bundle)
     job_id = str(manifest.get("job_id") or _new_job_id())
+    _, source_size = _kernel_source(bundle, job_id)
     estimate = estimate_from_manifest(manifest)
     gpu = bool(estimate.get("gpu"))
     total = _total_units(manifest)
@@ -1447,6 +1534,7 @@ def run(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = F
         first_round = min(fanout, total)
         return {
             "dry_run": True, "job_id": job_id, "kind": "gpu" if gpu else "cpu",
+            **source_size,
             "total_units": total, "concurrency": fanout, "max_runs": cap_runs,
             "session_hours": kaggle_backend.session_hours(config),
             "first_round_kernels": [kernel_ref(job_id, 0, c) for c in range(first_round)],

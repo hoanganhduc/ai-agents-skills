@@ -107,6 +107,24 @@ and admits only exact bounded output names from its manifest, with byte hashes a
 pagination completeness. A captured save response can be recovered with
 `recover --submission-intent PATH`; an ambiguous acceptance never permits repush.
 
+Preflight and dry-run report `kernel_source_bytes` and `kernel_source_limit_bytes`.
+The complete generated Python script, including its base64 ZIP payload, must be
+strictly smaller than 1,000,000 UTF-8 bytes. The driver checks this before token
+lookup, authentication or submission intent, separately from the 16 MiB
+uncompressed bundle limit. Keep `upload_files` focused on the small worker,
+manifest, setup/lockfiles and necessary input data. Large data, build trees,
+vendored dependencies and prior outputs can make the script too large; reduce
+the explicit input bundle and review a fresh dry-run digest. The driver never
+drops files or enables Internet to make a bundle fit. Compressible inputs may
+fit even when their uncompressed size exceeds the script limit.
+
+Submission failures expose a bounded `provider_error` diagnostic in error
+evidence and the durable intent event: failure stage, exception types, HTTP
+status and selected sanitized provider code/message fields when available.
+Raw bodies, headers, URL queries and traceback locals are excluded. A diagnostic
+HTTP error or timeout does not clear unknown acceptance or authorize a retry;
+query/reconcile the recorded attempt first.
+
 On targets that install a local skill wrapper, that wrapper should forward to the same
 runtime command target.
 
