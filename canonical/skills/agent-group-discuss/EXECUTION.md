@@ -172,10 +172,11 @@ this template.
   `dead_end` (a direction that failed), `file` (an artifact ref), or `note`.
   The parent sets `kind` on its relay copy, so a result packet that
   `validate_result` checks keeps its closed field set.
-- **Entry cap.** The free text of one entry is at most 1500 bytes of UTF-8:
-  `rationale` plus `recommended_parent_action` for a Finding object, or
-  `statement` plus `notes` for a claim ledger row. An entry over the cap is
-  refused, not cut, and is listed as not relayed.
+- **Entry cap.** One entry is at most 1500 bytes of UTF-8 as framed: every
+  `| ` line under its header counts (see "Framing"), so every relayed field
+  counts, such as `claim_or_object_ref` and `evidence_refs`, not only the
+  prose fields. An entry over the cap is refused, not cut, and is listed as
+  not relayed.
 - **Verbatim selection.** Relay the selected entries word for word, with no
   paraphrase, merging, or shortening. After them, list the id of every entry
   that was not relayed and the reason, so a recipient can tell a partial relay

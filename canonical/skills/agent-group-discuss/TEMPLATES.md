@@ -370,7 +370,7 @@ Claim ledger fields:
 - notes
 - kind (optional): `lemma` / `partial` / `counterexample` / `dead_end` / `file` / `note`
 
-The `statement` and `notes` of one row hold at most 1500 bytes of UTF-8 together. Rows relayed between rounds follow "Relaying findings between rounds" in `EXECUTION.md`.
+A row relayed between rounds follows "Relaying findings between rounds" in `EXECUTION.md`, so it holds at most 1500 bytes of UTF-8 as framed, counting every field.
 
 Rounds:
 
