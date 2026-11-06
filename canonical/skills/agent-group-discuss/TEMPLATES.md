@@ -87,10 +87,11 @@ The final synthesis for research-mode templates must contain:
 
 1. `Accepted`
 2. `Rejected`
-3. `Unresolved`
-4. `Strongest surviving proof skeleton`
-5. `Verification status`
-6. `Single recommended next action`
+3. `Dead ends`: each failed direction and the reason it failed (see "Relaying findings between rounds" in `EXECUTION.md`)
+4. `Unresolved`
+5. `Strongest surviving proof skeleton`
+6. `Verification status`
+7. `Single recommended next action`
 
 ---
 
@@ -347,6 +348,9 @@ Claim ledger fields:
 - validation owner
 - artifact refs
 - notes
+- kind (optional): `lemma` / `partial` / `counterexample` / `dead_end` / `file` / `note`
+
+The `statement` and `notes` of one row hold at most 1500 bytes of UTF-8 together. Rows relayed between rounds follow "Relaying findings between rounds" in `EXECUTION.md`.
 
 Rounds:
 

@@ -298,7 +298,10 @@ Record the chosen profile, per-role model, and reasoning effort in `state.json`.
 ## Token management
 
 Do not promise truncation cannot happen.
-Keep prompts compact and summarize prior rounds before relaying them.
+Keep prompts compact. Relay only the selected decisive findings from prior
+rounds, verbatim and framed as data, and list the ids of findings not relayed;
+the caps and framing rules are in "Relaying findings between rounds" in
+`EXECUTION.md`.
 
 If a participant response is truncated:
 
