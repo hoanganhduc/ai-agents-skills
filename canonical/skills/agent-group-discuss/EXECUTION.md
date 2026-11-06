@@ -207,11 +207,15 @@ this template.
   and where it broke. A row is added when a participant abandons a direction,
   when an entry of kind `dead_end` is relayed, or when the referee rejects a
   route for good (see "Orchestrator-run verification"). Every later round
-  receives the whole section with this rule: a proposal that only rewords a
-  dead end, or retries it under a new name, counts as that dead end, and a dead
-  end comes back only with a genuinely new mechanism, invariant, or
-  construction that the proposal names. Rows copied from participant text are
-  relay entries, so the rules above apply to them.
+  receives the section with this rule: a proposal that only rewords a dead
+  end, or retries it under a new name, counts as that dead end, and a dead end
+  comes back only with a genuinely new mechanism, invariant, or construction
+  that the proposal names. Rows are framed and checked like entries, and each
+  row obeys the entry cap. A row carried forward from an earlier round does
+  not count toward a participant's 8 entries, but the section's bytes count
+  toward the round's 12 KB before any new entry. If the section alone is over
+  12 KB, relay its newest rows that fit and list the rest as not relayed; the
+  orchestrator keeps every row and applies the rule above to all of them.
 
 One framed entry looks like this:
 
