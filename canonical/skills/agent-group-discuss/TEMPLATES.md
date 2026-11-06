@@ -132,7 +132,15 @@ Round 2:
 
 Round 3:
 
-- Formalist or orchestrator synthesizes the strongest surviving claim and remaining gaps
+- orchestrator referees the proof as it stands after Round 2, with the referee method in `EXECUTION.md`
+
+Round 4:
+
+- optional repair round: the Prover repairs a rejected step, given the rejection reason verbatim, and the orchestrator referees the repair once
+
+Final:
+
+- Formalist or orchestrator synthesizes the strongest surviving claim and remaining gaps, including `Rejected` and `Dead ends` from the referee step
 
 ---
 
@@ -172,6 +180,14 @@ Round 2:
 - a role whose Round 1 approach duplicated another's takes the different direction the orchestrator assigns
 
 Round 3:
+
+- orchestrator referees each candidate solution with the referee method in `EXECUTION.md`
+
+Round 4:
+
+- optional repair round: the role whose candidate was rejected repairs it, given the rejection reason verbatim, and the orchestrator referees the repair once
+
+Final:
 
 - orchestrator produces a ranked list of approaches, expected difficulty, and recommended next step
 
@@ -300,7 +316,7 @@ Round 3:
 
 Round 4:
 
-- optional repair round only if a local repair is concrete and credible
+- optional repair round only if a local repair is concrete and credible, given the referee's rejection reason verbatim
 
 Hard rules:
 
@@ -382,7 +398,7 @@ Round 3:
 
 Round 4:
 
-- optional repair round only for a concrete local repair
+- optional repair round only for a concrete local repair, given the referee's rejection reason verbatim
 
 Typed verifier table:
 

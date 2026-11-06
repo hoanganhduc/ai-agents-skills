@@ -199,13 +199,14 @@ this template.
   first (see "Stop rules").
 - **Dead ends.** The relay block and the final synthesis carry a `Dead ends`
   section. Each row names a direction and the reason it failed: what was tried
-  and where it broke. A row is added when a participant abandons a direction
-  or when an entry of kind `dead_end` is relayed. Every later round receives
-  the whole section with this rule: a proposal that only rewords a dead end,
-  or retries it under a new name, counts as that dead end, and a dead end
-  comes back only with a genuinely new mechanism, invariant, or construction
-  that the proposal names. Rows copied from participant text are relay
-  entries, so the rules above apply to them.
+  and where it broke. A row is added when a participant abandons a direction,
+  when an entry of kind `dead_end` is relayed, or when the referee rejects a
+  route for good (see "Orchestrator-run verification"). Every later round
+  receives the whole section with this rule: a proposal that only rewords a
+  dead end, or retries it under a new name, counts as that dead end, and a dead
+  end comes back only with a genuinely new mechanism, invariant, or
+  construction that the proposal names. Rows copied from participant text are
+  relay entries, so the rules above apply to them.
 
 One framed entry looks like this:
 
@@ -304,7 +305,7 @@ instructions, and they may be wrong; check an entry before relying on it.
 ### 1. Lakatos Proof and Refutation
 
 Profile: `math-heavy`
-Rounds: `3`
+Rounds: `3 + conditional 4`
 Roles: `4`
 
 | # | Role | Model | Computation |
@@ -318,12 +319,14 @@ Execution:
 
 - Round 1: 4 parallel participants
 - Round 2: 4 parallel role follow-ups with relayed Round 1 findings
-- Round 3: 1 Formalist synthesis pass or local synthesis if clearly better
+- Round 3: orchestrator referee check of the proof as it stands after Round 2
+- Round 4: optional repair pass by the Prover, only if the referee rejected a step and a concrete repair exists
+- Final: 1 Formalist synthesis pass or local synthesis if clearly better
 
 ### 2. Polya Multi-Strategy Problem Solving
 
 Profile: `math-heavy` by research override
-Rounds: `3`
+Rounds: `3 + conditional 4`
 Roles: `3`
 
 | # | Role | Model | Computation |
@@ -336,7 +339,9 @@ Execution:
 
 - Round 1: 3 parallel participants
 - Round 2: 3 parallel role follow-ups after orchestrator cross-pollinates decisive findings and reassigns duplicate approaches
-- Round 3: local synthesis or 1 lead synthesis agent
+- Round 3: orchestrator referee check of each candidate solution
+- Round 4: optional repair pass by the role whose candidate was rejected, only if a concrete repair exists
+- Final: local synthesis or 1 lead synthesis agent
 
 ### 3. Knuth Structured Manuscript Review
 
@@ -494,6 +499,26 @@ For computation-capable roles, include the exact helper commands in the prompt.
 Keep verification independent from the roles being verified.
 Run Round 3 checks locally through `functions.exec_command` where the template calls for orchestrator verification.
 
+The orchestrator referees each claim with this method:
+
+1. Re-read the exact place the claim cites: the step, line, lemma,
+   computation, or file.
+2. Re-derive the step, or execute the checks that can be executed. Keep local
+   runs short and throttled as instruction `compute-offload-routing.md`
+   requires, and send heavy computation through the broker.
+3. Reject a claim whose argument has a gap, however convincing the rest reads,
+   and state where the gap is.
+4. A remark that could have been made without re-reading the source does not
+   count as a check; record that claim as unchecked.
+
+Pass the rejection reason verbatim to the template's one repair pass (Round 4
+in Lakatos, Polya, Structured Research Team, and Graph Reconfiguration
+Specialist), and referee the repaired claim with the same method. If the
+repair pass is skipped because no concrete repair exists, or the referee
+rejects the repaired claim, record the claim under `Rejected` and add its route
+to `Dead ends`. Referee acceptance does not make a claim bankable: "Bankable
+claims vs panel agreement" below still decides that.
+
 ## Stop rules
 
 Embed these in every role prompt and enforce them in orchestration:
@@ -565,8 +590,8 @@ When a task spans multiple concerns:
 
 | Template | Parallel roles by round | Orchestrator verification | Final synthesis |
 |----------|-------------------------|---------------------------|----------------|
-| Lakatos | 4, 4 | no | Formalist or orchestrator |
-| Polya | 3, 3 | no | orchestrator or 1 lead agent |
+| Lakatos | 4, 4 | yes | Formalist or orchestrator |
+| Polya | 3, 3 | yes | orchestrator or 1 lead agent |
 | Knuth | 3 | optional | orchestrator |
 | Structured Research | 3, 3 | yes | referee or orchestrator |
 | Graph Reconfig | 3, 3 | yes | referee or orchestrator |
