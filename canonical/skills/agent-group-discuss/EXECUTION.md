@@ -145,8 +145,12 @@ check.
   when one only restates the other in different words, or when one is only a
   special case of the other. A new phrasing of an idea is still the same
   approach.
-- In Polya, the orchestrator gives each participant whose approach duplicates
-  another a different direction for Round 2.
+- In Polya, one participant in each group of duplicate approaches keeps the
+  approach: the role whose assigned method it is; failing that, when one
+  approach is a special case of another, the role with the more general
+  approach; failing both, a role the orchestrator picks and records. The
+  orchestrator gives every other participant in the group a different
+  direction for Round 2.
 - In Structured Research Team, if the Alternative Builder duplicates the
   Builder, the Alternative Builder returns a new route in Round 2 instead of a
   critique, and the Round 3 verification checks that route like every other

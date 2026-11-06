@@ -177,7 +177,7 @@ Round 1:
 Round 2:
 
 - each role critiques or refines its direction after seeing the others' findings
-- a role whose Round 1 approach duplicated another's takes the different direction the orchestrator assigns
+- when Round 1 approaches duplicate each other, one role keeps the approach and every other role in the group takes the different direction the orchestrator assigns (see "Approach statements" in `EXECUTION.md`)
 
 Round 3:
 
