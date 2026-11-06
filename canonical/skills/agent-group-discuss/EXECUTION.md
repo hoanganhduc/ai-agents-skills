@@ -130,6 +130,29 @@ validation records, not from untrusted participant prose.
   never full transcripts, and relay them verbatim under "Relaying findings
   between rounds" below.
 
+### Approach statements
+
+This check applies to every role in Polya Multi-Strategy Problem Solving and to
+the Builder and Alternative Builder in Structured Research Team. Graph
+Reconfiguration Specialist has a single constructing role, so it has no such
+check.
+
+- Each of these participants opens its Round 1 output with an `Approach`
+  section of at most 600 bytes that names the method, the object the method is
+  applied to, and the key idea.
+- At the end of Round 1 the orchestrator compares the approaches pairwise. Two
+  approaches are duplicates when they apply the same method to the same object,
+  when one only restates the other in different words, or when one is only a
+  special case of the other. A new phrasing of an idea is still the same
+  approach.
+- In Polya, the orchestrator gives each participant whose approach duplicates
+  another a different direction for Round 2.
+- In Structured Research Team, if the Alternative Builder duplicates the
+  Builder, the Alternative Builder returns a new route in Round 2 instead of a
+  critique, and the Round 3 verification checks that route like every other
+  route.
+- Record each duplicate found and each reassignment in the round file.
+
 ### Relaying findings between rounds
 
 Enforcement label for every rule in this subsection: `prompt`. AGD has no
@@ -312,7 +335,7 @@ Roles: `3`
 Execution:
 
 - Round 1: 3 parallel participants
-- Round 2: 3 parallel role follow-ups after orchestrator cross-pollinates decisive findings
+- Round 2: 3 parallel role follow-ups after orchestrator cross-pollinates decisive findings and reassigns duplicate approaches
 - Round 3: local synthesis or 1 lead synthesis agent
 
 ### 3. Knuth Structured Manuscript Review
@@ -348,8 +371,8 @@ Roles: `4`
 Execution:
 
 - Round 1: 3 parallel independent participants
-- Round 2: 3 parallel critique passes with relayed Round 1 findings
-- Round 3: orchestrator-run verification via `functions.exec_command`
+- Round 2: 3 parallel critique passes with relayed Round 1 findings; an Alternative Builder that duplicated the Builder returns a new route instead
+- Round 3: orchestrator-run verification via `functions.exec_command`, including any route that replaced a duplicate
 - Round 4: optional repair pass only if a concrete local repair exists
 - Final: 1 referee synthesis pass or local synthesis if clearly stronger
 

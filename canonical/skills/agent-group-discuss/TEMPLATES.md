@@ -161,6 +161,7 @@ Rounds:
 
 Round 1:
 
+- each role opens with an `Approach` section (method, object, key idea; at most 600 bytes), and the orchestrator compares the approaches after the round (see "Approach statements" in `EXECUTION.md`)
 - Specializer: characterize easy and hard restricted cases
 - Generalizer: list promising known techniques and likely obstacles
 - Reducer: list reduction sources and sketch the top candidate
@@ -168,6 +169,7 @@ Round 1:
 Round 2:
 
 - each role critiques or refines its direction after seeing the others' findings
+- a role whose Round 1 approach duplicated another's takes the different direction the orchestrator assigns
 
 Round 3:
 
@@ -277,6 +279,7 @@ Rounds:
 
 Round 1:
 
+- Builder and Alternative Builder each open with an `Approach` section (see "Approach statements" in `EXECUTION.md`)
 - Builder outputs exact claim, strategy, intermediate lemmas, fragile step, and suggested external checks
 - Breaker outputs strongest objection, failing step, counterexample candidate, fatality assessment, and smallest fix
 - Alternative Builder outputs a different route, its bottleneck, advantage, and failure mode
@@ -284,10 +287,11 @@ Round 1:
 Round 2:
 
 - roles critique only decisive issues in the others' proposals
+- if the orchestrator found that the Alternative Builder's approach duplicates the Builder's, the Alternative Builder returns a new route instead of a critique
 
 Round 3:
 
-- orchestrator runs external verification where feasible:
+- orchestrator runs external verification where feasible, and checks a route that replaced a duplicate in Round 2 like every other route:
   - `sagemath` brute force or enumeration
   - local search for counterexamples
   - dependency audit
