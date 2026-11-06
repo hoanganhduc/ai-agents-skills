@@ -4215,6 +4215,11 @@ def _strategy_negative_space_lines(run_dir: Path, registry: Any) -> list[str]:
         import negative_space as ns  # type: ignore
     except ImportError:  # pragma: no cover - package-style import
         from . import negative_space as ns  # type: ignore
+    # Each refusal is raised after its handler, not inside it: a decode error
+    # holds the ledger bytes or the line, and raising inside the handler would
+    # keep that error as __context__ even with ``from None``.
+    raw: str | None = None
+    undecodable = False
     try:
         raw = _workspace_optional_text(
             run_dir,
@@ -4222,17 +4227,26 @@ def _strategy_negative_space_lines(run_dir: Path, registry: Any) -> list[str]:
             max_bytes=STRATEGY_NEGATIVE_SPACE_MAX_BYTES,
         )
     except UnicodeDecodeError:
-        raise PanelArtifactError("negative-space ledger is not valid UTF-8") from None
+        undecodable = True
+    if undecodable:
+        raise PanelArtifactError("negative-space ledger is not valid UTF-8")
     open_rows: list[dict[str, Any]] = []
     for number, line in enumerate((raw or "").splitlines(), start=1):
         if not line.strip():
             continue
+        row: Any = None
+        malformed = False
         try:
             row = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # JSONDecodeError is a ValueError. json also raises a plain
+            # ValueError past the integer digit limit and RecursionError on
+            # deep nesting.
+            malformed = True
+        if malformed:
             raise PanelArtifactError(
                 f"negative-space ledger line {number} is not valid JSON"
-            ) from None
+            )
         if not isinstance(row, dict):
             raise PanelArtifactError(
                 f"negative-space ledger line {number} is not a JSON object"

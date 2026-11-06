@@ -2007,7 +2007,18 @@ class PanelParentUnitTests(unittest.TestCase):
                 "utf-8"
             ),
             "invalid_utf8": b"\xff\xfe" + sentinel.encode("utf-8") + b"\n",
+            # json raises RecursionError here, not JSONDecodeError.
+            "deep_nesting": (
+                "[" * 200000 + json.dumps(sentinel) + "]" * 200000 + "\n"
+            ).encode("utf-8"),
         }
+        if hasattr(sys, "get_int_max_str_digits"):
+            # Past the integer digit limit json raises a plain ValueError.
+            cases["long_integer"] = (
+                f'{{"status": "open", "mechanism_text": "{sentinel}", "n": '
+                + "1" * 5000
+                + "}\n"
+            ).encode("utf-8")
         for name, payload in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
                 run_dir = Path(tmp)
@@ -2019,8 +2030,10 @@ class PanelParentUnitTests(unittest.TestCase):
                 ), self.assertRaises(pp.PanelArtifactError) as caught:
                     pp.build_strategy_review_brief(run_dir)
                 self.assertNotIn(sentinel, str(caught.exception))
-                # A decode error object would still carry the payload.
+                # A decode error holds the ledger bytes or the line, so the
+                # refusal must not keep one as its cause or its context.
                 self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
                 if name == "oversized":
                     self.assertIn("exceeds 64 bytes", str(caught.exception))
 
