@@ -98,7 +98,7 @@ Shared runner:
 ## Workflow imported from the bot
 
 1. Review / annotate the paper.
-2. Run an independent verification pass.
+2. Run an independent verification pass. The verifier re-reads the exact place each finding cites, re-derives the step or executes the checks that can be executed, rejects an item whose support has a gap and states where the gap is, and records as unchecked any remark that could have been made without re-reading the source.
 3. Run a trust-verification / citation-check pass.
 4. Execute the review script against the paper or source tree.
 5. If explicitly requested, store the resulting note in Zotero.
