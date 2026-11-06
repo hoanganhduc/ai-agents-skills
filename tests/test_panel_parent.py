@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import ast
+import re
 import shlex
 import signal
 import stat
@@ -1962,9 +1963,11 @@ class PanelParentUnitTests(unittest.TestCase):
                 f"In the approach registry above: {total} of {total} open ledger rows.",
                 brief,
             )
-            self.assertIn(f"Shown in full: {cap} (the most recent).", brief)
-            self.assertIn("Listed by id only: 3.", brief)
-            listing = brief.split("Listed by id only (", 1)[1]
+            self.assertIn(
+                f"Shown in full: {cap}. Listed by id only: 3. Not listed: 0.", brief
+            )
+            self.assertNotIn("Not listed for lack of room", brief)
+            listing = brief.split("Listed by id only (newest first):", 1)[1]
             for row in rows[:3]:
                 self.assertNotIn(row["mechanism_text"], brief)
                 self.assertIn(f'"entry_id": "{row["entry_id"]}"', listing)
@@ -1974,6 +1977,120 @@ class PanelParentUnitTests(unittest.TestCase):
                 )
             for row in rows[3:]:
                 self.assertIn(row["mechanism_text"], brief)
+
+    NEGATIVE_SPACE_COUNTS = re.compile(
+        r"In the approach registry above: (\d+) of (\d+) open ledger rows\. "
+        r"Shown in full: (\d+)\. Listed by id only: (\d+)\. Not listed: (\d+)\."
+    )
+
+    def _negative_space_section(self, brief: str) -> tuple[str, dict[str, int]]:
+        start = brief.index(self.NEGATIVE_SPACE_HEADING)
+        section = brief[start : brief.index("\n## Current plan", start)]
+        match = self.NEGATIVE_SPACE_COUNTS.search(section)
+        if match is None:
+            self.fail("the negative-space count line is missing")
+        names = ("scoped", "open", "shown", "listed", "unlisted")
+        return section, dict(zip(names, (int(value) for value in match.groups())))
+
+    def test_strategy_brief_bounds_large_negative_space_ledgers_and_discloses_elision(
+        self,
+    ) -> None:
+        mixed = "Phương pháp đếm đỉnh bậc ≤ Δ(G) thất bại ở bổ đề 4; " * 40
+        cases = {
+            # Every text field at the 10000-character bound build_entry keeps.
+            "max_ascii_rows": [
+                self._negative_space_row(
+                    f"ns-{index:03d}",
+                    mechanism_text=f"{index:03d}" + "m" * 9997,
+                    failure_summary="f" * 10000,
+                    reopen_condition="r" * 10000,
+                )
+                for index in range(20)
+            ],
+            # JSON escapes each non-ASCII character as six characters.
+            "non_ascii_rows": [
+                self._negative_space_row(
+                    f"ns-{index:03d}",
+                    mechanism_text=f"{index:03d} " + mixed[:1996],
+                    failure_summary=mixed[:2000],
+                    reopen_condition=mixed[:2000],
+                )
+                for index in range(20)
+            ],
+            "many_short_rows": [
+                self._negative_space_row(
+                    f"ns-{index:05d}", mechanism_text=f"mechanism {index}"
+                )
+                for index in range(2000)
+            ],
+        }
+        for name, rows in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp)
+                self._write_strategy_authority(run_dir)
+                self._write_negative_space(
+                    run_dir,
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                )
+
+                # The default max_chars still holds: the rows never refuse it.
+                brief = pp.build_strategy_review_brief(run_dir)
+
+                section, counts = self._negative_space_section(brief)
+                self.assertLessEqual(len(section), pp.STRATEGY_NEGATIVE_SPACE_MAX_CHARS)
+                self.assertEqual(counts["scoped"], len(rows))
+                self.assertEqual(
+                    counts["shown"] + counts["listed"] + counts["unlisted"], len(rows)
+                )
+                self.assertGreater(counts["shown"], 0)
+                self.assertLess(counts["shown"], len(rows))
+                shown_part = section.split("Listed by id only (newest first):", 1)[0]
+                self.assertEqual(
+                    shown_part.count('"reopen_condition": '), counts["shown"]
+                )
+                self.assertEqual(
+                    section.count('"mechanism_fingerprint": '), counts["listed"]
+                )
+                # Rows are taken newest first.
+                self.assertIn(f'"entry_id": "{rows[-1]["entry_id"]}"', shown_part)
+                if counts["unlisted"]:
+                    self.assertIn(
+                        f"Not listed for lack of room: {counts['unlisted']} rows.",
+                        section,
+                    )
+                else:
+                    self.assertNotIn("Not listed for lack of room", section)
+                if name == "many_short_rows":
+                    self.assertEqual(counts["shown"], pp.STRATEGY_NEGATIVE_SPACE_ROW_CAP)
+                    self.assertGreater(counts["unlisted"], 0)
+                else:
+                    self.assertEqual(counts["unlisted"], 0)
+
+    def test_strategy_brief_gives_negative_space_only_the_room_left_under_max_chars(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            rows = [self._negative_space_row(f"ns-{index:03d}") for index in range(23)]
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+            full = pp.build_strategy_review_brief(run_dir)
+            _, full_counts = self._negative_space_section(full)
+            self.assertEqual((full_counts["shown"], full_counts["listed"]), (20, 3))
+
+            # Reviewed state that leaves less room shrinks the section instead
+            # of making the brief refuse.
+            max_chars = len(full) - 2000
+            brief = pp.build_strategy_review_brief(run_dir, max_chars=max_chars)
+
+            self.assertLessEqual(len(brief), max_chars)
+            _, counts = self._negative_space_section(brief)
+            self.assertLess(counts["shown"], 20)
+            self.assertEqual(
+                counts["shown"] + counts["listed"] + counts["unlisted"], len(rows)
+            )
 
     @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
     def test_strategy_brief_rejects_symlinked_negative_space_directory(self) -> None:
