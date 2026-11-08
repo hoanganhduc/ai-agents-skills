@@ -66,11 +66,11 @@ class ClaudeCredentialTests(unittest.TestCase):
         refreshed = {"claudeAiOauth": {"accessToken": "new-access", "refreshToken": "new-refresh", "expiresAt": 2}}
         with self.session() as path:
             self.assertEqual(path, self.role / credentials.CREDENTIAL_NAME)
-            self.assertEqual(json.loads(path.read_text()), {"claudeAiOauth": self.initial["claudeAiOauth"]})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"claudeAiOauth": self.initial["claudeAiOauth"]})
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.write(path, refreshed)
         with self.session(self.next_role) as path:
-            self.assertEqual(json.loads(path.read_text()), refreshed)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), refreshed)
         self.assert_source_unchanged()
         self.assertEqual(
             {path.name for path in self.checkpoint.iterdir()},
@@ -97,7 +97,7 @@ sys.exit(7)
             )
             self.assertEqual(result.returncode, 7)
         with self.session(self.next_role) as path:
-            self.assertEqual(json.loads(path.read_text())["claudeAiOauth"]["accessToken"], "renewed")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["claudeAiOauth"]["accessToken"], "renewed")
         self.assert_source_unchanged()
 
     def test_body_exception_still_promotes_refresh_and_is_preserved(self):
@@ -108,7 +108,7 @@ sys.exit(7)
                 raise primary
         self.assertIs(caught.exception, primary)
         with self.session(self.next_role) as path:
-            self.assertEqual(json.loads(path.read_text())["claudeAiOauth"]["accessToken"], "renewed")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["claudeAiOauth"]["accessToken"], "renewed")
         self.assert_source_unchanged()
 
     def test_promotion_failure_preserves_primary_with_redacted_note(self):

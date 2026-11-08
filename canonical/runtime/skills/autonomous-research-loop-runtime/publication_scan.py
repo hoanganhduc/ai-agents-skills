@@ -46,7 +46,7 @@ def _open_regular(path: Path) -> Iterator[int]:
             os.close(directory)
             directory = child
         descriptor = os.open(
-            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_BINARY", 0), dir_fd=directory
         )
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError

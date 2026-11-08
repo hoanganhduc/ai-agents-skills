@@ -1183,9 +1183,9 @@ class KaggleDriverTests(unittest.TestCase):
         bundle = self._bundle(total_units=1)
         (bundle / "data.bin").write_bytes(os.urandom(800_000))
         path = bundle / "manifest.json"
-        manifest = json.loads(path.read_text())
+        manifest = json.loads(path.read_text(encoding="utf-8"))
         manifest["upload_files"].append("data.bin")
-        path.write_text(json.dumps(manifest))
+        path.write_text(json.dumps(manifest), encoding="utf-8")
         calls = [
             lambda: kaggle_driver.preflight(job_dir=bundle, config=self.config),
             lambda: kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True),
@@ -1229,9 +1229,9 @@ class KaggleDriverTests(unittest.TestCase):
         bundle = self._bundle(total_units=1)
         (bundle / "data.txt").write_bytes(b"a" * 2_000_000)
         path = bundle / "manifest.json"
-        manifest = json.loads(path.read_text())
+        manifest = json.loads(path.read_text(encoding="utf-8"))
         manifest["upload_files"].append("data.txt")
-        path.write_text(json.dumps(manifest))
+        path.write_text(json.dumps(manifest), encoding="utf-8")
         result = kaggle_driver.push(job_dir=bundle, config=self.config, dry_run=True)
         self.assertLess(result["kernel_source_bytes"], 1_000_000)
         self.assertFalse(result["enable_internet"])
@@ -1273,7 +1273,7 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertIn('"http_status": 400', blob)
         self.assertIn("INVALID_ARGUMENT", blob)
         self.assertIn("The kernel source must be less than 1 megabytes in size.", blob)
-        intent_text = Path(evidence["submission_intent"]).read_text()
+        intent_text = Path(evidence["submission_intent"]).read_text(encoding="utf-8")
         self.assertEqual(json.loads(intent_text)["events"][-1]["provider_error"], diagnostic)
         for secret in (DRIVER_TOKEN, "NEVER_KEEP_QUERY", "NEVER_KEEP_HEADER",
                        "NEVER_KEEP_PAYLOAD", "NEVER_KEEP_ARBITRARY_EXCEPTION_PAYLOAD",

@@ -39,7 +39,7 @@ class LiveDriverStatusTests(unittest.TestCase):
             self.assertIn("Driver stop reason: `max_failures`", body)
             self.assertIn("Loop status: `running`", body)
             self.assertEqual(state.read_bytes(), before)
-            event = json.loads((loop / "driver_logs/progress.jsonl").read_text())
+            event = json.loads((loop / "driver_logs/progress.jsonl").read_text(encoding="utf-8"))
             self.assertEqual(event["terminal_reason"], "max_failures")
 
     def test_iteration_event_does_not_invent_a_stop(self):
