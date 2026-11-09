@@ -99,6 +99,57 @@ Common templates in `skills/sagemath/templates/`:
 - `spectral_analysis.sage`
 - `reconfiguration_check.sage`
 
+### Counterexample search output
+
+`counterexample_search.sage` reads `SAGE_PARAM_N_MAX` (default 7) and
+`SAGE_PARAM_CONJECTURE`, a Python expression in `G`, from the environment of
+the `--file` command above. It re-enumerates every graph Sage's `graphs(n)`
+yields for `n` from 1 to `n_max`, one per isomorphism class, and evaluates the
+conjecture on each; it does not check a given witness graph. The conjecture is
+evaluated by Python `eval` without Sage's preparser, so write `**` for powers
+(`^` is XOR).
+
+The JSON it prints, with exit 0, reports:
+
+- `total_enumerated`: the graphs `graphs(n)` yielded.
+- `total_evaluated`: the graphs on which the conjecture evaluated without an
+  exception. `evaluation_errors` counts the others, so
+  `total_evaluated + evaluation_errors == total_enumerated`. A graph whose
+  evaluation raised is neither a pass nor a counterexample.
+- `evaluation_error_samples`: up to 5 messages `n=<n>: <Type>: <message>`, each
+  cut at 200 characters. `evaluation_error_samples_truncated` is true when a
+  message was cut or further errors were not sampled.
+- `counterexamples_found`: every graph on which the conjecture evaluated false.
+  `counterexamples` lists the first 20, each with `n`, `edges`,
+  `chromatic_number` and `clique_number`. When computing those two numbers
+  raises, the witness is still listed, with each number not computed left
+  `null` and the error in `witness_detail_error`. `counterexamples_truncated`
+  is true when more than 20 were found.
+- `total_checked`: a deprecated alias of `total_evaluated`, kept for one
+  release. It used to count every enumerated graph, including those whose
+  evaluation raised.
+- `computation_evidence`: a record of the run in the form deep-research
+  computation evidence uses. It carries `tool_name`, `tool_version` (Sage's
+  `version()`), `input_encoding_ref` (the sha256 of the conjecture text),
+  `checked_domain`, `graph_model_assumptions`, `resource_bounds`,
+  `enumeration_method`, `timeout_status`, `result_status`, `coverage_status`,
+  `evaluated_predicate` (the conjecture text), a one-line `outcome` and
+  `limitations` (the bound, one representative per isomorphism class, the
+  `eval` semantics, and any truncation or errors).
+
+The block's statuses follow these rules:
+
+- `result_status` is `failed` when any counterexample was found (the `outcome`
+  then starts with "conjecture refuted"), `passed` when none was found and no
+  evaluation raised, and `partial` otherwise, including a run that enumerated
+  no graph because `n_max` is below 1.
+- `coverage_status` is `bounded_complete` when no evaluation raised and at
+  least one graph was enumerated; the block then also carries an
+  `exhaustiveness_argument`. Otherwise it is `partial`.
+- A run stopped by the wrapper's `--timeout` prints no JSON and no block.
+  Report it as no verdict, with coverage `timed_out`, never as a pass or a
+  refutation.
+
 ## Operational notes
 
 - The OpenClaw SageMath job runs inside Docker with no network access.
