@@ -23,6 +23,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 
+from installer.ai_agents_skills import delegation_dispatch as dispatch_module
 from installer.ai_agents_skills import delegation_packets as packet_module
 from installer.ai_agents_skills.delegation_packets import (
     validate_delegation_constraints,
@@ -280,7 +281,8 @@ class HiddenTextVectorTests(unittest.TestCase):
     """One hidden-character predicate, copied into each module that needs it, pinned by shared vectors.
 
     The packet validators of the installer and of deep research refuse what it
-    marks, tab, line feed and carriage return aside.
+    marks, tab, line feed and carriage return aside. The delegate-agent task
+    framing splits relayed text into lines, drops what it marks and counts it.
     """
 
     @classmethod
@@ -291,6 +293,9 @@ class HiddenTextVectorTests(unittest.TestCase):
     def packet_copies(self) -> dict[str, types.ModuleType]:
         return {"delegation_packets": packet_module, "deep_research_workflow": self.deep_research}
 
+    def framing_copies(self) -> dict[str, types.ModuleType]:
+        return {"delegation_dispatch": dispatch_module}
+
     def predicate_copies(self) -> dict[str, types.ModuleType]:
         return self.packet_copies()
 
@@ -300,6 +305,11 @@ class HiddenTextVectorTests(unittest.TestCase):
             for name, module in self.packet_copies().items():
                 with self.subTest(case=case["name"], copy=name):
                     self.assertEqual(module.hidden_text_positions(case["text"]), case["packet_hidden"])
+            for name, module in self.framing_copies().items():
+                with self.subTest(case=case["name"], copy=name):
+                    self.assertEqual(
+                        module.frame_relayed_lines(case["text"]), (case["framed"], case["removed"])
+                    )
 
     def test_predicate_covers_the_digest_sanitizer_class(self) -> None:
         """Whatever the digest sanitizers treat as control text ({Cc, Cf, Cs}) is hidden, tab, LF and CR aside.

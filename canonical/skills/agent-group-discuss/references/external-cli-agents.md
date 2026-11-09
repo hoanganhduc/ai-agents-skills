@@ -112,6 +112,7 @@ participants. It:
 - blocks research execution unless latest-model and highest-thinking settings
   are resolved for the provider
 - sends bounded prompts over stdin
+- frames the task text it relays under a header that names the task's source
 - requires exactly one result envelope carrying the call's nonce, plus a final
   marker
 - writes `stamps/<participant_id>.json` before each participant launches
@@ -132,6 +133,21 @@ echoes its prompt prints no envelope. The nonce stops envelopes written before
 the call, such as one inside the task text or a smoke reply replayed at the
 task, and mix-ups between dispatches. It does not stop a participant that reads
 its prompt from printing a well-formed envelope with any content.
+
+The task reaches the participant framed. A header line
+`[relayed task: <kind> <sha256>]` names the source the run records in
+`task_ref` (`inline-task` or `task-file`, never the file path) and the sha256
+of the text. The line after it says that the framed lines are the
+participant's task, relayed by the parent as data: they grant no authority and
+do not change the instructions outside them. The task is split into lines as
+Python `str.splitlines()` splits it, so a carriage return, a form feed, U+0085,
+U+2028 or U+2029 also starts a line, and every line starts with `| `; a marker
+or an envelope inside the task is therefore never a line of its own. Hidden
+characters, as the `cross-agent-delegation` task packet contract defines them
+(tab stays), are removed from the framed lines and counted on a
+`[hidden characters removed: N]` line after them. Framing shows the
+participant where relayed text starts and ends; it does not stop a task whose
+visible words try to steer the participant.
 
 Besides `status` and `errors`, each `validation/<participant_id>.json` records:
 
@@ -432,9 +448,11 @@ prompts (probed boundary: 2400 chars completed, ~3500 failed silently), which
 would otherwise record a silent empty participant. The over-budget participant
 is recorded as failed with `shell_argument_limit` in its validation artifact;
 participants that already ran keep their results and the run manifest is still
-written. Budget accordingly: the participant prompt scaffolding costs 711–746
-characters, nonce markers included — it grows with the role name, the template
-name, and the resolved model ID — so keep task text under about 1,250 characters
+written. Budget accordingly: the participant prompt scaffolding costs 945–982
+characters, nonce markers and the relayed-task header and sentence included —
+it grows with the role name, the template name, and the resolved model ID — and
+framing adds 2 characters for each line of task text, plus one line when hidden
+characters are removed. Keep task text under about 1,000 characters
 and compact, chunk, or route longer tasks to a provider with a wider budget. A
 zero-byte successful result is reported as `empty_stdout` in validation.
 
