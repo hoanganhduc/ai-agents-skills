@@ -303,6 +303,10 @@ class HiddenTextVectorTests(unittest.TestCase):
         return {**self.packet_copies(), "remote_bridge": self.remote_bridge}
 
     def test_shared_vectors_hold_for_every_copy(self) -> None:
+        """Every copy gives each vector's packet_hidden, framed lines and removed count.
+
+        The minimum number of vectors is a check of the fixture, not of the change.
+        """
         self.assertGreaterEqual(len(self.cases), 20)
         for case in self.cases:
             for name, module in self.packet_copies().items():
@@ -318,7 +322,8 @@ class HiddenTextVectorTests(unittest.TestCase):
         """Whatever the digest sanitizers treat as control text ({Cc, Cf, Cs}) is hidden, tab, LF and CR aside.
 
         So is every code point of the tag block and of the supplementary
-        variation selectors, assigned or not.
+        variation selectors, assigned or not. That U+202E is among the swept
+        characters is a check of the sweep itself and held before the change.
         """
         sanitized = [
             chr(code) for code in range(0x110000) if unicodedata.category(chr(code)) in {"Cc", "Cf", "Cs"}
@@ -364,7 +369,8 @@ class HiddenTextPacketTests(unittest.TestCase):
         The nested key is "execute" with U+200B inside, which no key-name
         comparison matches, so it is refused for the hidden character before
         names are compared. The unchanged examples and a value with tab and
-        line breaks stay valid: regression checks that held before the rule.
+        line breaks stay valid: regression checks that held before the rule,
+        as did the one-packet count that deep_research_codes asserts.
         """
         task = example_packet("valid-inert-task")
         result = example_packet("valid-partial-result")
@@ -405,6 +411,9 @@ class HiddenTextPacketTests(unittest.TestCase):
         """Deep research refuses the installer's authority keys at any depth and top-level fields outside the contract.
 
         Its field sets and authority keys mirror the installer's validator.
+        Regression checks that held before: the installer's FORBIDDEN_KEYS
+        already held the nine authority keys, and validate already counted the
+        one packet that deep_research_codes asserts.
         """
         task = example_packet("valid-inert-task")
         result = example_packet("valid-partial-result")

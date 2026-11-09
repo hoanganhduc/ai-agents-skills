@@ -2353,6 +2353,13 @@ class RemoteBridgeInboxFraming(unittest.TestCase):
         self.fail(f"{expected!r} is not a run of {lines!r}")
 
     def test_inbox_framing(self) -> None:
+        """Each case renders framed, in the peeked block and in the claimed one.
+
+        Two checks held before the framing and are regression checks wherever
+        the item text does not exercise them: one end marker, as the last
+        line, in the cases without an end marker in the text; and no U+202E or
+        U+200B in the cases without those characters.
+        """
         mod = self._module()
         cases = {
             "an end marker inside an item stays inside the frame": (
@@ -2389,7 +2396,9 @@ class RemoteBridgeInboxFraming(unittest.TestCase):
         """instruct items from /aas instruct or the instruct command are labelled operator instructions.
 
         A say reply, and an instruct item from any other source, render as
-        relayed data under the block's data statement.
+        relayed data under the block's data statement. The block's first line
+        and the source field of each header are regression checks: the old
+        renderer printed them too.
         """
         with tempfile.TemporaryDirectory() as tmp:
             env = {
