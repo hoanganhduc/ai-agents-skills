@@ -159,10 +159,14 @@ Besides `status` and `errors`, each `validation/<participant_id>.json` records:
 - `outcome`: `reported` when the task exited before its timeout and left
   exactly one parseable envelope, otherwise `no_verdict`: not launched, timed
   out, a failed smoke probe, or no single parseable envelope, which covers a
-  non-zero exit without one. A `no_verdict` participant has no `result`, its
-  `parsed/<participant_id>.json` holds only the parse failure, its normalized
-  result packet `parsed/<participant_id>.result.json` has no findings and no
-  evidence, and it adds no evidence-map rows. A non-zero exit with one
+  non-zero exit without one. A `no_verdict` participant has no `result` and
+  adds no evidence-map rows. The parsed file `parsed/<participant_id>.json`
+  and the normalized result packet `parsed/<participant_id>.result.json` are
+  written only after the task call returns; for a `no_verdict` task the
+  parsed file holds only the parse failure and the packet has no findings and
+  no evidence. After a launch failure, a prompt-budget failure or a failed
+  smoke probe neither file exists, although the participant's `parsed_ref`
+  still names where the parsed file would be. A non-zero exit with one
   envelope is `reported` with status `failed`.
 - `exited` and `completed`, about the command of the record's phase (the smoke
   probe when that failed): launched and not timed out; and also exited 0 with
