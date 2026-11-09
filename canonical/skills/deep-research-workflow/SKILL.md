@@ -279,7 +279,9 @@ compatibility workflows that do not claim those serious-research guarantees.
   when it is under `result` in an object with `job_id`, `template`,
   `resource_class`, `started_at`, `finished_at`, `result` and `status`
   `completed`, and `submitted_file` otherwise. It is read from the file's
-  shape, so it is recorded provenance, not a verified identity.
+  shape, so it is recorded provenance, not a verified identity. For a job
+  fetched from the `research_compute` broker, pass its `manifest.json`: the
+  fetched `result.json` keeps only the result, so it reads as `submitted_file`.
 - Defaults: the evidence id is the smallest free `E-COMP-<n>` (`--evidence-id`
   sets another), `source_ids` is empty (repeat `--source-id`),
   `inspection_status` is `unchecked`, `redaction_status` `not_reviewed`,
