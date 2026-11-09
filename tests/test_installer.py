@@ -5790,9 +5790,9 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "import os\n"
                 "import sys\n"
                 "sys.stdin.read()\n"
-                "print('AAS_RESULT_JSON_START')\n"
+                "print('AAS_RESULT_JSON_START_' + os.environ['AAS_DELEGATION_RESULT_NONCE'])\n"
                 "print('{\"status\":\"ok\",\"findings\":[{\"id\":\"F1\",\"summary\":\"done\",\"evidence_refs\":[\"task\"]}],\"limitations\":[],\"warnings\":[]}')\n"
-                "print('AAS_RESULT_JSON_END')\n"
+                "print('AAS_RESULT_JSON_END_' + os.environ['AAS_DELEGATION_RESULT_NONCE'])\n"
                 "print(os.environ['AAS_DELEGATION_FINAL_MARKER'])\n",
                 encoding="utf-8",
             )

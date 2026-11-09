@@ -106,9 +106,48 @@ participants. It:
 - blocks research execution unless latest-model and highest-thinking settings
   are resolved for the provider
 - sends bounded prompts over stdin
-- requires a JSON envelope plus final marker
+- requires exactly one result envelope carrying the call's nonce, plus a final
+  marker
 - writes run artifacts under `.ai-agents-skills/delegation-runs/<run-id>/`
 - returns parsed results and validation status, not raw stdout/stderr
+
+The smoke probe and the task each get a fresh nonce (`secrets.token_hex(16)`).
+The result envelope is the JSON between a line `AAS_RESULT_JSON_START_<nonce>`
+and a later line `AAS_RESULT_JSON_END_<nonce>`. The child process receives the
+nonce as `AAS_DELEGATION_RESULT_NONCE` and its final marker as
+`AAS_DELEGATION_FINAL_MARKER`, so a wrapper script can print both. A marker
+counts only as a whole line (surrounding whitespace aside) with this call's
+nonce; a bare marker, another call's marker and marker text inside a sentence
+are ordinary output. No envelope gives `missing result envelope`, and a second
+start or end line gives `ambiguous_envelope`. Both prompts name the markers
+inside sentences and show their example JSON without markers, so a CLI that
+echoes its prompt prints no envelope. The nonce stops envelopes written before
+the call, such as one inside the task text or a smoke reply replayed at the
+task, and mix-ups between dispatches. It does not stop a participant that reads
+its prompt from printing a well-formed envelope with any content.
+
+Besides `status` and `errors`, each `validation/<participant_id>.json` records:
+
+- `outcome`: `reported` when the task exited before its timeout and left
+  exactly one parseable envelope, otherwise `no_verdict`: not launched, timed
+  out, a failed smoke probe, or no single parseable envelope, which covers a
+  non-zero exit without one. A `no_verdict` participant has no `result`, its
+  `parsed/<participant_id>.json` holds only the parse failure, and it adds no
+  evidence-map rows. A non-zero exit with one envelope is `reported` with
+  status `failed`.
+- `exited` and `completed`, about the command of the record's phase (the smoke
+  probe when that failed): launched and not timed out; and also exited 0 with
+  the final marker in stdout, a substring check that an echoed prompt
+  satisfies. `validated`: the record's status is `ok`.
+- `cleanup_confirmed`: always `unknown`, because the dispatcher reaps only its
+  direct child, not the process group.
+- `participant_claimed_identity_ignored`: the identity keys (`provider`,
+  `model`, `model_family`, `family`, `reviewer_family`, `producer_family`,
+  `family_source`) at the top level of the result. They are ignored; the
+  dispatch plan names the provider.
+
+The result packet contract (`cross-agent-delegation.result.v1`) and its status
+values are unchanged.
 
 Provider dispatch commands are intentionally configured outside the repo with
 environment variables, for example:
@@ -358,11 +397,11 @@ prompts (probed boundary: 2400 chars completed, ~3500 failed silently), which
 would otherwise record a silent empty participant. The over-budget participant
 is recorded as failed with `shell_argument_limit` in its validation artifact;
 participants that already ran keep their results and the run manifest is still
-written. Budget accordingly: the participant prompt scaffolding costs 540–575
-characters — it grows with the role name, the template name, and the resolved
-model ID — so keep task text under about 1,400 characters and compact, chunk, or
-route longer tasks to a provider with a wider budget. A zero-byte successful
-result is reported as `empty_stdout` in validation.
+written. Budget accordingly: the participant prompt scaffolding costs 711–746
+characters, nonce markers included — it grows with the role name, the template
+name, and the resolved model ID — so keep task text under about 1,250 characters
+and compact, chunk, or route longer tasks to a provider with a wider budget. A
+zero-byte successful result is reported as `empty_stdout` in validation.
 
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.
@@ -413,6 +452,7 @@ Use stable diagnostic codes in participant state and validation artifacts:
 - `unsupported_attachment`
 - `file_read_fidelity_failed`
 - `output_parse_failed`
+- `ambiguous_envelope`
 - `text_renderer_malformed`
 - `timeout_no_final`
 - `truncated_output`

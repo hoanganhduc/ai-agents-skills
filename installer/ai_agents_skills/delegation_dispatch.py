@@ -4,6 +4,7 @@ import errno
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -136,6 +137,18 @@ def provider_env_defaults(provider: str, env: dict[str, str]) -> dict[str, str]:
     return {}
 RESULT_START = "AAS_RESULT_JSON_START"
 RESULT_END = "AAS_RESULT_JSON_END"
+# Top-level keys a participant's result may use to claim who it is. The
+# dispatcher's own plan names the provider, so these are ignored; a validation
+# record lists the ones a result carried.
+CLAIMED_IDENTITY_KEYS = frozenset({
+    "provider",
+    "model",
+    "model_family",
+    "family",
+    "reviewer_family",
+    "producer_family",
+    "family_source",
+})
 MAX_TASK_CHARS = 200_000
 
 
@@ -968,9 +981,41 @@ def failed_dispatch_participant(
     participant's failure. Reporting it the way a failed smoke is reported keeps
     the results of participants that already ran and still writes the manifest.
     """
-    validation = {"status": "failed", "phase": phase, "errors": [error]}
+    validation = {"status": "failed", "phase": phase, "errors": [error], **outcome_facts(None)}
     write_json(root, run_dir / "validation" / f"{plan['participant_id']}.json", validation)
     return participant_result(plan, run_dir, "failed", validation)
+
+
+def outcome_facts(
+    completed: CompletedCommand | None,
+    *,
+    final_marker: str = "",
+    parsed: dict[str, Any] | None = None,
+    validated: bool = False,
+) -> dict[str, Any]:
+    """Facts every validation record keeps beside its status and errors.
+
+    ``completed`` is the command the record is about, None when nothing was
+    launched, and ``parsed`` is the task's parsed output, None before the task
+    ran. The outcome is "reported" only when the task exited before its
+    timeout with exactly one parseable envelope; a launch failure, a failed
+    smoke probe, a timeout, or a missing, ambiguous or unparseable envelope is
+    "no_verdict". The final-marker check is a substring check, so an echoed
+    prompt can satisfy "completed". subprocess.run reaps only the direct
+    child, so whether anything the CLI started has ended stays "unknown".
+    """
+    exited = completed is not None and not completed.timed_out
+    reported = exited and isinstance(parsed, dict) and parsed.get("status") != "parse-failed"
+    return {
+        "outcome": "reported" if reported else "no_verdict",
+        "exited": exited,
+        "completed": exited and completed.returncode == 0 and final_marker in completed.stdout,
+        "validated": validated,
+        "cleanup_confirmed": "unknown",
+        "participant_claimed_identity_ignored": (
+            sorted(key for key in parsed if key in CLAIMED_IDENTITY_KEYS) if reported else []
+        ),
+    }
 
 
 def run_external_participant(
@@ -996,15 +1041,19 @@ def run_external_participant(
         if candidate and candidate != "not-specified":
             resolved_model = str(candidate)
     smoke_marker = f"AAS_FINAL_MARKER_{participant_id}_SMOKE"
+    # A fresh nonce for each call: an envelope written before the call, or one
+    # printed for the smoke probe, never carries the markers the task needs.
+    smoke_nonce = secrets.token_hex(16)
     try:
         smoke = run_command(
             plan["command"],
-            smoke_prompt(smoke_marker),
+            smoke_prompt(smoke_marker, nonce=smoke_nonce),
             timeout=timeout,
             env=cmd_env,
             final_marker=smoke_marker,
             provider=plan["provider"],
             resolved_model=resolved_model,
+            result_nonce=smoke_nonce,
         )
     except OSError as exc:
         # A configured dispatch command whose binary is missing or not executable
@@ -1014,19 +1063,26 @@ def run_external_participant(
             root, run_dir, plan, phase="smoke", error=dispatch_failure_code(exc)
         )
     write_probe(root, run_dir, participant_id, "smoke", smoke)
-    smoke_validation = validate_command_output(smoke, smoke_marker)
+    smoke_validation = validate_command_output(smoke, smoke_marker, nonce=smoke_nonce)
     if smoke_validation["status"] != "ok":
-        validation = {"status": "failed", "phase": "smoke", "errors": smoke_validation["errors"]}
+        validation = {
+            "status": "failed",
+            "phase": "smoke",
+            "errors": smoke_validation["errors"],
+            **outcome_facts(smoke, final_marker=smoke_marker),
+        }
         write_json(root, run_dir / "validation" / f"{participant_id}.json", validation)
         return participant_result(plan, run_dir, "failed", validation)
 
     task_marker = f"AAS_FINAL_MARKER_{participant_id}_TASK"
+    task_nonce = secrets.token_hex(16)
     prompt = participant_prompt(
         role=role,
         template=template,
         task_text=task_text,
         final_marker=task_marker,
         model_profile=plan["research_model_policy"],
+        nonce=task_nonce,
     )
     try:
         completed = run_command(
@@ -1037,6 +1093,7 @@ def run_external_participant(
             final_marker=task_marker,
             provider=plan["provider"],
             resolved_model=resolved_model,
+            result_nonce=task_nonce,
         )
     except (PromptBudgetError, OSError) as exc:
         # A prompt too long for one CLI's argv budget, or a CLI that disappeared
@@ -1046,15 +1103,27 @@ def run_external_participant(
             root, run_dir, plan, phase="task", error=dispatch_failure_code(exc)
         )
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
-    parsed = parse_result_json(completed.stdout)
+    parsed = parse_result_json(completed.stdout, nonce=task_nonce)
+    if completed.timed_out and parsed.get("status") != "parse-failed":
+        # What a timed-out command printed before it was killed is no verdict:
+        # it yields no findings and no evidence-map rows.
+        parsed = {"status": "parse-failed", "errors": ["timeout_no_final"]}
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)
     normalized = normalize_result_packet(plan, parsed, task_packet_id=task_ref_id(task_text))
     write_json(root, run_dir / "parsed" / f"{participant_id}.result.json", normalized)
-    validation = validate_command_output(completed, task_marker)
+    validation = validate_command_output(completed, task_marker, nonce=task_nonce)
     validation["result_packet_validation"] = validate_result(normalized)
     if validation["result_packet_validation"]:
         validation["errors"].append("result_packet_contract_failed")
         validation["status"] = "failed"
+    validation.update(
+        outcome_facts(
+            completed,
+            final_marker=task_marker,
+            parsed=parsed,
+            validated=validation["status"] == "ok",
+        )
+    )
     write_json(root, run_dir / "validation" / f"{participant_id}.json", validation)
     write_event_artifacts(root, run_dir, participant_id, completed, validation)
     write_evidence_map(root, run_dir, participant_id, parsed, validation)
@@ -1107,12 +1176,21 @@ def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
     return profile
 
 
-def smoke_prompt(final_marker: str) -> str:
+def smoke_prompt(final_marker: str, *, nonce: str) -> str:
+    """The smoke probe's prompt.
+
+    Like participant_prompt, it names each marker inside a sentence, followed
+    by punctuation, and shows the example JSON without markers, so a CLI that
+    echoes the prompt, even reflowed, prints no envelope that
+    parse_result_json would accept.
+    """
+    start, end = result_markers(nonce)
     return (
         "Return a minimal valid response for this external agent smoke test.\n"
-        f"Use exactly this envelope:\n{RESULT_START}\n"
+        f"Print the line {start}, then the JSON object below on one line, then "
+        f"the line {end}, and last the line {final_marker}; print each marker "
+        "alone on its line.\n"
         "{\"status\":\"ok\",\"findings\":[],\"limitations\":[],\"warnings\":[]}\n"
-        f"{RESULT_END}\n{final_marker}\n"
     )
 
 
@@ -1123,8 +1201,10 @@ def participant_prompt(
     task_text: str,
     final_marker: str,
     model_profile: dict[str, Any],
+    nonce: str,
 ) -> str:
     template_line = template or "none"
+    start, end = result_markers(nonce)
     return (
         f"You are the {role} in a parent-owned cross-provider delegation run.\n"
         f"Template: {template_line}\n"
@@ -1132,9 +1212,10 @@ def participant_prompt(
         f"Resolved thinking: {model_profile.get('resolved_thinking', 'not-specified')}\n\n"
         "Task:\n"
         f"{task_text}\n\n"
-        "Return only a JSON result inside this exact envelope. Do not include "
+        "Return only a JSON result shaped like the example below. Do not include "
         "raw private prompts, credentials, hidden config, or unrelated files.\n"
-        f"{RESULT_START}\n"
+        f"Print the line {start}, then the JSON, then the line {end}, and last "
+        f"the line {final_marker}; print each marker alone on its line.\n"
         "{\n"
         "  \"status\": \"ok | partial | failed\",\n"
         "  \"findings\": [\n"
@@ -1143,8 +1224,6 @@ def participant_prompt(
         "  \"limitations\": [],\n"
         "  \"warnings\": []\n"
         "}\n"
-        f"{RESULT_END}\n"
-        f"{final_marker}\n"
     )
 
 
@@ -1311,6 +1390,7 @@ def run_command(
     final_marker: str,
     provider: str | None = None,
     resolved_model: str | None = None,
+    result_nonce: str | None = None,
 ) -> CompletedCommand:
     rendered = render_command_template(command, final_marker)
     try:
@@ -1418,6 +1498,8 @@ def run_command(
         stdin_prompt = ""
     command_env = dict(env)
     command_env["AAS_DELEGATION_FINAL_MARKER"] = final_marker
+    if result_nonce is not None:
+        command_env["AAS_DELEGATION_RESULT_NONCE"] = result_nonce
     try:
         completed = subprocess.run(
             parts,
@@ -1515,16 +1597,32 @@ def render_model_placeholders(command: str, model_profile: dict[str, Any]) -> st
     )
 
 
-def parse_result_json(stdout: str) -> dict[str, Any]:
-    match = re.search(
-        rf"{re.escape(RESULT_START)}\s*(.*?)\s*{re.escape(RESULT_END)}",
-        stdout,
-        flags=re.DOTALL,
-    )
-    if not match:
+def result_markers(nonce: str) -> tuple[str, str]:
+    """The start and end markers of one call's result envelope."""
+    if not nonce:
+        raise ValueError("a result envelope needs a nonce")
+    return f"{RESULT_START}_{nonce}", f"{RESULT_END}_{nonce}"
+
+
+def parse_result_json(stdout: str, *, nonce: str) -> dict[str, Any]:
+    """Return the JSON object between this call's start and end marker lines.
+
+    A marker counts only as a whole line (surrounding whitespace aside) that
+    carries this call's nonce: marker text inside a sentence, a bare marker and
+    another call's marker are ordinary output. One start line and one end line
+    after it are required; a second start or end line is ambiguous, never a
+    choice between candidates.
+    """
+    start, end = result_markers(nonce)
+    lines = stdout.split("\n")
+    starts = [index for index, line in enumerate(lines) if line.strip() == start]
+    ends = [index for index, line in enumerate(lines) if line.strip() == end]
+    if len(starts) > 1 or len(ends) > 1:
+        return {"status": "parse-failed", "errors": ["ambiguous_envelope"]}
+    if len(starts) != 1 or len(ends) != 1 or ends[0] < starts[0]:
         return {"status": "parse-failed", "errors": ["missing result envelope"]}
     try:
-        data = json.loads(match.group(1))
+        data = json.loads("\n".join(lines[starts[0] + 1 : ends[0]]))
     except json.JSONDecodeError as exc:
         return {"status": "parse-failed", "errors": [f"invalid JSON: {exc}"]}
     if not isinstance(data, dict):
@@ -1532,7 +1630,7 @@ def parse_result_json(stdout: str) -> dict[str, Any]:
     return data
 
 
-def validate_command_output(completed: CompletedCommand, final_marker: str) -> dict[str, Any]:
+def validate_command_output(completed: CompletedCommand, final_marker: str, *, nonce: str) -> dict[str, Any]:
     errors: list[str] = []
     if completed.timed_out:
         errors.append("timeout_no_final")
@@ -1549,7 +1647,7 @@ def validate_command_output(completed: CompletedCommand, final_marker: str) -> d
         errors.append("empty_stdout")
     if final_marker not in completed.stdout:
         errors.append("missing_final_marker")
-    parsed = parse_result_json(completed.stdout)
+    parsed = parse_result_json(completed.stdout, nonce=nonce)
     if parsed.get("status") == "parse-failed":
         errors.extend(parsed.get("errors", []))
     else:
