@@ -30,6 +30,7 @@ from installer.ai_agents_skills.delegation_dispatch import (
     ANTIGRAVITY_MAX_PROMPT_CHARS,
     EXTERNAL_PROVIDERS,
     ARGV_PROMPT_PROVIDERS,
+    CompletedCommand,
     DEEPSEEK_MAX_PROMPT_CHARS,
     PROVIDER_PROMPT_BUDGETS,
     PromptBudgetError,
@@ -2622,6 +2623,11 @@ class ResultEnvelopeNonceTests(unittest.TestCase):
         A non-zero exit with one envelope stays a reported failure. Its status,
         errors, findings and rejected evidence row, and the launch failure's
         error code, are regression checks that held before the outcome facts.
+        So is the check that the timeout hit the task call, not the smoke
+        probe: the record is not the smoke probe's, and the run holds the
+        task's timeout event, which only a task call that ran after a passing
+        smoke probe writes, so a slow smoke call cannot satisfy the timeout
+        case.
         """
         with self.subTest("timeout after printing an envelope"), tempfile.TemporaryDirectory() as tmp:
             result, run_dir = self.dispatch(Path(tmp), "late", timeout=2)
@@ -2630,6 +2636,13 @@ class ResultEnvelopeNonceTests(unittest.TestCase):
             self.assertEqual(
                 {key: result["validation"][key] for key in ("exited", "completed")},
                 {"exited": False, "completed": False},
+            )
+            self.assertNotEqual(result["validation"].get("phase"), "smoke", "the timeout hit the smoke probe")
+            events = run_dir / "timeout_events.jsonl"
+            rows = events.read_text(encoding="utf-8").splitlines() if events.is_file() else []
+            self.assertEqual(
+                [(json.loads(row)["participant_id"], json.loads(row)["status"]) for row in rows],
+                [("claude-external-1", "timeout_no_final")],
             )
         with self.subTest("non-zero exit without an envelope"), tempfile.TemporaryDirectory() as tmp:
             result, run_dir = self.dispatch(Path(tmp), "exit-silent")
@@ -2676,6 +2689,59 @@ class ResultEnvelopeNonceTests(unittest.TestCase):
                 {key: result["validation"][key] for key in ("exited", "completed")},
                 {"exited": False, "completed": False},
             )
+
+    def test_timed_out_task_with_a_valid_envelope_is_no_verdict(self) -> None:
+        """A task that times out after printing a valid envelope is no verdict on every platform.
+
+        On POSIX run_command keeps no partial stdout of a timed-out child, so
+        the timeout case above never reaches the envelope. Here run_command is
+        replaced: the smoke call answers, and the task call returns timed out
+        with a complete envelope carrying the call's nonce and its final
+        marker, as a CLI killed after printing its answer leaves it on
+        Windows. Regression check: the participant still gets no result, no
+        evidence-map rows and no result-packet findings; it held before, and
+        a copy without the code that makes such an envelope no verdict fails
+        it.
+        """
+        calls: list[tuple[str, str]] = []
+
+        def fake_run_command(
+            command: str, prompt: str, *, final_marker: str, result_nonce: str, **_kwargs: Any
+        ) -> CompletedCommand:
+            timed_out = final_marker.endswith("_TASK")
+            findings = [{"id": "LATE", "summary": "s", "evidence_refs": ["task"]}] if timed_out else []
+            body = json.dumps({"status": "ok", "findings": findings, "limitations": [], "warnings": []})
+            stdout = (
+                f"AAS_RESULT_JSON_START_{result_nonce}\n{body}\nAAS_RESULT_JSON_END_{result_nonce}\n{final_marker}\n"
+            )
+            calls.append((stdout, result_nonce))
+            return CompletedCommand(returncode=124 if timed_out else 0, stdout=stdout, stderr="", timed_out=timed_out)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = resolve_run_dir(root, None, "timed-out-envelope-run")
+            ensure_run_dir(root, run_dir)
+            with patch("installer.ai_agents_skills.delegation_dispatch.run_command", fake_run_command):
+                result = run_external_participant(
+                    root,
+                    run_dir,
+                    claude_ready_plan("never-launched-cli"),
+                    "Review the claim.",
+                    role="reviewer",
+                    template=None,
+                    timeout=30,
+                    env={},
+                )
+            # The smoke call passed and the task printed an envelope that parses.
+            self.assertEqual(len(calls), 2)
+            task_stdout, task_nonce = calls[1]
+            self.assertEqual([item["id"] for item in parse_result_json(task_stdout, nonce=task_nonce)["findings"]], ["LATE"])
+            validation = result["validation"]
+            self.assertIn("timeout_no_final", validation["errors"])
+            self.assertEqual({key: validation[key] for key in ("exited", "completed")}, {"exited": False, "completed": False})
+            self.assert_no_verdict(result, run_dir, "LATE")
+            packet = json.loads((run_dir / "parsed" / "claude-external-1.result.json").read_text(encoding="utf-8"))
+            self.assertEqual((packet["findings"], packet["evidence"]), ([], []))
 
     def test_reserved_parse_failed_status_is_no_verdict(self) -> None:
         """An envelope whose object has status "parse-failed" is a parse failure, reserved_status.
