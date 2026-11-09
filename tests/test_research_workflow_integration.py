@@ -2189,3 +2189,100 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
                 self.validate_codes(root),
                 {"COMPUTATION_EVIDENCE_FIELD_REQUIRED", "COMPUTATION_RESULT_STATUS_INVALID", "COMPUTATION_COVERAGE_STATUS_INVALID"},
             )
+
+    def test_a_broker_row_counts_only_when_its_result_supports_its_relation(self) -> None:
+        """Regression check: a partial result recorded as asserts stays weak, though exhaustive and from a broker envelope.
+
+        The verb accepts it, since only a failed result contradicts asserts, so
+        the delivery rule's relation match alone keeps C1 from READY.
+        """
+        check = self.passed_triangle_check()
+        block = check["computation_evidence"]
+        block["result_status"] = "partial"
+        self.assertEqual(block["coverage_status"], "exhaustive")
+        self.assertTrue(block["exhaustiveness_argument"])
+        code, result = self.delivery_check(self.ready_broker_run("partial", check))
+        self.assertEqual((code, result["verdict"]), (1, "NOT READY"), result)
+        self.assertEqual(result["codes"], ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"])
+
+    def test_a_row_without_payload_hash_never_counts(self) -> None:
+        """Regression check: a hand-typed row naming a broker envelope and a matching relation stays weak."""
+        root = self.ready_run()
+        row = self.hand_typed_row(
+            verification_source="research_compute_envelope", claim_relation="asserts", evaluated_predicate="G is connected"
+        )
+        self.mod.write_jsonl_rows(root / "evidence.jsonl", [self.mod.report_evidence(), row])
+        code, result = self.delivery_check(root)
+        self.assertEqual((code, result["verdict"]), (1, "NOT READY"), result)
+        self.assertEqual(result["codes"], ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"])
+
+    def test_validate_compares_provenance_summary_and_limitations_with_the_copy(self) -> None:
+        """Regression check: each edit leaves a row that would count, and only the comparison with the copy refuses it."""
+        check = self.passed_triangle_check()
+        limitation = check["computation_evidence"]["limitations"][0]
+        submitted = self.result_file("submitted.json", json.dumps(check))
+        envelope = self.result_file("envelope.json", self.broker_envelope(check))
+
+        def relabel(row: dict) -> None:
+            row["verification_source"] = "research_compute_envelope"
+
+        def edit_summary(row: dict) -> None:
+            row["summary"] = "Checked by hand."
+
+        def drop_limitation(row: dict) -> None:
+            row["limitations"].remove(limitation)
+
+        cases = {
+            "a submitted_file row relabeled research_compute_envelope": (submitted, relabel),
+            "an edited summary": (envelope, edit_summary),
+            "a block limitation removed from the row": (envelope, drop_limitation),
+        }
+        for index, (label, (result_path, edit)) in enumerate(cases.items()):
+            with self.subTest(label):
+                root = self.ready_run(f"case-{index}")
+                code, out = self.add(root, result_path)
+                self.assertEqual(code, 0, out)
+                rows = self.evidence_rows(root)
+                edit(rows[-1])
+                self.mod.write_jsonl_rows(root / "evidence.jsonl", rows)
+                code, result = self.delivery_check(root)
+                self.assertEqual((code, result["verdict"]), (1, "NOT READY"), result)
+                self.assertEqual(result["codes"], ["COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD"])
+
+    def test_only_a_completed_job_record_with_the_block_under_result_is_an_envelope(self) -> None:
+        """Regression check: each record below has every key of a research_compute job record, yet reads as submitted_file."""
+        envelope = json.loads(self.broker_envelope(self.passed_triangle_check()))
+        top_level = {**envelope, "result": dict(envelope["result"])}
+        top_level["computation_evidence"] = top_level["result"].pop("computation_evidence")
+        records = {
+            "a job record whose status is not completed": {**envelope, "status": "failed"},
+            "a job record whose block sits at the top level": top_level,
+        }
+        for index, (label, record) in enumerate(records.items()):
+            with self.subTest(label):
+                root = self.ready_run(f"case-{index}")
+                code, out = self.add(root, self.result_file(f"record-{index}.json", json.dumps(record)))
+                self.assertEqual((code, out["verification_source"]), (0, "submitted_file"), out)
+                code, result = self.delivery_check(root)
+                self.assertEqual((code, result["codes"]), (1, ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"]), result)
+
+    def test_the_size_cap_bounds_the_verb_and_validate(self) -> None:
+        """Regression check: COMPUTATION_RESULT_MAX_BYTES, lowered here below the result's size, binds both reads."""
+        result = self.result_file("sage.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE))
+        cap = len(result.read_bytes()) - 1
+
+        with self.subTest("the verb reads at most the cap"):
+            root = self.not_ready_run("verb")
+            before = self.tree(root)
+            with mock.patch.object(self.mod, "COMPUTATION_RESULT_MAX_BYTES", cap):
+                code, out = self.call_verb_in_process(root, result)
+            self.assertEqual((code, out["codes"]), (1, ["COMPUTATION_RESULT_UNREADABLE"]), out)
+            self.assertEqual(self.tree(root), before)
+
+        with self.subTest("validate re-reads at most the cap"):
+            root = self.not_ready_run("validate")
+            code, out = self.add(root, result)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(self.validate_codes(root), set())
+            with mock.patch.object(self.mod, "COMPUTATION_RESULT_MAX_BYTES", cap):
+                self.assertEqual(self.validate_codes(root), {"COMPUTATION_PAYLOAD_HASH_MISMATCH"})
