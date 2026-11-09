@@ -1372,3 +1372,50 @@ class DeliveryCheckVerbTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "NOT READY")
         self.assertIn("DELIVERY_INPUT_CHANGED", result["codes"])
         self.assertNotEqual(result["input_digest_before"], result["input_digest_after"])
+
+    def make_v1_ready_run(self, root: Path) -> None:
+        """A finalizable v1 run: validate does not read model_freshness.json here."""
+        self.mod.build_v2_ready_success(root)
+        (root / "research_schema.json").unlink()
+        (root / "evidence.jsonl").write_text("", encoding="utf-8")
+
+    def test_input_that_cannot_be_hashed_is_not_ready(self) -> None:
+        mod = self.mod
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.make_v1_ready_run)
+            baseline = mod.delivery_check(root)
+            original = mod.file_sha256
+            mod.file_sha256 = lambda path: "unreadable" if path.name == "model_freshness.json" else original(path)
+            try:
+                unreadable = mod.delivery_check(root)
+            finally:
+                mod.file_sha256 = original
+            (root / "model_freshness.json").unlink()
+            (root / "model_freshness.json").mkdir()
+            validate = mod.validate_directory(root)
+            not_regular = mod.delivery_check(root)
+        self.assertEqual(baseline["verdict"], "READY", baseline["codes"])
+        self.assertEqual(validate["status"], "ok", validate["errors"])
+        for result in (unreadable, not_regular):
+            self.assertEqual(result["verdict"], "NOT READY")
+            self.assertIn("DELIVERY_INPUT_UNREADABLE", result["codes"])
+
+    def test_cyclic_report_ref_gives_a_structured_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            not_ready = self.make_run(tmp, self.mod.write_minimal_v2_not_ready)
+            delivery = json.loads((not_ready / "delivery.json").read_text(encoding="utf-8"))
+            delivery["report_ref"] = "report.md"
+            self.mod.write_json(not_ready / "delivery.json", delivery)
+            ready = Path(tmp) / "ready" / "research"
+            ready.mkdir(parents=True)
+            self.mod.build_v2_ready_success(ready)
+            (ready / "report.md").unlink()
+            try:
+                os.symlink("report.md", not_ready / "report.md")
+                os.symlink("report.md", ready / "report.md")
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            results = [self.run_cli(not_ready), self.run_cli(ready)]
+        for code, payload in results:
+            self.assertEqual(code, 1, payload)
+            self.assertEqual(payload["verdict"], "NOT READY")

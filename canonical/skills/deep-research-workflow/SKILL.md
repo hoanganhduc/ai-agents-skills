@@ -92,8 +92,9 @@ the delivery decision is `ready` or `ready-with-caveats`, every
 count), and the run's input files did not change during the check. Otherwise it
 prints `NOT READY` with the `validate` codes and its own codes
 (`DELIVERY_DECISION_NOT_FINALIZABLE`,
-`DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED`, `DELIVERY_INPUT_CHANGED`) and
-exits 1. The verdict and exit code are code-enforced; `validate` itself is
+`DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED`, `DELIVERY_INPUT_CHANGED`,
+`DELIVERY_INPUT_UNREADABLE` for an input that cannot be hashed,
+`DELIVERY_VALIDATE_CRASHED`) and exits 1. The verdict and exit code are code-enforced; `validate` itself is
 unchanged. A Delivery Check quotes this output verbatim and never upgrades
 `NOT READY`.
 

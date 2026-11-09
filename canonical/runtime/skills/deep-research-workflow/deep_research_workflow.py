@@ -47,6 +47,8 @@ GUARDS = {"ScopeGuard", "EvidenceGuard", "VerifyGuard", "BudgetGuard", "Regressi
 GUARD_STATUSES = {"pass", "warn", "fail", "not-applicable"}
 DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
 FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
+# Digest values for inputs whose content cannot be hashed; any of them makes delivery-check NOT READY.
+UNHASHABLE_INPUT_STATES = {"unreadable", "not-a-regular-file", "unresolvable"}
 # Files a delivery verdict rests on, besides formal/*.jsonl and the report_ref file.
 DELIVERY_CHECK_INPUT_FILES = (
     "research_schema.json",
@@ -672,7 +674,15 @@ def delivery_check(root: Path, schema_version: str | None = None) -> dict[str, A
     files that did not change during the check. validate itself is unchanged.
     """
     files_before = delivery_input_digests(root)
-    validation = validate_directory(root, schema_version=schema_version)
+    try:
+        validation = validate_directory(root, schema_version=schema_version)
+    except Exception as exc:  # a crashing validate never yields READY
+        validation = {
+            "status": "failed",
+            "errors": [{"code": "DELIVERY_VALIDATE_CRASHED", "path": str(root), "message": f"{type(exc).__name__}: {exc}"}],
+            "warnings": [],
+            "checked": {},
+        }
     codes = {error.get("code") for error in validation["errors"] if error.get("code")}
     read_errors: list[dict[str, Any]] = []
     delivery = read_json(root / "delivery.json", "delivery", read_errors)
@@ -692,6 +702,8 @@ def delivery_check(root: Path, schema_version: str | None = None) -> dict[str, A
     digest_after = delivery_input_digest(files_after)
     if digest_before != digest_after:
         codes.add("DELIVERY_INPUT_CHANGED")
+    if any(value in UNHASHABLE_INPUT_STATES for _, value in files_before + files_after):
+        codes.add("DELIVERY_INPUT_UNREADABLE")
     verdict = "READY" if validation["status"] == "ok" and not codes else "NOT READY"
     return {
         "schema_version": DELIVERY_CHECK_SCHEMA_VERSION,
@@ -717,11 +729,18 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
     report_path: Path | None = None
     read_errors: list[dict[str, Any]] = []
     delivery = read_json(root / "delivery.json", "delivery", read_errors)
+    unresolvable = False
     if isinstance(delivery, dict) and delivery.get("report_ref"):
-        report_path = validate_artifact_ref(delivery.get("report_ref"), root, root / "delivery.json", read_errors, None, "report_ref")
+        try:
+            report_path = validate_artifact_ref(delivery.get("report_ref"), root, root / "delivery.json", read_errors, None, "report_ref")
+        except (RuntimeError, OSError, ValueError):  # for example a symlink loop on Python < 3.13
+            unresolvable = True
     if report_path is not None:
         names.add(report_path.relative_to(root).as_posix())
-    return [[name, file_sha256(root / name)] for name in sorted(names)]
+    pairs = [[name, file_sha256(root / name)] for name in sorted(names)]
+    if unresolvable:
+        pairs.append(["<report_ref>", "unresolvable"])
+    return pairs
 
 
 def delivery_input_digest(pairs: list[list[str]]) -> str:
