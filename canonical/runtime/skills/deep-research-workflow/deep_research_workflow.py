@@ -1717,7 +1717,7 @@ def validate_agd_evidence(
         if "producer_artifact_ref" in row:
             try:
                 producer_artifact = validate_artifact_ref(row.get("producer_artifact_ref"), root, path, errors, line, "producer_artifact_ref")
-            except RuntimeError:  # a symlink loop on Python < 3.13; the copy then cannot be read
+            except (RuntimeError, OSError):  # a symlink loop on Python < 3.13, or a name too long; the copy then cannot be read
                 producer_artifact = None
         producer = bound_stamp_family(row, "producer_artifact_ref", "producer_payload_hash", "producer_family", producer_artifact, path, errors, line)
     if verdict_kind == "independent_rederivation" and not (

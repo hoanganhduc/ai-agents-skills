@@ -2827,6 +2827,32 @@ class AgdVerdictEvidenceTests(unittest.TestCase):
             self.assertTrue({"AGD_STAMP_HASH_MISMATCH", *unverified} <= agd_codes, codes)
             self.assertNotIn("UNKNOWN_FIELD", codes)
 
+    def test_an_over_long_producer_ref_is_reported_not_raised(self) -> None:
+        """A producer_artifact_ref whose file name is too long leaves the producer side unbound, with a reported error.
+
+        With stamps/ present, Path.exists() on stamps/<300 a>.json raises
+        OSError (ENAMETOOLONG) on Python 3.12 on Linux, and validate raised it.
+        Where the platform does not raise for such a name, the copy cannot be
+        read instead; there the test still asserts that validate and
+        delivery-check return the same codes without an exception.
+        """
+        root = self.not_ready_run("over-long-producer")
+        (root / "stamps").mkdir()
+        self.write_evidence(root, self.bound_row(root, producer_artifact_ref="stamps/" + "a" * 300 + ".json"))
+        errors = self.mod.validate_directory(root)["errors"]
+        agd_errors = [error for error in errors if error["code"].startswith("AGD_")]
+        self.assertEqual(
+            {error["code"] for error in agd_errors}, {"AGD_STAMP_HASH_MISMATCH", "AGD_INDEPENDENCE_UNVERIFIED_FAMILY"}, errors
+        )
+        mismatch = " ".join(error["message"] for error in agd_errors if error["code"] == "AGD_STAMP_HASH_MISMATCH")
+        self.assertIn("producer_payload_hash", mismatch)
+        self.assertIn("the producer side declared", " ".join(error["message"] for error in agd_errors))
+        self.assertNotIn("UNKNOWN_FIELD", {error["code"] for error in errors})
+        result = self.mod.delivery_check(root)
+        self.assertEqual(result["verdict"], "NOT READY")
+        self.assertNotIn("DELIVERY_VALIDATE_CRASHED", result["codes"])
+        self.assertLessEqual({"AGD_STAMP_HASH_MISMATCH", "AGD_INDEPENDENCE_UNVERIFIED_FAMILY"}, set(result["codes"]))
+
     def test_dispatcher_stamp_unverified_end_to_end(self) -> None:
         """A claude dispatch under a command override or an endpoint variable stamps unverified; its copy never counts.
 
