@@ -78,6 +78,22 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --schema-version 2 --dir /path/to/workspace/research
 ```
 
+`validate` also checks every packet in the run's `delegation/*.json` against
+the `cross-agent-delegation` contracts. It reports an unsupported
+`schema_version` (`DELEGATION_PACKET_SCHEMA_INVALID`), a missing required field
+(`MISSING_REQUIRED_FIELD`) and a top-level field outside the task or result
+contract (`UNKNOWN_FIELD`). At any depth it refuses the installer validator's
+authority keys (`confirmed_by_parent`, `execute`, `execution_target`,
+`execution_targets`, `skip_confirmation`, `approval_receipt`,
+`approval_receipts`, `parent_acceptance`, `accepted_by_parent`) with
+`FORBIDDEN_AUTHORITY_FIELD`, command, runtime and model keys with
+`FORBIDDEN_DELEGATION_FIELD`, secret-like keys and values with
+`SECRET_MATERIAL`, and hidden characters in any key or string value with
+`HIDDEN_TEXT`: control characters other than tab, line feed and carriage
+return, format characters, surrogates, tag characters, supplementary variation
+selectors, and a variation selector right after another. A packet with hidden
+characters is refused, never cleaned.
+
 Check delivery readiness of a structured run with:
 
 ```bash
@@ -98,7 +114,7 @@ prints `NOT READY` with the `validate` codes and its own codes
 after `validate` and listed with their digests in `input_files`, are
 `research_schema.json`, `sources.jsonl`, `claims.jsonl`, `guards.jsonl`,
 `delivery.json`, `evidence.jsonl`, `model_freshness.json`, `formal/*.jsonl`,
-the `report_ref` file, the copy behind each computation row that carries
+`delegation/*.json`, the `report_ref` file, the copy behind each computation row that carries
 `payload_hash`, and the stamp copies behind each `agd_result` row's
 `payload_hash` and `producer_payload_hash`. The verdict and exit code are code-enforced; `delivery-check` adds
 its codes without changing what `validate` checks. A Delivery Check quotes this output verbatim and never upgrades

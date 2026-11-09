@@ -1397,6 +1397,44 @@ class DeliveryCheckVerbTests(unittest.TestCase):
         self.assertIn("DELIVERY_INPUT_CHANGED", result["codes"])
         self.assertNotEqual(result["input_digest_before"], result["input_digest_after"])
 
+    def test_delivery_check_hashes_delegation_packets(self) -> None:
+        """validate reads each delegation/*.json packet, so delivery-check hashes the packets before and after validate.
+
+        A packet changed after validate returns makes the run NOT READY, and
+        input_files lists the packet. An unchanged packet keeps the run READY,
+        a regression check that held before packets were hashed.
+        """
+        packet = {
+            "schema_version": "cross-agent-delegation.task.v1",
+            "packet_id": "pkt-1",
+            "recipient_profile": {"profile_id": "reviewer", "profile_version": "v1", "execution_status": "reference_only"},
+            "intent": "Review the claim.",
+            "requested_actions": ["review"],
+            "side_effects": {"writes_files": False, "external_service_posts": False, "network_calls": False, "subprocesses": False},
+            "context_policy": {"forward_raw_chat": False, "forward_system_instructions": False},
+            "confirmation_requirement": "parent_decides_outside_packet",
+            "failure_policy": "block",
+        }
+        original = self.mod.validate_directory
+
+        def validate_then_append(root: Path, *args, **kwargs) -> dict:
+            result = original(root, *args, **kwargs)
+            with (root / "delegation" / "task-1.json").open("ab") as handle:
+                handle.write(b"\n")
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.mod.build_v2_ready_success)
+            self.mod.write_json(root / "delegation" / "task-1.json", packet)
+            unchanged = self.mod.delivery_check(root)
+            with mock.patch.object(self.mod, "validate_directory", side_effect=validate_then_append):
+                changed = self.mod.delivery_check(root)
+        self.assertEqual((unchanged["verdict"], unchanged["codes"]), ("READY", []), unchanged)
+        self.assertEqual(unchanged["checked"]["delegation_packets"], 1)
+        self.assertIn("delegation/task-1.json", [name for name, _ in unchanged["input_files"]])
+        self.assertEqual((changed["verdict"], changed["codes"]), ("NOT READY", ["DELIVERY_INPUT_CHANGED"]), changed)
+        self.assertIn("delegation/task-1.json", [name for name, _ in changed["input_files"]])
+
     def make_v1_ready_run(self, root: Path) -> None:
         """A finalizable v1 run: validate does not read model_freshness.json here."""
         self.mod.build_v2_ready_success(root)

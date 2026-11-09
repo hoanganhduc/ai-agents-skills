@@ -11,6 +11,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -51,8 +52,9 @@ DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
 FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
 # Digest values for inputs whose content cannot be hashed; any of them makes delivery-check NOT READY.
 UNHASHABLE_INPUT_STATES = {"unreadable", "not-a-regular-file", "unresolvable"}
-# Files a delivery verdict rests on, besides formal/*.jsonl, the report_ref file, the copy
-# behind each computation row's payload_hash and the stamp copies an agd_result row binds.
+# Files a delivery verdict rests on, besides formal/*.jsonl, delegation/*.json, the report_ref
+# file, the copy behind each computation row's payload_hash and the stamp copies an agd_result
+# row binds.
 DELIVERY_CHECK_INPUT_FILES = (
     "research_schema.json",
     "sources.jsonl",
@@ -336,6 +338,78 @@ RESULT_REQUIRED = {
     "evidence",
     "next_step",
 }
+# The top-level fields of the installer's task and result packet contracts
+# (installer/ai_agents_skills/delegation_packets.py); a test keeps them equal.
+TASK_FIELDS = {
+    "schema_version",
+    "packet_id",
+    "created_at",
+    "created_by",
+    "intended_recipient",
+    "adapter_spec_id",
+    "recipient_profile",
+    "recipient_capability_snapshot",
+    "intent",
+    "requested_actions",
+    "side_effects",
+    "success_criteria",
+    "constraints",
+    "provenance",
+    "input_refs",
+    "artifact_refs",
+    "scope_constraints",
+    "out_of_scope",
+    "context_policy",
+    "confirmation_requirement",
+    "expected_output",
+    "evidence_requirements",
+    "failure_policy",
+    "audit_notes",
+}
+RESULT_FIELDS = {
+    "schema_version",
+    "result_id",
+    "task_packet_id",
+    "task_schema_version",
+    "intended_recipient",
+    "adapter_spec_id",
+    "recipient_profile",
+    "produced_at",
+    "produced_by",
+    "provenance",
+    "status",
+    "summary",
+    "coverage_scope",
+    "findings",
+    "evidence",
+    "artifacts",
+    "limitations",
+    "warnings",
+    "errors",
+    "parent_action_request",
+    "next_step",
+}
+# The installer validator's authority keys: a packet that carries one at any
+# depth claims a confirmation, an execution or an acceptance only the parent
+# can give.
+AUTHORITY_PACKET_KEYS = {
+    "confirmed_by_parent",
+    "execute",
+    "execution_target",
+    "execution_targets",
+    "skip_confirmation",
+    "approval_receipt",
+    "approval_receipts",
+    "parent_acceptance",
+    "accepted_by_parent",
+}
+# Hidden characters, as the installer's packet validator defines them: the
+# categories the digest sanitizers clean (controls, format characters,
+# surrogates), tag characters, supplementary variation selectors and a
+# variation selector right after another. Tab, line feed and carriage return
+# may stay in a packet string.
+HIDDEN_CHARACTER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+PACKET_TEXT_ALLOWED_CONTROLS = frozenset("\t\n\r")
 FORBIDDEN_KEY_RE = re.compile(
     r"(^|[_-])(api[_-]?key|secret|token|password|credential|private[_-]?key|ssh[_-]?key)([_-]|$)",
     re.I,
@@ -787,14 +861,17 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
     """Sorted [relative path, sha256] pairs for the files a delivery verdict rests on.
 
     validate re-reads the copy behind each computation row's payload_hash and the
-    stamp copies an agd_result row binds, so those copies are inputs too. A
-    report_ref or bound ref that cannot be resolved is recorded after the pairs as
-    unresolvable.
+    stamp copies an agd_result row binds, and it reads every delegation/*.json
+    packet, so those files are inputs too. A report_ref or bound ref that cannot
+    be resolved is recorded after the pairs as unresolvable.
     """
     names = set(DELIVERY_CHECK_INPUT_FILES)
     formal_dir = root / "formal"
     if formal_dir.is_dir():
         names.update(f"formal/{path.name}" for path in formal_dir.glob("*.jsonl"))
+    delegation_dir = root / "delegation"
+    if delegation_dir.is_dir():
+        names.update(f"delegation/{path.name}" for path in delegation_packet_paths(delegation_dir))
     report_path: Path | None = None
     read_errors: list[dict[str, Any]] = []
     delivery = read_json(root / "delivery.json", "delivery", read_errors)
@@ -2322,7 +2399,7 @@ def validate_delegation_dir(path: Path, errors: list[dict[str, Any]]) -> list[Pa
     if not path.is_dir():
         add_error(errors, "DELEGATION_PATH_NOT_DIR", path, "delegation path must be a directory")
         return []
-    packet_paths = sorted(item for item in path.glob("*.json") if item.is_file())
+    packet_paths = delegation_packet_paths(path)
     for packet_path in packet_paths:
         packet = read_json(packet_path, "delegation packet", errors)
         if isinstance(packet, dict):
@@ -2330,27 +2407,49 @@ def validate_delegation_dir(path: Path, errors: list[dict[str, Any]]) -> list[Pa
     return packet_paths
 
 
+def delegation_packet_paths(path: Path) -> list[Path]:
+    """The packets validate reads from a delegation directory; delivery-check hashes the same files."""
+    return sorted(item for item in path.glob("*.json") if item.is_file())
+
+
 def validate_delegation_packet(packet: dict[str, Any], path: Path, errors: list[dict[str, Any]]) -> None:
     schema_version = packet.get("schema_version")
     if schema_version == TASK_SCHEMA_VERSION:
-        required = TASK_REQUIRED
+        required, fields = TASK_REQUIRED, TASK_FIELDS
     elif schema_version == RESULT_SCHEMA_VERSION:
-        required = RESULT_REQUIRED
+        required, fields = RESULT_REQUIRED, RESULT_FIELDS
     else:
         add_error(errors, "DELEGATION_PACKET_SCHEMA_INVALID", path, "unsupported delegation packet schema_version")
         return
     missing = required - set(packet)
     if missing:
         add_error(errors, "MISSING_REQUIRED_FIELD", path, f"delegation packet missing fields: {sorted(missing)}")
+    unknown = set(packet) - fields
+    if unknown:
+        add_error(errors, "UNKNOWN_FIELD", path, f"unknown delegation packet fields: {sorted(unknown)}")
     forbidden = recursive_forbidden_packet_material(packet)
     for code in sorted(set(forbidden)):
-        add_error(errors, code, path, "delegation packet contains forbidden authority, runtime, model, or secret material")
+        if code == "HIDDEN_TEXT":
+            message = "delegation packet has hidden characters in a key or string value"
+        else:
+            message = "delegation packet contains forbidden authority, runtime, model, or secret material"
+        add_error(errors, code, path, message)
 
 
 def recursive_forbidden_packet_material(value: Any) -> list[str]:
+    """Error codes for forbidden keys, secret material and hidden text at any depth.
+
+    A key is checked for hidden characters before its name is compared, since
+    a hidden character inside a forbidden name makes it match no name.
+    Hidden text is refused, never removed.
+    """
     errors: list[str] = []
     if isinstance(value, dict):
         for key, item in value.items():
+            if hidden_text_positions(key):
+                errors.append("HIDDEN_TEXT")
+            if key in AUTHORITY_PACKET_KEYS:
+                errors.append("FORBIDDEN_AUTHORITY_FIELD")
             if key in FORBIDDEN_PACKET_KEYS:
                 errors.append("FORBIDDEN_DELEGATION_FIELD")
             if FORBIDDEN_KEY_RE.search(key):
@@ -2359,9 +2458,51 @@ def recursive_forbidden_packet_material(value: Any) -> list[str]:
     elif isinstance(value, list):
         for item in value:
             errors.extend(recursive_forbidden_packet_material(item))
-    elif isinstance(value, str) and FORBIDDEN_VALUE_RE.search(value):
-        errors.append("SECRET_MATERIAL")
+    elif isinstance(value, str):
+        if hidden_text_positions(value):
+            errors.append("HIDDEN_TEXT")
+        if FORBIDDEN_VALUE_RE.search(value):
+            errors.append("SECRET_MATERIAL")
     return errors
+
+
+def is_variation_selector(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x180B <= code <= 0x180D
+        or code == 0x180F
+        or 0xFE00 <= code <= 0xFE0F
+        or 0xE0100 <= code <= 0xE01EF
+    )
+
+
+def is_hidden_char(previous: str | None, char: str) -> bool:
+    """Whether ``char``, read right after ``previous`` (None at the start), carries text a reader cannot see.
+
+    A copy of the installer's predicate (delegation_packets.is_hidden_char);
+    tests/fixtures/hidden_text_vectors.json holds every copy to the same
+    answers. Hidden are controls, format characters and surrogates; every code
+    point from U+E0000 to U+E007F and from U+E0100 to U+E01EF, assigned or
+    not; and a variation selector right after another one. A lone selector
+    after an ordinary character stays.
+    """
+    if unicodedata.category(char) in HIDDEN_CHARACTER_CATEGORIES:
+        return True
+    code = ord(char)
+    if 0xE0000 <= code <= 0xE007F or 0xE0100 <= code <= 0xE01EF:
+        return True
+    return previous is not None and is_variation_selector(previous) and is_variation_selector(char)
+
+
+def hidden_text_positions(text: str) -> list[int]:
+    """The indexes of the hidden characters in ``text``, tab, line feed and carriage return allowed."""
+    positions = []
+    previous = None
+    for index, char in enumerate(text):
+        if char not in PACKET_TEXT_ALLOWED_CONTROLS and is_hidden_char(previous, char):
+            positions.append(index)
+        previous = char
+    return positions
 
 
 def validate_timestamp(

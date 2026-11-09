@@ -10,14 +10,20 @@ already covers.
 
 from __future__ import annotations
 
+import copy
+import importlib.util
+import json
 import pathlib
+import re
 import sys
 import tempfile
 import types
+import unicodedata
 import unittest
 
 sys.dont_write_bytecode = True
 
+from installer.ai_agents_skills import delegation_packets as packet_module
 from installer.ai_agents_skills.delegation_packets import (
     validate_delegation_constraints,
     validate_enum,
@@ -29,6 +35,43 @@ from installer.ai_agents_skills.delegation_dispatch import (
     read_task_text,
     task_ref,
 )
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+HIDDEN_TEXT_VECTORS = REPO_ROOT / "tests" / "fixtures" / "hidden_text_vectors.json"
+EXAMPLES = REPO_ROOT / "canonical" / "skills" / "cross-agent-delegation" / "references" / "examples.md"
+RUNTIME_SKILLS = REPO_ROOT / "canonical" / "runtime" / "skills"
+DEEP_RESEARCH_RUNTIME = RUNTIME_SKILLS / "deep-research-workflow" / "deep_research_workflow.py"
+# The installer's authority keys, which the deep-research validator mirrors.
+AUTHORITY_KEYS = {
+    "confirmed_by_parent",
+    "execute",
+    "execution_target",
+    "execution_targets",
+    "skip_confirmation",
+    "approval_receipt",
+    "approval_receipts",
+    "parent_acceptance",
+    "accepted_by_parent",
+}
+
+
+def load_runtime_module(name: str, path: pathlib.Path) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def example_packet(fixture_id: str) -> dict:
+    """A packet from the cross-agent-delegation examples, read as the fixture suite reads it."""
+    text = EXAMPLES.read_text(encoding="utf-8")
+    match = re.search(
+        r"<!-- fixture: id=" + re.escape(fixture_id) + r" [^\n]*-->\n```json\n(.*?)\n```", text, re.S
+    )
+    assert match is not None, fixture_id
+    return json.loads(match.group(1))
 
 
 def ref(source: str) -> dict[str, str]:
@@ -231,6 +274,152 @@ class TaskSourceAgreementTests(unittest.TestCase):
     def test_naming_neither_source_is_still_refused(self) -> None:
         with self.assertRaises(ValueError):
             read_task_text(None, None)
+
+
+class HiddenTextVectorTests(unittest.TestCase):
+    """One hidden-character predicate, copied into each module that needs it, pinned by shared vectors.
+
+    The packet validators of the installer and of deep research refuse what it
+    marks, tab, line feed and carriage return aside.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.deep_research = load_runtime_module("drw_hidden_text_vectors", DEEP_RESEARCH_RUNTIME)
+        cls.cases = json.loads(HIDDEN_TEXT_VECTORS.read_text(encoding="utf-8"))["cases"]
+
+    def packet_copies(self) -> dict[str, types.ModuleType]:
+        return {"delegation_packets": packet_module, "deep_research_workflow": self.deep_research}
+
+    def predicate_copies(self) -> dict[str, types.ModuleType]:
+        return self.packet_copies()
+
+    def test_shared_vectors_hold_for_every_copy(self) -> None:
+        self.assertGreaterEqual(len(self.cases), 20)
+        for case in self.cases:
+            for name, module in self.packet_copies().items():
+                with self.subTest(case=case["name"], copy=name):
+                    self.assertEqual(module.hidden_text_positions(case["text"]), case["packet_hidden"])
+
+    def test_predicate_covers_the_digest_sanitizer_class(self) -> None:
+        """Whatever the digest sanitizers treat as control text ({Cc, Cf, Cs}) is hidden, tab, LF and CR aside.
+
+        So is every code point of the tag block and of the supplementary
+        variation selectors, assigned or not.
+        """
+        sanitized = [
+            chr(code) for code in range(0x110000) if unicodedata.category(chr(code)) in {"Cc", "Cf", "Cs"}
+        ]
+        self.assertIn("\u202e", sanitized)
+        blocks = [chr(code) for code in (*range(0xE0000, 0xE0080), *range(0xE0100, 0xE01F0))]
+        for name, module in self.packet_copies().items():
+            with self.subTest(copy=name):
+                missed = [
+                    f"U+{ord(char):04X}"
+                    for char in sanitized + blocks
+                    if char not in "\t\n\r" and module.hidden_text_positions(char) != [0]
+                ]
+                self.assertEqual(missed, [])
+                self.assertEqual([module.hidden_text_positions(char) for char in "\t\n\r"], [[], [], []])
+        for name, module in self.predicate_copies().items():
+            with self.subTest(predicate=name):
+                missed = [f"U+{ord(char):04X}" for char in sanitized + blocks if not module.is_hidden_char(None, char)]
+                self.assertEqual(missed, [])
+
+
+class HiddenTextPacketTests(unittest.TestCase):
+    """Both packet validators refuse hidden characters in keys and string values; neither cleans them."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.deep_research = load_runtime_module("drw_packet_refusals", DEEP_RESEARCH_RUNTIME)
+
+    def deep_research_codes(self, packet: dict) -> set[str]:
+        """validate's codes for a valid not-ready run whose delegation/ directory holds only ``packet``."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "research"
+            root.mkdir()
+            self.deep_research.write_minimal_v2_not_ready(root)
+            (root / "delegation" / "packet.json").write_text(json.dumps(packet), encoding="utf-8")
+            result = self.deep_research.validate_directory(root)
+        self.assertEqual(result["checked"]["delegation_packets"], 1)
+        return {error["code"] for error in result["errors"]}
+
+    def test_hidden_keys_and_values_fail_both_validators(self) -> None:
+        """A hidden character in a nested key or in a string value fails both validators with HIDDEN_TEXT.
+
+        The nested key is "execute" with U+200B inside, which no key-name
+        comparison matches, so it is refused for the hidden character before
+        names are compared. The unchanged examples and a value with tab and
+        line breaks stay valid: regression checks that held before the rule.
+        """
+        task = example_packet("valid-inert-task")
+        result = example_packet("valid-partial-result")
+        with self.subTest("regression check: the examples are valid for both validators"):
+            self.assertEqual(validate_task(task), [])
+            self.assertEqual(validate_result(result), [])
+            self.assertEqual(self.deep_research_codes(task), set())
+            self.assertEqual(self.deep_research_codes(result), set())
+
+        cases = {}
+        nested_key = copy.deepcopy(task)
+        nested_key["expected_output"]["exe\u200bcute"] = True
+        cases["nested key with U+200B under expected_output"] = (nested_key, validate_task)
+        for label, char in (
+            ("U+202E", "\u202e"),
+            ("U+200B", "\u200b"),
+            ("U+E0041", "\U000e0041"),
+            ("lone U+D800", "\ud800"),
+        ):
+            packet = copy.deepcopy(task)
+            packet["intent"] = f"Review a bounded{char} implementation plan."
+            cases[f"task value with {label}"] = (packet, validate_task)
+        finding = copy.deepcopy(result)
+        finding["findings"][0]["rationale"] = "Only a supplied\u202e excerpt was available."
+        cases["result finding with U+202E"] = (finding, validate_result)
+        for label, (packet, installer_validator) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(installer_validator(packet), ["HIDDEN_TEXT"])
+                self.assertEqual(self.deep_research_codes(packet), {"HIDDEN_TEXT"})
+
+        with self.subTest("regression check: tab and line breaks in a value"):
+            packet = copy.deepcopy(task)
+            packet["intent"] = "a\tb\nc\r\nd"
+            self.assertEqual(validate_task(packet), [])
+            self.assertEqual(self.deep_research_codes(packet), set())
+
+    def test_deep_research_refuses_authority_keys_and_unknown_fields(self) -> None:
+        """Deep research refuses the installer's authority keys at any depth and top-level fields outside the contract.
+
+        Its field sets and authority keys mirror the installer's validator.
+        """
+        task = example_packet("valid-inert-task")
+        result = example_packet("valid-partial-result")
+        top_level = copy.deepcopy(task)
+        top_level["approval_receipt"] = "receipt-1"
+        nested = copy.deepcopy(task)
+        nested["expected_output"]["execute"] = True
+        unknown = copy.deepcopy(task)
+        unknown["surprise"] = "not in the contract"
+        nested_result = copy.deepcopy(result)
+        nested_result["findings"][0]["accepted_by_parent"] = True
+        unknown_result = copy.deepcopy(result)
+        unknown_result["surprise"] = "not in the contract"
+        cases = {
+            "top-level approval_receipt": (top_level, {"FORBIDDEN_AUTHORITY_FIELD", "UNKNOWN_FIELD"}),
+            "execute nested under expected_output": (nested, {"FORBIDDEN_AUTHORITY_FIELD"}),
+            "unknown top-level task field": (unknown, {"UNKNOWN_FIELD"}),
+            "accepted_by_parent nested in a finding": (nested_result, {"FORBIDDEN_AUTHORITY_FIELD"}),
+            "unknown top-level result field": (unknown_result, {"UNKNOWN_FIELD"}),
+        }
+        for label, (packet, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.deep_research_codes(packet), expected)
+        with self.subTest("the mirrored sets equal the installer's"):
+            self.assertEqual(self.deep_research.TASK_FIELDS, packet_module.TASK_FIELDS)
+            self.assertEqual(self.deep_research.RESULT_FIELDS, packet_module.RESULT_FIELDS)
+            self.assertEqual(set(self.deep_research.AUTHORITY_PACKET_KEYS), AUTHORITY_KEYS)
+            self.assertLessEqual(AUTHORITY_KEYS, packet_module.FORBIDDEN_KEYS)
 
 
 if __name__ == "__main__":

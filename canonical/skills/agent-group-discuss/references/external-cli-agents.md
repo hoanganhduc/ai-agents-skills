@@ -154,7 +154,12 @@ Besides `status` and `errors`, each `validation/<participant_id>.json` records:
   dispatch plan names the provider.
 
 The result packet contract (`cross-agent-delegation.result.v1`) and its status
-values are unchanged.
+values are unchanged. The dispatcher checks each normalized result packet with
+the installer's `validate_result`, which refuses hidden characters in any key
+or string value (`HIDDEN_TEXT`, defined in the `cross-agent-delegation` task
+packet contract). A participant whose result carries one, such as a
+zero-width joiner, a soft hyphen or a bidirectional mark in a finding, fails
+with `result_packet_contract_failed`; the characters are never removed.
 
 A stamp is an `external-agent-dispatch-stamp.v1` object with `run_id`,
 `participant_id`, `provider`, `model_family`, `unverified_by` and

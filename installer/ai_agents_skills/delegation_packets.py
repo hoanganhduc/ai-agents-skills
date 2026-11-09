@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -204,6 +205,57 @@ PARENT_POLICY_LIMITS = {
     "max_tokens": 100000,
     "max_usd": Decimal("100.00"),
 }
+# The categories the digest sanitizers already clean: controls, format
+# characters and surrogates.
+HIDDEN_CHARACTER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+# Controls a packet string may still hold: tab and the two line-break characters.
+PACKET_TEXT_ALLOWED_CONTROLS = frozenset("\t\n\r")
+
+
+def is_variation_selector(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x180B <= code <= 0x180D
+        or code == 0x180F
+        or 0xFE00 <= code <= 0xFE0F
+        or 0xE0100 <= code <= 0xE01EF
+    )
+
+
+def is_hidden_char(previous: str | None, char: str) -> bool:
+    """Whether ``char``, read right after ``previous`` (None at the start), carries text a reader cannot see.
+
+    Hidden are controls, format characters (zero-width characters,
+    bidirectional controls, the soft hyphen, the byte order mark) and
+    surrogates; every code point from U+E0000 to U+E007F (tag characters) and
+    from U+E0100 to U+E01EF (supplementary variation selectors), assigned or
+    not; and a variation selector that comes right after another one. A lone
+    selector after an ordinary character only picks a glyph, as U+FE0F does
+    after an emoji, and stays; a chain of selectors can encode text. The same
+    predicate is copied into the deep-research and remote-bridge runtimes, and
+    tests/fixtures/hidden_text_vectors.json holds every copy to the same
+    answers. Each caller decides whether tab and line breaks may stay.
+    """
+    if unicodedata.category(char) in HIDDEN_CHARACTER_CATEGORIES:
+        return True
+    code = ord(char)
+    if 0xE0000 <= code <= 0xE007F or 0xE0100 <= code <= 0xE01EF:
+        return True
+    return previous is not None and is_variation_selector(previous) and is_variation_selector(char)
+
+
+def hidden_text_positions(text: str) -> list[int]:
+    """The indexes of the hidden characters in ``text``, tab, line feed and carriage return allowed.
+
+    Each character is judged after the one before it in ``text``.
+    """
+    positions = []
+    previous = None
+    for index, char in enumerate(text):
+        if char not in PACKET_TEXT_ALLOWED_CONTROLS and is_hidden_char(previous, char):
+            positions.append(index)
+        previous = char
+    return positions
 
 
 RAW_TARGET_PATTERN = re.compile(
@@ -269,9 +321,17 @@ def validate_packet_file(path: Path, *, kind: str | None = None) -> dict[str, An
 
 
 def recursive_forbidden_key_errors(value: Any) -> list[str]:
+    """Error codes for forbidden keys, secret material and hidden text at any depth.
+
+    A key is checked for hidden characters before its name is compared, since
+    a hidden character inside a forbidden name makes it match no name in the
+    lists below. Hidden text is refused, never removed.
+    """
     errors = []
     if isinstance(value, dict):
         for key, item in value.items():
+            if hidden_text_positions(key):
+                errors.append("HIDDEN_TEXT")
             if key in FORBIDDEN_KEYS:
                 errors.append("FORBIDDEN_AUTHORITY_FIELD")
             if key in FORBIDDEN_RUNTIME_KEYS or any(pattern.match(key) for pattern in FORBIDDEN_RUNTIME_KEY_PATTERNS):
@@ -285,6 +345,8 @@ def recursive_forbidden_key_errors(value: Any) -> list[str]:
         for item in value:
             errors.extend(recursive_forbidden_key_errors(item))
     elif isinstance(value, str):
+        if hidden_text_positions(value):
+            errors.append("HIDDEN_TEXT")
         if any(pattern.search(value) for pattern in FORBIDDEN_SECRET_VALUE_PATTERNS):
             errors.append("SECRET_MATERIAL")
     return errors

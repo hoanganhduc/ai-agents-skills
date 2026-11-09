@@ -179,6 +179,20 @@ Task validation must also reject secret-like string values, including values
 matching `sk-...`, `ghp_...`, `github_pat_...`, `AKIA[0-9A-Z]{16}`,
 `-----BEGIN ... PRIVATE KEY-----`, or `Bearer <token-like value>`.
 
+Task validation must reject hidden characters (`HIDDEN_TEXT`) in every JSON
+object key and every string value, at any nesting level. Hidden characters
+are control characters (Unicode category Cc) other than tab, line feed and
+carriage return; format characters (Cf), such as zero-width characters,
+bidirectional controls, the soft hyphen and the byte order mark; surrogates
+(Cs); every code point from U+E0000 to U+E007F (tag characters) and from
+U+E0100 to U+E01EF (supplementary variation selectors), assigned or not; and
+a variation selector (U+FE00 to U+FE0F, U+180B to U+180D or U+180F) right
+after another one. A single variation selector after an ordinary character,
+such as U+FE0F after an emoji, is allowed. A key is checked before its name is
+compared with the key classes above, so `execute` with a zero-width space
+inside is refused although it matches no forbidden name. Validators refuse
+such a packet; they never remove the characters.
+
 Nested delegation may be requested only as a bounded advisory task. The packet
 must not authorize child dispatch, carry model/provider/session configuration,
 or grant approval for further delegation by itself.

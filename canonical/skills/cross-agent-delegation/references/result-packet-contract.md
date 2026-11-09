@@ -75,6 +75,16 @@ Result validation must reject secret-like string values, including values
 matching `sk-...`, `ghp_...`, `github_pat_...`, `AKIA[0-9A-Z]{16}`,
 `-----BEGIN ... PRIVATE KEY-----`, or `Bearer <token-like value>`.
 
+Result validation must reject hidden characters (`HIDDEN_TEXT`) in every JSON
+object key and every string value, at any nesting level, as the task packet
+contract defines them: control characters other than tab, line feed and
+carriage return; format characters, such as zero-width characters,
+bidirectional controls and the soft hyphen; surrogates; tag characters and
+supplementary variation selectors; and a variation selector right after
+another one. A key is checked before its name is compared with the key
+classes above. Validators refuse such a packet; they never remove the
+characters.
+
 Runtime budget state, resolved model policy, provider configuration, session
 IDs, credentials, live logs, and raw environment state belong only in
 parent-owned runbook artifacts. Result packets may reference parent-created
