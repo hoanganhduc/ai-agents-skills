@@ -1482,6 +1482,54 @@ class DeliveryCheckVerbTests(unittest.TestCase):
             self.assertEqual(code, 1, payload)
             self.assertEqual(payload["verdict"], "NOT READY")
 
+    def test_an_input_linked_to_an_over_long_name_gives_a_report_not_a_traceback(self) -> None:
+        """A symbolic link to a 300-character name, as a delegation packet or a hashed input, gives NOT READY.
+
+        Path.is_file() and Path.exists() on such a link raise OSError
+        (ENAMETOOLONG) on Python 3.12 on Linux. The input snapshot, which runs
+        before validate, raised it: from listing delegation/*.json and from
+        hashing guards.jsonl. The snapshot now records the delegation directory
+        or the file as unreadable, validate's own crash on the same link stays
+        DELIVERY_VALIDATE_CRASHED, and the CLI prints its JSON and exits 1.
+        Each case is skipped where symbolic links cannot be created or where
+        is_file() does not raise for the link.
+        """
+        expected = ("NOT READY", ["DELIVERY_INPUT_UNREADABLE", "DELIVERY_VALIDATE_CRASHED"])
+        for link_name, marker in (("delegation/p.json", "<delegation>"), ("guards.jsonl", "guards.jsonl")):
+            with self.subTest(link_name), tempfile.TemporaryDirectory() as tmp:
+                root = self.make_run(tmp, self.mod.build_v2_ready_success)
+                link = root / link_name
+                if link.exists():
+                    link.unlink()
+                try:
+                    os.symlink("a" * 300, link)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"symlinks unavailable: {exc}")
+                try:
+                    link.is_file()
+                except OSError:
+                    pass
+                else:
+                    self.skipTest("Path.is_file() does not raise for a link to an over-long name here")
+                result = self.mod.delivery_check(root)
+                self.assertEqual((result["verdict"], result["codes"]), expected, result)
+                self.assertIn([marker, "unreadable"], result["input_files"])
+                env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+                completed = subprocess.run(
+                    [sys.executable, str(DEEP_RESEARCH_RUNTIME), "delivery-check", "--dir", str(root)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=env,
+                    check=False,
+                )
+                try:
+                    payload = json.loads(completed.stdout)
+                except json.JSONDecodeError:
+                    self.fail(f"delivery-check printed no JSON (exit {completed.returncode}): {completed.stderr.strip()[-400:]}")
+                self.assertEqual((completed.returncode, payload["verdict"], payload["codes"]), (1, *expected), payload)
+
 
 SAGE_STUB_VERSION = "SageMath version 0.0 (test stub)"
 # True on every simple graph: the run passes and is bounded_complete.

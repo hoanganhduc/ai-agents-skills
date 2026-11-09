@@ -863,15 +863,20 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
     validate re-reads the copy behind each computation row's payload_hash and the
     stamp copies an agd_result row binds, and it reads every delegation/*.json
     packet, so those files are inputs too. A report_ref or bound ref that cannot
-    be resolved is recorded after the pairs as unresolvable.
+    be resolved is recorded after the pairs as unresolvable, and a delegation
+    directory whose packets cannot be listed as unreadable.
     """
     names = set(DELIVERY_CHECK_INPUT_FILES)
     formal_dir = root / "formal"
     if formal_dir.is_dir():
         names.update(f"formal/{path.name}" for path in formal_dir.glob("*.jsonl"))
     delegation_dir = root / "delegation"
-    if delegation_dir.is_dir():
-        names.update(f"delegation/{path.name}" for path in delegation_packet_paths(delegation_dir))
+    delegation_unreadable = False
+    try:
+        if delegation_dir.is_dir():
+            names.update(f"delegation/{path.name}" for path in delegation_packet_paths(delegation_dir))
+    except (OSError, ValueError):  # for example a packet linked to a name too long for the file system
+        delegation_unreadable = True
     report_path: Path | None = None
     read_errors: list[dict[str, Any]] = []
     delivery = read_json(root / "delivery.json", "delivery", read_errors)
@@ -905,6 +910,8 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
     if unresolvable:
         pairs.append(["<report_ref>", "unresolvable"])
     pairs.extend([marker, "unresolvable"] for marker in unresolvable_payloads)
+    if delegation_unreadable:
+        pairs.append(["<delegation>", "unreadable"])
     return pairs
 
 
@@ -928,10 +935,13 @@ def delivery_input_digest(pairs: list[list[str]]) -> str:
 
 
 def file_sha256(path: Path) -> str:
-    if not path.exists() and not path.is_symlink():
-        return "absent"
-    if not path.is_file():
-        return "not-a-regular-file"
+    try:
+        if not path.exists() and not path.is_symlink():
+            return "absent"
+        if not path.is_file():
+            return "not-a-regular-file"
+    except (OSError, ValueError):  # for example a link to a name too long for the file system
+        return "unreadable"
     digest = hashlib.sha256()
     try:
         with path.open("rb") as handle:
