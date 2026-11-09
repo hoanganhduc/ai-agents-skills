@@ -86,6 +86,29 @@ If a decisive counterexample or fatal gap is found during any round:
    weaker conclusion, a changed quantifier); never overwrite `fixed_claim`
 4. do not continue expanding a broken proof across further rounds
 
+A reported counterexample, such as a witness from the Counterexample Hunter in
+Lakatos Proof and Refutation or the Breaker in Structured Research Team, is
+decisive only after the parent checks the witness itself and that the witness
+applies to the exact claim (stop rule 2 in `EXECUTION.md`):
+
+- `graph-verifier` checks a witness graph directly and confirms only the
+  invariants it reports as `checked`: vertex and edge counts, connectivity,
+  bipartiteness, whether the graph is a tree, planarity, diameter, girth and
+  degree sequence.
+- The Sage template `counterexample_search.sage` does not check a given
+  witness: it re-enumerates every graph up to `n_max` vertices and can confirm
+  only that the conjecture fails within that bound.
+- A report that no checker can confirm, or whose check was vetoed by the local
+  throttle, timed out or ended with `no_verdict`, stays a candidate
+  counterexample.
+- The parent records every check. When a deep-research run exists, a
+  `graph-verifier` or Sage template result goes through deep-research
+  `add-computation-evidence`; any other output stays in the AGD run directory,
+  with its sha256 in `state.json`.
+
+"Checking a counterexample witness" in `EXECUTION.md` gives the command and
+how to choose its `--relation`.
+
 ## Default research output format
 
 The final synthesis for research-mode templates must contain:

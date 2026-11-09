@@ -536,6 +536,53 @@ Embed these in every role prompt and enforce them in orchestration:
 2. Decisive counterexample found: Builder or Constructor must propose a corrected version instead of defending the broken one. A relayed `counterexample` entry becomes decisive only after the parent checks the witness itself and checks that the witness applies to the exact claim under review; until then it is a check to run.
 3. Token exhaustion: relaunch with compressed context, and record the truncation in state.
 
+### Checking a counterexample witness
+
+A reported counterexample, such as a witness from the Counterexample Hunter in
+Lakatos Proof and Refutation or the Breaker in Structured Research Team,
+becomes decisive under stop rule 2 only through a check the parent runs
+itself. Local runs stay short and throttled as the referee method above
+requires. The parent reads each result within these limits:
+
+- `graph-verifier` checks a witness graph directly: the parent gives it the
+  witness as the input and the properties the counterexample needs as
+  `expected`. It confirms only the invariants it reports as `checked` in
+  `property_status`: vertex and edge counts, connectivity, bipartiteness,
+  whether the graph is a tree, planarity, diameter, girth and degree sequence.
+  It never evaluates the claim text, and an expected key it does not compute,
+  such as a chromatic or clique number, is listed in
+  `unchecked_expected_keys`.
+- The Sage template `counterexample_search.sage` does not check a given
+  witness. It re-enumerates every graph up to `n_max` vertices, one per
+  isomorphism class, and can confirm only that the conjecture fails within
+  that bound.
+- A report that no checker can confirm, or whose check was vetoed by the local
+  throttle, timed out or ended with `no_verdict`, stays a candidate
+  counterexample: it remains a check to run and does not trigger stop rule 2.
+- Whether what a checker confirmed refutes the exact claim under review stays
+  the parent's judgement.
+
+The parent records every check it runs. When a deep-research run exists, it
+records a `graph-verifier` or Sage template result with deep-research
+`add-computation-evidence`, which reads only output that carries a
+`computation_evidence` block:
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/deep-research-workflow/run_deep_research_workflow.sh add-computation-evidence --dir /path/to/workspace/research --result /path/to/checker_result.json --claim-id <claim_id> --relation <relation>
+```
+
+`--claim-id` names the deep-research claim the check bears on. `--relation` is
+`asserts` when that claim states that the checker's `evaluated_predicate`
+holds on its `checked_domain`, and `refutes` when the claim states that it
+fails there. The parent chooses it for each check and never fixes it to
+`refutes`: a graph-verifier check that the witness has the properties the
+claim attributes to it is normally `asserts`. "Computation evidence" in the
+`deep-research-workflow` skill says how the claim cites the row and when the
+row can support a ready delivery. For any other check, and for every check
+made without a deep-research run, the parent keeps the checker's output in the
+AGD run directory and records its file name and sha256 in `state.json`.
+
 ## Anti-false-consensus: bound-and-escalate
 
 Review/discussion rounds are capped by the plan (default ≤ template rounds;
