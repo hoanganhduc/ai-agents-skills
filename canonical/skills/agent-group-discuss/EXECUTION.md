@@ -577,7 +577,12 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 holds on its `checked_domain`, and `refutes` when the claim states that it
 fails there. The parent chooses it for each check and never fixes it to
 `refutes`: a graph-verifier check that the witness has the properties the
-claim attributes to it is normally `asserts`. "Computation evidence" in the
+claim attributes to it is normally `asserts`. A counterexample
+(`result_status` `failed`) is recorded with `refutes` against a claim that
+states that the predicate fails on the checked domain, such as the negation of
+the claim under review or its corrected claim, never against the claim it
+refutes; `add-computation-evidence` refuses `asserts` with a `failed` result.
+"Computation evidence" in the
 `deep-research-workflow` skill says how the claim cites the row and when the
 row can support a ready delivery. For any other check, and for every check
 made without a deep-research run, the parent keeps the checker's output in the

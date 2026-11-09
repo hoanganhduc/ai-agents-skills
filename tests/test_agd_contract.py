@@ -78,6 +78,21 @@ class AgdCounterexampleConfirmationTests(unittest.TestCase):
         text = normalized((AGD / "EXECUTION.md").read_text(encoding="utf-8"))
         self.assertIn("becomes decisive only after the parent checks the witness itself", text)
 
+    def test_execution_says_which_claim_a_counterexample_is_recorded_against(self) -> None:
+        """A counterexample is recorded with refutes against a claim that the predicate fails, never the claim it refutes.
+
+        Only EXECUTION.md gives the command and how to choose --relation, so
+        only it carries this rule; SKILL.md and TEMPLATES.md point to it.
+        """
+        text = normalized((AGD / "EXECUTION.md").read_text(encoding="utf-8"))
+        for sentence in (
+            "is recorded with `refutes` against a claim that states that the predicate fails on the checked domain",
+            "never against the claim it refutes",
+            "`add-computation-evidence` refuses `asserts` with a `failed` result",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, text)
+
 
 if __name__ == "__main__":
     unittest.main()

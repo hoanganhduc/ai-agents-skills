@@ -244,6 +244,16 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
         self.assertIn("supported `pass` or `warn` output must include", guard_text)
         self.assertIn("Do not collapse guard results into a single aggregate score", guard_text)
 
+    def test_deep_research_skill_says_which_claim_a_counterexample_is_recorded_against(self) -> None:
+        """A counterexample is recorded with refutes against a claim that the predicate fails, never the claim it refutes."""
+        text = " ".join(self.read(DEEP_RESEARCH / "SKILL.md").split())
+        for sentence in (
+            "is recorded with `--relation refutes` against a claim that states that the predicate fails on the checked domain",
+            "never against the claim it refutes",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, text)
+
     def test_scope_brief_contains_goap_fields_and_blocked_start_gate(self) -> None:
         text = self.read(TEMPLATES / "research-scope-brief.md")
         for field in ("goal_state", "preconditions", "candidate_actions", "success_conditions", "blocked_by"):

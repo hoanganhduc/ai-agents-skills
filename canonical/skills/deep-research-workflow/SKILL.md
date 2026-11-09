@@ -279,7 +279,11 @@ compatibility workflows that do not claim those serious-research guarantees.
   on `checked_domain`; `--relation refutes` means the claim states that it
   fails there. The verb refuses `asserts` with a `failed` result and `refutes`
   with a `passed` one. It accepts any other result with either relation, but
-  such a row never counts for delivery.
+  such a row never counts for delivery. A counterexample (`result_status`
+  `failed`) is recorded with `--relation refutes` against a claim that states
+  that the predicate fails on the checked domain, for example the negation of
+  the claim under review or its corrected claim, never against the claim it
+  refutes.
 - `verification_source` records where the block sat: `research_compute_envelope`
   when it is under `result` in an object with `job_id`, `template`,
   `resource_class`, `started_at`, `finished_at`, `result` and `status`
