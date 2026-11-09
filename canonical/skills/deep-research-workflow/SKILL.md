@@ -325,9 +325,9 @@ when its coverage is `exhaustive` or `bounded_complete`, its relation matches
 its result (`asserts` with `passed`, `refutes` with `failed`), its
 `verification_source` is `research_compute_envelope`, and it has
 `payload_hash`. A claim without `source_ids` that cites only uncounted
-computation rows gets `READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION`. Rows from
-a submitted file, hand-typed rows and rows written before this verb existed
-therefore stay weak; a host re-run that could make a submitted file count is
+computation rows gets `READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION`. Rows
+labeled `submitted_file`, hand-typed rows and rows written before this verb
+existed therefore stay weak; a host re-run that could make a submitted file count is
 deferred. When such a claim cites only computation rows and every counted one
 is `bounded_complete`, one delivery caveat must name the claim id and each
 counted row's `checked_domain`; otherwise `validate` reports
