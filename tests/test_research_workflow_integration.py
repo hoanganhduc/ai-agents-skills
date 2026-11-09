@@ -2167,6 +2167,18 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
             self.assertEqual(result["verdict"], "NOT READY", result)
             self.assertIn("DELIVERY_INPUT_UNREADABLE", result["codes"])
 
+    def test_an_evidence_line_nested_too_deeply_gives_a_report_not_a_traceback(self) -> None:
+        """delivery-check reads evidence.jsonl for the payload copies before validate runs.
+
+        A ledger it cannot parse adds no copy, and validate's crash on it is
+        reported as DELIVERY_VALIDATE_CRASHED, as on the slice head.
+        """
+        root = self.ready_run()
+        with (root / "evidence.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write('{"nested": ' + "[" * 100000 + "]" * 100000 + "}\n")
+        result = self.mod.delivery_check(root)
+        self.assertEqual((result["verdict"], result["codes"]), ("NOT READY", ["DELIVERY_VALIDATE_CRASHED"]), result)
+
     def test_a_status_that_is_not_a_string_gets_codes_not_a_traceback(self) -> None:
         """A list or object in result_status or coverage_status gets its code; nothing raises.
 

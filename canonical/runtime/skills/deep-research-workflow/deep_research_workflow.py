@@ -786,7 +786,11 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
         names.add(report_path.relative_to(root).as_posix())
     unresolvable_payloads: list[str] = []
     # An unreadable or malformed evidence.jsonl adds nothing here; its own digest covers it.
-    for row in read_jsonl(root / "evidence.jsonl", "evidence", read_errors):
+    try:
+        evidence_rows = read_jsonl(root / "evidence.jsonl", "evidence", read_errors)
+    except RecursionError:  # a line nested too deeply to parse
+        evidence_rows = []
+    for row in evidence_rows:
         if row.get("evidence_type") != "computation" or not is_nonempty_string(row.get("payload_hash")):
             continue
         try:
