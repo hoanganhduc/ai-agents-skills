@@ -98,8 +98,9 @@ prints `NOT READY` with the `validate` codes and its own codes
 after `validate` and listed with their digests in `input_files`, are
 `research_schema.json`, `sources.jsonl`, `claims.jsonl`, `guards.jsonl`,
 `delivery.json`, `evidence.jsonl`, `model_freshness.json`, `formal/*.jsonl`,
-the `report_ref` file and the copy behind each computation row that carries
-`payload_hash`. The verdict and exit code are code-enforced; `delivery-check` adds
+the `report_ref` file, the copy behind each computation row that carries
+`payload_hash`, and the stamp copies behind each `agd_result` row's
+`payload_hash` and `producer_payload_hash`. The verdict and exit code are code-enforced; `delivery-check` adds
 its codes without changing what `validate` checks. A Delivery Check quotes this output verbatim and never upgrades
 `NOT READY`.
 
@@ -335,6 +336,58 @@ counted row's `checked_domain`; otherwise `validate` reports
 Whether the checked domain and the predicate fit the claim stays the parent's
 judgement.
 
+### AGD result evidence
+
+An `agd_result` row records a delegated participant's verdict. Its optional
+`verdict_kind` says what the verdict is: `referee_accepted`,
+`referee_rejected`, `independent_rederivation`, `counterexample_reported` or
+`consensus`; any other value gives `AGD_VERDICT_KIND_INVALID`.
+`reviewer_family` names the model family of the participant that gave the
+verdict, `producer_family` the family of whoever produced the claim or
+derivation under review, and `family_source` where `reviewer_family` comes
+from: `declared` or `launch_stamp`. `host_verified` gives
+`AGD_HOST_VERIFIED_UNAVAILABLE` because `validate` cannot look up a host
+record yet; any other value gives `AGD_FAMILY_SOURCE_INVALID`.
+
+A side is bound to a byte-for-byte copy of the stamp `delegate-agent` wrote
+for that participant (`stamps/<participant_id>.json`), kept in the run, for
+example at `artifacts/stamps/<dispatch-run-id>/<participant_id>.json`:
+`artifact_ref` and `payload_hash` bind the reviewer side,
+`producer_artifact_ref` and `producer_payload_hash` the producer side. On an
+`agd_result` row, `payload_hash` always names such a copy. `validate` re-reads
+every copy a row names and reports:
+
+- `AGD_STAMP_HASH_MISMATCH` for a ref without its hash or a hash without its
+  ref, `family_source` `launch_stamp` without `payload_hash`, and a copy that
+  is missing, a symbolic link, larger than 64 KiB, unreadable or not the bytes
+  whose `sha256:<hex>` the hash gives;
+- `AGD_STAMP_INVALID` for a copy that is not a JSON object with
+  `schema_version` `external-agent-dispatch-stamp.v1` and a string
+  `model_family`, or that repeats a key;
+- `AGD_STAMP_FAMILY_MISMATCH` when that side's family is not the stamp's
+  `model_family`.
+
+The reviewer side is bound when `family_source` is `launch_stamp` and its copy
+passes these checks; the producer side is bound when its copy passes them. An
+unbound side is declared, and a declared family is unverified. An
+`independent_rederivation` row needs both sides bound to two different
+verified families (`anthropic`, `deepseek`, `google`, `openai`, `xai`);
+otherwise `validate` reports `AGD_INDEPENDENCE_UNVERIFIED_FAMILY`. A claim the
+parent produced therefore counts only when its producer side was dispatched
+and stamped. A stamp is `unverified` when the dispatch ran under a command,
+binary or endpoint override, as every research dispatch but grok does today,
+and `unverified` never counts. A stamp names the provider the dispatcher was
+asked to launch: it is recorded provenance, not a verified model identity.
+
+For a `ready` or `ready-with-caveats` v2 delivery, a supported claim without
+`source_ids` whose cited evidence is only `agd_result` rows other than
+`independent_rederivation` (rows without `verdict_kind` included), with at
+most uncounted computation rows beside them, gets
+`READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT`. Cite source, formal or counted
+computation evidence or a bound `independent_rederivation`, or mark the claim
+`provisional` with a caveat. These checks are code-enforced; whether a
+re-derivation really re-derives the claim stays the parent's judgement.
+
 ### Optional formal verification lane
 
 Use the formal lane only when it fits the research object. Lean formalization is
@@ -518,6 +571,8 @@ Output structure guidance:
 - [ ] Computation results a claim cites were recorded with
       `add-computation-evidence`, the claim's `evidence_ids` name the row, and
       a claim resting on a bounded run carries a caveat that names the bound
+- [ ] Delegated verdicts are `agd_result` rows with a `verdict_kind`, and an
+      `independent_rederivation` row binds both sides to stamp copies
 - [ ] Formalized claims have `formal_targets.jsonl`,
       `statement_equivalence_reviews.jsonl`, scan/typecheck artifacts, and lead
       or human review before support is promoted

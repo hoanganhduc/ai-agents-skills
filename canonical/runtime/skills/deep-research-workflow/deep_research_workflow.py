@@ -51,8 +51,8 @@ DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
 FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
 # Digest values for inputs whose content cannot be hashed; any of them makes delivery-check NOT READY.
 UNHASHABLE_INPUT_STATES = {"unreadable", "not-a-regular-file", "unresolvable"}
-# Files a delivery verdict rests on, besides formal/*.jsonl, the report_ref file and the copy
-# behind each computation row's payload_hash.
+# Files a delivery verdict rests on, besides formal/*.jsonl, the report_ref file, the copy
+# behind each computation row's payload_hash and the stamp copies an agd_result row binds.
 DELIVERY_CHECK_INPUT_FILES = (
     "research_schema.json",
     "sources.jsonl",
@@ -111,6 +111,21 @@ COMPUTATION_COVERAGE_STATUSES = {
     "unavailable",
 }
 AGD_VALIDATION_STATUSES = {"parent_validated", "invalid", "pending"}
+AGD_VERDICT_KINDS = {
+    "referee_accepted",
+    "referee_rejected",
+    "independent_rederivation",
+    "counterexample_reported",
+    "consensus",
+}
+# Where an agd_result row's reviewer_family comes from. host_verified is refused
+# until validate can look up a host record.
+AGD_FAMILY_SOURCES = {"declared", "launch_stamp"}
+# Families that can count toward independent review: the values of delegate-agent's
+# provider-to-family table other than "unverified" (a test keeps the two equal).
+VERIFIED_FAMILIES = {"anthropic", "openai", "xai", "deepseek", "google"}
+DISPATCH_STAMP_SCHEMA_VERSION = "external-agent-dispatch-stamp.v1"
+STAMP_COPY_MAX_BYTES = 64 * 1024
 REQUIRED_FINALIZABLE_GUARDS = {"EvidenceGuard", "VerifyGuard"}
 MODEL_FRESHNESS_SCHEMA_VERSION = "deep-research.model-freshness.v1"
 MODEL_FRESHNESS_REQUIRED = {
@@ -242,6 +257,12 @@ EVIDENCE_FIELDS = EVIDENCE_REQUIRED | {
     "agd_packet_ref",
     "validation_status",
     "parent_validation_owner",
+    "verdict_kind",
+    "reviewer_family",
+    "producer_family",
+    "family_source",
+    "producer_artifact_ref",
+    "producer_payload_hash",
     "consent_source",
     "consent_run_id",
     "endpoint",
@@ -765,9 +786,10 @@ def delivery_check(root: Path, schema_version: str | None = None) -> dict[str, A
 def delivery_input_digests(root: Path) -> list[list[str]]:
     """Sorted [relative path, sha256] pairs for the files a delivery verdict rests on.
 
-    validate re-reads the copy behind each computation row's payload_hash, so those
-    copies are inputs too. A report_ref or artifact_ref that cannot be resolved is
-    recorded after the pairs as unresolvable.
+    validate re-reads the copy behind each computation row's payload_hash and the
+    stamp copies an agd_result row binds, so those copies are inputs too. A
+    report_ref or bound ref that cannot be resolved is recorded after the pairs as
+    unresolvable.
     """
     names = set(DELIVERY_CHECK_INPUT_FILES)
     formal_dir = root / "formal"
@@ -794,20 +816,34 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
     if evidence_errors:
         evidence_rows = []
     for row in evidence_rows:
-        if row.get("evidence_type") != "computation" or not is_nonempty_string(row.get("payload_hash")):
-            continue
-        try:
-            payload_path = validate_artifact_ref(row.get("artifact_ref"), root, root / "evidence.jsonl", read_errors, None, "artifact_ref")
-        except (RuntimeError, OSError, ValueError):  # as for report_ref
-            unresolvable_payloads.append(f"<artifact_ref {row.get('artifact_ref')}>")
-            continue
-        if payload_path is not None:
-            names.add(payload_path.relative_to(root).as_posix())
+        for field in rehashed_ref_fields(row):
+            try:
+                payload_path = validate_artifact_ref(row.get(field), root, root / "evidence.jsonl", read_errors, None, field)
+            except (RuntimeError, OSError, ValueError):  # as for report_ref
+                unresolvable_payloads.append(f"<{field} {row.get(field)}>")
+                continue
+            if payload_path is not None:
+                names.add(payload_path.relative_to(root).as_posix())
     pairs = [[name, file_sha256(root / name)] for name in sorted(names)]
     if unresolvable:
         pairs.append(["<report_ref>", "unresolvable"])
     pairs.extend([marker, "unresolvable"] for marker in unresolvable_payloads)
     return pairs
+
+
+def rehashed_ref_fields(row: dict[str, Any]) -> list[str]:
+    """The ref fields of an evidence row whose files validate re-hashes against a non-empty hash.
+
+    A computation row's artifact_ref, and an agd_result row's artifact_ref and
+    producer_artifact_ref, each paired with its payload hash field.
+    """
+    evidence_type = row.get("evidence_type")
+    pairs = []
+    if evidence_type in ("computation", "agd_result"):
+        pairs.append(("artifact_ref", "payload_hash"))
+    if evidence_type == "agd_result":
+        pairs.append(("producer_artifact_ref", "producer_payload_hash"))
+    return [ref for ref, digest in pairs if is_nonempty_string(row.get(digest))]
 
 
 def delivery_input_digest(pairs: list[list[str]]) -> str:
@@ -1346,7 +1382,7 @@ def validate_evidence(
         if evidence_type == "consent":
             validate_consent_evidence(row, path, errors, line)
         if evidence_type == "agd_result":
-            validate_agd_evidence(row, path, errors, line)
+            validate_agd_evidence(row, artifact, root, path, errors, line)
         elif isinstance(evidence_id, str) and evidence_id.startswith("E-AGD-"):
             add_error(errors, "AGD_EVIDENCE_TYPE_REQUIRED", path, f"line {line}: E-AGD-* evidence_id requires evidence_type 'agd_result'")
     return ids
@@ -1558,10 +1594,20 @@ def validate_consent_evidence(
 
 def validate_agd_evidence(
     row: dict[str, Any],
+    artifact: Path | None,
+    root: Path,
     path: Path,
     errors: list[dict[str, Any]],
     line: int | None,
 ) -> None:
+    """Check an agd_result row, its verdict kind, and the model families its stamp copies bind.
+
+    ``artifact`` is the row's resolved artifact_ref. A side is bound when its ref
+    and payload hash name a stamp copy whose model_family is that side's family;
+    the reviewer side also needs family_source launch_stamp. An unbound side is
+    declared, and a declared family is unverified, so independent_rederivation
+    needs two bound sides of different verified families.
+    """
     for field in ("agd_participant_id", "agd_round", "agd_packet_ref", "validation_status", "parent_validation_owner"):
         if not is_nonempty_string(row.get(field)):
             add_error(errors, "AGD_EVIDENCE_FIELD_REQUIRED", path, f"line {line}: AGD evidence requires {field}")
@@ -1569,6 +1615,101 @@ def validate_agd_evidence(
         add_error(errors, "AGD_VALIDATION_STATUS_INVALID", path, f"line {line}: invalid AGD validation_status")
     if row.get("validation_status") != "parent_validated":
         add_error(errors, "AGD_EVIDENCE_NOT_PARENT_VALIDATED", path, f"line {line}: AGD evidence must be parent_validated before use")
+    # The types are checked first: a list or object is unhashable, so set membership would raise.
+    verdict_kind = row.get("verdict_kind")
+    if "verdict_kind" in row and (not isinstance(verdict_kind, str) or verdict_kind not in AGD_VERDICT_KINDS):
+        add_error(errors, "AGD_VERDICT_KIND_INVALID", path, f"line {line}: verdict_kind must be one of {sorted(AGD_VERDICT_KINDS)}")
+    family_source = row.get("family_source")
+    if family_source == "host_verified":
+        add_error(
+            errors,
+            "AGD_HOST_VERIFIED_UNAVAILABLE",
+            path,
+            f"line {line}: family_source host_verified needs a host record that validate cannot look up; use launch_stamp or declared",
+        )
+    elif "family_source" in row and (not isinstance(family_source, str) or family_source not in AGD_FAMILY_SOURCES):
+        add_error(errors, "AGD_FAMILY_SOURCE_INVALID", path, f"line {line}: family_source must be declared or launch_stamp")
+    reviewer: str | None = None
+    if "payload_hash" in row or family_source == "launch_stamp":
+        reviewer = bound_stamp_family(row, "artifact_ref", "payload_hash", "reviewer_family", artifact, path, errors, line)
+    if family_source != "launch_stamp":
+        reviewer = None
+    producer: str | None = None
+    if "producer_artifact_ref" in row or "producer_payload_hash" in row:
+        producer_artifact: Path | None = None
+        if "producer_artifact_ref" in row:
+            try:
+                producer_artifact = validate_artifact_ref(row.get("producer_artifact_ref"), root, path, errors, line, "producer_artifact_ref")
+            except RuntimeError:  # a symlink loop on Python < 3.13; the copy then cannot be read
+                producer_artifact = None
+        producer = bound_stamp_family(row, "producer_artifact_ref", "producer_payload_hash", "producer_family", producer_artifact, path, errors, line)
+    if verdict_kind == "independent_rederivation" and not (
+        reviewer in VERIFIED_FAMILIES and producer in VERIFIED_FAMILIES and reviewer != producer
+    ):
+        add_error(
+            errors,
+            "AGD_INDEPENDENCE_UNVERIFIED_FAMILY",
+            path,
+            f"line {line}: independent_rederivation needs both sides bound to stamp copies of two different verified "
+            f"families {sorted(VERIFIED_FAMILIES)}; the reviewer side is {reviewer or 'declared'} and the producer "
+            f"side {producer or 'declared'}",
+        )
+
+
+def bound_stamp_family(
+    row: dict[str, Any],
+    ref_field: str,
+    hash_field: str,
+    family_field: str,
+    artifact: Path | None,
+    path: Path,
+    errors: list[dict[str, Any]],
+    line: int | None,
+) -> str | None:
+    """Return the model_family of the stamp copy that ref_field and hash_field bind, or None when they do not.
+
+    The copy must be a regular file of at most STAMP_COPY_MAX_BYTES whose
+    sha256 is the hash, holding a delegate-agent stamp whose model_family is the
+    row's family_field. Each failure is reported and leaves that side unbound.
+    """
+    if ref_field not in row or hash_field not in row:
+        add_error(errors, "AGD_STAMP_HASH_MISMATCH", path, f"line {line}: {ref_field} and {hash_field} bind a stamp copy only together")
+        return None
+    try:
+        if artifact is None:
+            raise ValueError(f"{ref_field} does not name a file in the run")
+        payload = read_regular_file(artifact, STAMP_COPY_MAX_BYTES)
+    except (OSError, ValueError) as exc:
+        add_error(errors, "AGD_STAMP_HASH_MISMATCH", path, f"line {line}: the stamp copy behind {hash_field} cannot be read: {exc}")
+        return None
+    if "sha256:" + hashlib.sha256(payload).hexdigest() != row.get(hash_field):
+        add_error(errors, "AGD_STAMP_HASH_MISMATCH", path, f"line {line}: {hash_field} does not match the bytes of {row.get(ref_field)}")
+        return None
+    try:
+        stamp = json.loads(payload.decode("utf-8"), object_pairs_hook=object_without_duplicate_keys)
+    except (ValueError, RecursionError):  # not UTF-8 or JSON, a repeated key, or nested too deeply
+        stamp = None
+    if (
+        not isinstance(stamp, dict)
+        or stamp.get("schema_version") != DISPATCH_STAMP_SCHEMA_VERSION
+        or not isinstance(stamp.get("model_family"), str)
+    ):
+        add_error(
+            errors,
+            "AGD_STAMP_INVALID",
+            path,
+            f"line {line}: {row.get(ref_field)} is not a {DISPATCH_STAMP_SCHEMA_VERSION} stamp with a string model_family",
+        )
+        return None
+    if stamp["model_family"] != row.get(family_field):
+        add_error(
+            errors,
+            "AGD_STAMP_FAMILY_MISMATCH",
+            path,
+            f"line {line}: {family_field} {row.get(family_field)!r} is not the stamped model_family {stamp['model_family']!r}",
+        )
+        return None
+    return stamp["model_family"]
 
 
 def validate_guards(
@@ -1981,6 +2122,20 @@ def validate_finalizable_delivery_claims(
                     "exhaustive or bounded_complete coverage, a claim_relation its result_status supports, "
                     "verification_source research_compute_envelope and a payload_hash",
                 )
+            if (
+                status == "supported"
+                and not source_ids
+                and any(is_referee_judgement_evidence(item) for item in linked_evidence)
+                and all(is_referee_judgement_evidence(item) or is_weak_computation_evidence(item) for item in linked_evidence)
+            ):
+                add_error(
+                    errors,
+                    "READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT",
+                    path,
+                    f"claim {claim_id} relies only on panel judgement: agd_result rows other than independent_rederivation, "
+                    "with at most uncounted computation rows beside them; cite source, formal or counted computation "
+                    "evidence or a bound independent_rederivation, or mark the claim provisional",
+                )
             validate_bounded_computation_caveat(claim_id, source_ids, linked_evidence, caveats, path, errors)
             validate_claim_library_provenance(claim_id, source_ids, source_map, root, path, errors)
     for target_id, target in formal_targets.items():
@@ -2148,6 +2303,17 @@ def is_weak_computation_evidence(row: dict[str, Any] | None) -> bool:
     if not row or row.get("evidence_type") != "computation":
         return False
     return not is_counted_computation_evidence(row)
+
+
+def is_referee_judgement_evidence(row: dict[str, Any] | None) -> bool:
+    """An agd_result row that records panel judgement: any verdict kind but independent_rederivation, or none.
+
+    validate accepts an independent_rederivation row only with both sides bound
+    to stamp copies of two different verified families.
+    """
+    if not row or row.get("evidence_type") != "agd_result":
+        return False
+    return row.get("verdict_kind") != "independent_rederivation"
 
 
 def validate_delegation_dir(path: Path, errors: list[dict[str, Any]]) -> list[Path]:

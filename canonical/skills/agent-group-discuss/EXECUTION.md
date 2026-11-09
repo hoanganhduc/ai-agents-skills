@@ -115,6 +115,28 @@ parent validates the referenced source, computation, proof, or artifact.
 Use target research `evidence.jsonl` ids in the mapping table so downstream
 delivery gates can trace every delegated finding.
 
+Record the kind of each mapped verdict in `verdict_kind` (`referee_accepted`,
+`referee_rejected`, `independent_rederivation`, `counterexample_reported` or
+`consensus`), and the model families of the reviewer and of whoever produced
+the claim in `reviewer_family` and `producer_family`. A family counts only when
+bound to a stamp: copy `stamps/<participant_id>.json` from the `delegate-agent`
+run byte for byte into the research run, for example to
+`artifacts/stamps/<dispatch-run-id>/<participant_id>.json` (never to
+`delegation/*.json`, which `validate` reads as packets), point `artifact_ref`
+at the reviewer's copy with `payload_hash` set to the `sha256:<hex>` of its
+bytes and `family_source: "launch_stamp"`, and bind the producer the same way
+with `producer_artifact_ref` and `producer_payload_hash`. A side without a
+copy is declared, which counts as unverified, so a claim the parent produced
+counts only when its producer side was itself dispatched and stamped.
+Participants spawned by the parent's own agent tool share the parent's family
+and have no stamp. `independent_rederivation` needs both sides bound to two
+different verified families. Open Math models and the unverified families
+(kimi, opencode, copilot) never count toward independence, a stamp is
+`unverified` under the overrides research dispatch needs, and
+`min_distinct_providers` counts providers, not families. A stamp is recorded
+provenance, not a verified model identity. The deep-research skill lists the
+checks `validate` runs on these fields.
+
 Apply redaction before copying anything from `raw/` into packets, reports, or
 user-visible summaries. Raw stdout, stderr, commands, provider configs, session
 ids, credentials, and absolute private paths stay in the parent-owned run
@@ -628,7 +650,11 @@ passed on a named artifact (with typecheck ≠ claim_support for formal work).
 When the workflow is Goal Focus enforce ARL, host `result_review.v1` remains
 the sole bank gate — do not invent a parallel AGD bank. Outside that path,
 research-verification-gate must mark multi-LLM LGTM-only claims as unsupported
-for banking language.
+for banking language. In deep research, `validate` enforces part of this on
+`agd_result` rows: `independent_rederivation` needs two bound, different
+verified families (`AGD_INDEPENDENCE_UNVERIFIED_FAMILY` otherwise), and a ready
+v2 claim that rests only on panel judgement gets
+`READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT`.
 
 ## Template chaining
 

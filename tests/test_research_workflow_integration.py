@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from installer.ai_agents_skills.manifest import REPO_ROOT
@@ -2341,3 +2342,463 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
             self.assertEqual(self.validate_codes(root), set())
             with mock.patch.object(self.mod, "COMPUTATION_RESULT_MAX_BYTES", cap):
                 self.assertEqual(self.validate_codes(root), {"COMPUTATION_PAYLOAD_HASH_MISMATCH"})
+
+
+DISPATCH_STAMP_SCHEMA_VERSION = "external-agent-dispatch-stamp.v1"
+# A stand-in claude CLI for delegate-agent: it reads the prompt and answers each
+# call with one result envelope built from the nonce the dispatcher exports.
+FAKE_PROVIDER_CLI_PY = """\
+import json
+import os
+import sys
+
+sys.stdin.read()
+nonce = os.environ["AAS_DELEGATION_RESULT_NONCE"]
+print("AAS_RESULT_JSON_START_" + nonce)
+print(json.dumps({
+    "status": "ok",
+    "findings": [{"id": "F1", "summary": "re-derived", "evidence_refs": ["task"]}],
+    "limitations": [],
+    "warnings": [],
+}))
+print("AAS_RESULT_JSON_END_" + nonce)
+print(os.environ["AAS_DELEGATION_FINAL_MARKER"])
+"""
+
+
+class AgdVerdictEvidenceTests(unittest.TestCase):
+    """agd_result rows: verdict kinds, stamp copies bound on both sides, and the referee-only delivery rule.
+
+    A side is bound when its ref and payload hash name a copy of a
+    delegate-agent stamp whose model_family is that side's family; the reviewer
+    side also needs family_source launch_stamp. independent_rederivation needs
+    both sides bound to two different verified families. A supported v2 claim
+    that rests only on panel judgement is not ready.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.mod = load_runtime_module("drw_agd_verdicts", DEEP_RESEARCH_RUNTIME)
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def ready_run(self, name: str, *, cites: tuple[str, ...] = ("E-AGD-1",), source_ids: tuple[str, ...] = ()) -> Path:
+        """A ready v2 run whose claim C1 cites ``cites`` and ``source_ids``."""
+        root = self.tmp / name / "research"
+        root.mkdir(parents=True)
+        self.mod.write_base_v2_run(root, decision="ready", claim_evidence_ids=list(cites), source_ids=list(source_ids))
+        return root
+
+    def not_ready_run(self, name: str) -> Path:
+        """A not-ready v2 run whose claim C1 cites E-AGD-1, so only the row checks apply."""
+        root = self.tmp / name / "research"
+        root.mkdir(parents=True)
+        self.mod.write_minimal_v2_not_ready(root)
+        self.mod.write_jsonl_rows(root / "sources.jsonl", [self.mod.paper_source()])
+        self.mod.write_jsonl_rows(root / "claims.jsonl", [self.mod.claim_row(source_ids=[], evidence_ids=["E-AGD-1"])])
+        return root
+
+    def copy_file(self, root: Path, ref: str, data: bytes) -> str:
+        """Write ``data`` at ``ref`` in the run; return the payload hash of those bytes."""
+        path = root / ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return "sha256:" + hashlib.sha256(data).hexdigest()
+
+    def stamp_copy(self, root: Path, participant_id: str, provider: str, family: str) -> tuple[str, str]:
+        """Copy a stamp, written as delegate-agent writes one, into the run; return (ref, payload hash)."""
+        stamp = {
+            "schema_version": DISPATCH_STAMP_SCHEMA_VERSION,
+            "run_id": "20261110-000000-0123abcd",
+            "participant_id": participant_id,
+            "provider": provider,
+            "model_family": family,
+            "unverified_by": [],
+            "stamped_at": "2026-11-10T00:00:00Z",
+        }
+        ref = f"artifacts/stamps/20261110-000000-0123abcd/{participant_id}.json"
+        data = (json.dumps(stamp, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        return ref, self.copy_file(root, ref, data)
+
+    def agd_row(self, **fields) -> dict:
+        row = self.mod.agd_evidence("E-AGD-1", "parent_validated")
+        row["claim_ids"] = ["C1"]
+        row.update(fields)
+        return row
+
+    def bound_row(
+        self,
+        root: Path,
+        reviewer: tuple[str, str, str] = ("claude-external-1", "claude", "anthropic"),
+        producer: tuple[str, str, str] = ("codex-1", "codex", "openai"),
+        **fields,
+    ) -> dict:
+        """An independent_rederivation row whose sides are bound to stamp copies of (participant, provider, family)."""
+        artifact_ref, payload_hash = self.stamp_copy(root, *reviewer)
+        producer_ref, producer_hash = self.stamp_copy(root, *producer)
+        row = self.agd_row(
+            verdict_kind="independent_rederivation",
+            family_source="launch_stamp",
+            reviewer_family=reviewer[2],
+            artifact_ref=artifact_ref,
+            payload_hash=payload_hash,
+            producer_family=producer[2],
+            producer_artifact_ref=producer_ref,
+            producer_payload_hash=producer_hash,
+        )
+        row.update(fields)
+        return row
+
+    def weak_computation_row(self) -> dict:
+        """A sampled computation row typed by hand: it never counts for delivery."""
+        return {
+            "schema_version": "deep-research.evidence.v2",
+            "evidence_id": "E-COMP-1",
+            "evidence_type": "computation",
+            "source_ids": [],
+            "claim_ids": ["C1"],
+            "artifact_ref": "checks/sample.json",
+            "summary": "Sampled graph check.",
+            "inspection_status": "checked",
+            "redaction_status": "safe",
+            "sensitivity_class": "public",
+            "created_at": "2026-05-28T00:00:00Z",
+            "limitations": ["sampled only"],
+            "tool_name": "graph-verifier",
+            "tool_version": "test",
+            "input_encoding_ref": "checks/input.json",
+            "checked_domain": "graphs up to n=5 sample",
+            "graph_model_assumptions": "simple finite graph",
+            "resource_bounds": "1s",
+            "result_status": "partial",
+            "coverage_status": "sampled",
+            "enumeration_method": "sample",
+            "timeout_status": "completed",
+        }
+
+    def write_evidence(self, root: Path, *rows: dict) -> None:
+        self.mod.write_jsonl_rows(root / "evidence.jsonl", [self.mod.report_evidence(), *rows])
+
+    def codes(self, root: Path) -> set[str]:
+        return {error["code"] for error in self.mod.validate_directory(root)["errors"]}
+
+    def agd_codes(self, root: Path) -> tuple[set[str], set[str]]:
+        """The AGD_* codes of validate, and all of its codes."""
+        codes = self.codes(root)
+        return {code for code in codes if code.startswith("AGD_")}, codes
+
+    def test_verified_families_match_the_dispatcher(self) -> None:
+        """validate counts the families the dispatcher's provider table verifies, which equals panel_parent's."""
+        from installer.ai_agents_skills.delegation import VERIFIED_FAMILIES
+
+        self.assertEqual(set(self.mod.VERIFIED_FAMILIES), set(VERIFIED_FAMILIES))
+
+    def test_referee_only_support_is_not_ready(self) -> None:
+        """A ready claim resting only on panel judgement fails validate and delivery-check.
+
+        Judgement is any agd_result row but independent_rederivation, a row
+        written before verdict_kind existed included, alone or beside
+        uncounted computation rows. The last case is a regression check: a
+        source beside the row carries the claim, as before.
+        """
+        cases = {
+            "referee_accepted": ([self.agd_row(verdict_kind="referee_accepted")], ("E-AGD-1",)),
+            "consensus": ([self.agd_row(verdict_kind="consensus")], ("E-AGD-1",)),
+            "a row without verdict_kind": ([self.agd_row()], ("E-AGD-1",)),
+            "referee_accepted beside a weak computation row": (
+                [self.agd_row(verdict_kind="referee_accepted"), self.weak_computation_row()],
+                ("E-AGD-1", "E-COMP-1"),
+            ),
+        }
+        for index, (name, (rows, cites)) in enumerate(cases.items()):
+            with self.subTest(name):
+                root = self.ready_run(f"referee-{index}", cites=cites)
+                self.write_evidence(root, *rows)
+                codes = self.codes(root)
+                self.assertIn("READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT", codes)
+                self.assertNotIn("READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION", codes)
+                self.assertNotIn("UNKNOWN_FIELD", codes)
+                result = self.mod.delivery_check(root)
+                self.assertEqual(result["verdict"], "NOT READY", result)
+                self.assertIn("READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT", result["codes"])
+
+        with self.subTest("regression check: a source beside the row carries the claim"):
+            root = self.ready_run("referee-with-source", source_ids=("S1",))
+            self.write_evidence(root, self.agd_row())
+            result = self.mod.delivery_check(root)
+            self.assertEqual((result["verdict"], result["codes"]), ("READY", []), result)
+
+    def test_bound_different_verified_families_pass(self) -> None:
+        """Two bound stamp copies of different verified families let independent_rederivation carry a ready claim."""
+        with self.subTest("an anthropic reviewer and an openai producer"):
+            root = self.ready_run("bound")
+            self.write_evidence(root, self.bound_row(root))
+            validation = self.mod.validate_directory(root)
+            self.assertEqual(validation["status"], "ok", validation["errors"])
+            result = self.mod.delivery_check(root)
+            self.assertEqual((result["verdict"], result["codes"]), ("READY", []), result)
+
+        with self.subTest("a declared referee verdict naming both families validates"):
+            root = self.not_ready_run("declared")
+            self.write_evidence(
+                root,
+                self.agd_row(
+                    verdict_kind="referee_rejected",
+                    family_source="declared",
+                    reviewer_family="anthropic",
+                    producer_family="unverified",
+                ),
+            )
+            self.assertEqual(self.codes(root), set())
+
+    def test_independence_and_binding_failures(self) -> None:
+        """Each unverified family or broken binding gives its own code, never UNKNOWN_FIELD.
+
+        Each case's AGD codes are compared whole, so no case passes on another failure.
+        """
+
+        def bound(**fields):
+            return lambda root: self.bound_row(root, **fields)
+
+        def without(*names: str):
+            def build(root: Path) -> dict:
+                row = self.bound_row(root)
+                for name in names:
+                    del row[name]
+                return row
+
+            return build
+
+        def declared_producer(root: Path) -> dict:
+            row = without("producer_artifact_ref", "producer_payload_hash")(root)
+            row["producer_family"] = "deepseek"
+            return row
+
+        def removed_copy(root: Path) -> dict:
+            row = self.bound_row(root)
+            (root / row["producer_artifact_ref"]).unlink()
+            return row
+
+        def edited_copy(root: Path) -> dict:
+            row = self.bound_row(root)
+            with (root / row["artifact_ref"]).open("ab") as handle:
+                handle.write(b" ")
+            return row
+
+        def replaced_copy(data: bytes):
+            def build(root: Path) -> dict:
+                row = self.bound_row(root)
+                row["payload_hash"] = self.copy_file(root, row["artifact_ref"], data)
+                return row
+
+            return build
+
+        def oversized_copy(root: Path) -> dict:
+            row = self.bound_row(root)
+            data = (root / row["artifact_ref"]).read_bytes() + b" " * (64 * 1024)
+            row["payload_hash"] = self.copy_file(root, row["artifact_ref"], data)
+            return row
+
+        unverified = {"AGD_INDEPENDENCE_UNVERIFIED_FAMILY"}
+        anthropic_producer = ("claude-external-2", "claude", "anthropic")
+        cases = [
+            ("a bound kimi stamp", bound(reviewer=("kimi-external-1", "kimi", "unverified"), producer=anthropic_producer), unverified),
+            ("a bound copilot stamp", bound(reviewer=("copilot-external-1", "copilot", "unverified"), producer=anthropic_producer), unverified),
+            ("producer_family changed under a genuine reviewer stamp", declared_producer, unverified),
+            ("producer_family changed against its bound stamp", bound(producer_family="deepseek"), {"AGD_STAMP_FAMILY_MISMATCH", *unverified}),
+            (
+                "both families declared",
+                lambda root: self.agd_row(
+                    verdict_kind="independent_rederivation",
+                    family_source="declared",
+                    reviewer_family="anthropic",
+                    producer_family="openai",
+                ),
+                unverified,
+            ),
+            ("a stamped reviewer whose family_source is declared", bound(family_source="declared"), unverified),
+            ("equal verified families", bound(producer=anthropic_producer), unverified),
+            ("a missing stamp copy", removed_copy, {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("an edited stamp copy", edited_copy, {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("half a producer pair", without("producer_payload_hash"), {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("launch_stamp without payload_hash", without("payload_hash"), {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("a copy over 64 KiB", oversized_copy, {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("a copy that is not a stamp", replaced_copy(b'{"status": "ok"}\n'), {"AGD_STAMP_INVALID", *unverified}),
+            (
+                "a stamp with a repeated key",
+                replaced_copy(
+                    b'{"schema_version": "external-agent-dispatch-stamp.v1", '
+                    b'"model_family": "xai", "model_family": "anthropic"}\n'
+                ),
+                {"AGD_STAMP_INVALID", *unverified},
+            ),
+            (
+                "a stamp whose model_family is not a string",
+                replaced_copy(b'{"schema_version": "external-agent-dispatch-stamp.v1", "model_family": ["anthropic"]}\n'),
+                {"AGD_STAMP_INVALID", *unverified},
+            ),
+            ("a reviewer_family that differs from its stamp", bound(reviewer_family="xai"), {"AGD_STAMP_FAMILY_MISMATCH", *unverified}),
+            (
+                "host_verified without a host record",
+                lambda root: self.agd_row(verdict_kind="referee_accepted", family_source="host_verified", reviewer_family="anthropic"),
+                {"AGD_HOST_VERIFIED_UNAVAILABLE"},
+            ),
+            ("an unknown family_source", lambda root: self.agd_row(family_source="self_report"), {"AGD_FAMILY_SOURCE_INVALID"}),
+            (
+                "a family_source that is not a string",
+                lambda root: self.agd_row(family_source={"source": "launch_stamp"}),
+                {"AGD_FAMILY_SOURCE_INVALID"},
+            ),
+            ("an unknown verdict_kind", lambda root: self.agd_row(verdict_kind="lgtm"), {"AGD_VERDICT_KIND_INVALID"}),
+            (
+                "a verdict_kind that is not a string",
+                lambda root: self.agd_row(verdict_kind=["independent_rederivation"]),
+                {"AGD_VERDICT_KIND_INVALID"},
+            ),
+        ]
+        for index, (name, build, expected) in enumerate(cases):
+            with self.subTest(name):
+                root = self.not_ready_run(f"binding-{index}")
+                self.write_evidence(root, build(root))
+                agd_codes, codes = self.agd_codes(root)
+                self.assertEqual(agd_codes, expected, codes)
+                self.assertNotIn("UNKNOWN_FIELD", codes)
+
+        with self.subTest("a symbolic link in place of the copy"):
+            root = self.not_ready_run("binding-symlink")
+            row = self.bound_row(root)
+            copy = root / row["artifact_ref"]
+            moved = copy.with_name("moved.json")
+            copy.rename(moved)
+            try:
+                os.symlink(moved.name, copy)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            self.write_evidence(root, row)
+            agd_codes, codes = self.agd_codes(root)
+            self.assertEqual(agd_codes, {"AGD_STAMP_HASH_MISMATCH", *unverified}, codes)
+
+        with self.subTest("a producer copy that is a symbolic link to itself"):
+            root = self.not_ready_run("binding-loop")
+            row = self.bound_row(root)
+            copy = root / row["producer_artifact_ref"]
+            copy.unlink()
+            try:
+                os.symlink(copy.name, copy)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            self.write_evidence(root, row)
+            agd_codes, codes = self.agd_codes(root)
+            self.assertTrue({"AGD_STAMP_HASH_MISMATCH", *unverified} <= agd_codes, codes)
+            self.assertNotIn("UNKNOWN_FIELD", codes)
+
+    def test_dispatcher_stamp_unverified_end_to_end(self) -> None:
+        """A claude dispatch under a command override or an endpoint variable stamps unverified; its copy never counts.
+
+        The command override names the stand-in CLI; with the endpoint
+        variable, command discovery finds it instead.
+        """
+        from installer.ai_agents_skills.delegation_dispatch import dispatch_external_agents
+
+        home = self.tmp / "dispatch"
+        home.mkdir()
+        script = home / "fake_provider.py"
+        script.write_text(FAKE_PROVIDER_CLI_PY, encoding="utf-8")
+        command = f'"{sys.executable}" "{script}"'
+        cases = {
+            "AAS_CLAUDE_DISPATCH_COMMAND": {"AAS_CLAUDE_DISPATCH_COMMAND": command},
+            "ANTHROPIC_BASE_URL": {"AAS_CLAUDE_DISPATCH_COMMAND": "", "ANTHROPIC_BASE_URL": "https://gateway.invalid/anthropic"},
+        }
+        for variable, env in cases.items():
+            with self.subTest(variable):
+                args = SimpleNamespace(
+                    root=home,
+                    platform=None,
+                    task="Re-derive the claim.",
+                    task_file=None,
+                    providers=None,
+                    provider="claude",
+                    resolved_model=None,
+                    resolved_thinking=None,
+                    run_dir=None,
+                    max_providers=1,
+                    research=False,
+                    dry_run=False,
+                    allow_external_cli=True,
+                    role="reviewer",
+                    template=None,
+                    timeout=60,
+                    exclude_family=None,
+                )
+                with (
+                    mock.patch.dict(os.environ, env),
+                    mock.patch(
+                        "installer.ai_agents_skills.delegation.discover_tool",
+                        lambda name, *_args: {"logical_name": name, "status": "missing"},
+                    ),
+                    mock.patch(
+                        "installer.ai_agents_skills.delegation_dispatch.discover_tool",
+                        lambda name, *_args: {"logical_name": name, "status": "ok", "command": command},
+                    ),
+                ):
+                    result = dispatch_external_agents(args, load_manifests())
+                participant = result["participants"][0]
+                self.assertEqual(participant["status"], "ok", participant["validation"])
+                stamp_bytes = (Path(result["run_dir"]) / participant["stamp_ref"]).read_bytes()
+                stamp = json.loads(stamp_bytes)
+                self.assertEqual(stamp["model_family"], "unverified")
+                self.assertIn(variable, stamp["unverified_by"])
+
+                root = self.not_ready_run(f"dispatched-{variable}")
+                reviewer_ref = f"artifacts/stamps/{result['run_id']}/claude-external-1.json"
+                producer_ref, producer_hash = self.stamp_copy(root, "claude-external-2", "claude", "anthropic")
+                row = self.agd_row(
+                    verdict_kind="independent_rederivation",
+                    family_source="launch_stamp",
+                    reviewer_family="unverified",
+                    artifact_ref=reviewer_ref,
+                    payload_hash=self.copy_file(root, reviewer_ref, stamp_bytes),
+                    producer_family="anthropic",
+                    producer_artifact_ref=producer_ref,
+                    producer_payload_hash=producer_hash,
+                )
+                self.write_evidence(root, row)
+                agd_codes, codes = self.agd_codes(root)
+                self.assertEqual(agd_codes, {"AGD_INDEPENDENCE_UNVERIFIED_FAMILY"}, codes)
+                self.assertNotIn("UNKNOWN_FIELD", codes)
+
+                # Claiming the provider's table family for that stamp does not help.
+                row["reviewer_family"] = "anthropic"
+                self.write_evidence(root, row)
+                agd_codes, codes = self.agd_codes(root)
+                self.assertEqual(agd_codes, {"AGD_STAMP_FAMILY_MISMATCH", "AGD_INDEPENDENCE_UNVERIFIED_FAMILY"}, codes)
+
+    def test_delivery_check_hashes_stamp_copies(self) -> None:
+        """validate re-reads both stamp copies, so delivery-check hashes them before and after validate.
+
+        Either copy changed after validate returns makes the run NOT READY,
+        and input_files lists both copies.
+        """
+        for field in ("artifact_ref", "producer_artifact_ref"):
+            with self.subTest(field):
+                root = self.ready_run(f"digest-{field}")
+                row = self.bound_row(root)
+                self.write_evidence(root, row)
+                baseline = self.mod.delivery_check(root)
+                self.assertEqual((baseline["verdict"], baseline["codes"]), ("READY", []), baseline)
+                listed = [name for name, _ in baseline["input_files"]]
+                self.assertIn(row["artifact_ref"], listed)
+                self.assertIn(row["producer_artifact_ref"], listed)
+                original = self.mod.validate_directory
+
+                def validate_then_append(run: Path, *args, ref: str = row[field], **kwargs) -> dict:
+                    result = original(run, *args, **kwargs)
+                    with (run / ref).open("ab") as handle:
+                        handle.write(b"\n")
+                    return result
+
+                with mock.patch.object(self.mod, "validate_directory", side_effect=validate_then_append):
+                    result = self.mod.delivery_check(root)
+                self.assertEqual((result["verdict"], result["codes"]), ("NOT READY", ["DELIVERY_INPUT_CHANGED"]), result)
