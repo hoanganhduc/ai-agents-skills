@@ -432,6 +432,55 @@ class HiddenTextPacketTests(unittest.TestCase):
             with self.subTest(f"regression check: the installer validator, {label}"):
                 self.assertIn(code, validate_task(packet))
 
+    def test_deep_research_scans_a_packet_nested_past_the_recursion_limit(self) -> None:
+        """A packet nested deeper than Python's recursion limit gets its codes instead of RecursionError.
+
+        Since the scan runs before the schema lookup, an unsupported-schema
+        packet at that depth raised RecursionError in validate, where it used
+        to get DELEGATION_PACKET_SCHEMA_INVALID; a supported-schema packet
+        already raised before the reorder. The execute key at the bottom shows
+        that the scan reaches the deepest level. The direct call uses a packet
+        built in Python, so it runs on every Python; the file case runs only
+        where json.loads accepts the depth (Python 3.12.3 does; the decoder's
+        own limit depends on the version, and read_json does not catch it).
+        """
+        depth = sys.getrecursionlimit() + 1000
+        bottom: object = {"execute": True}
+        for _ in range(depth):
+            bottom = [bottom]
+        unsupported = {"schema_version": "cross-agent-delegation.task.v9", "notes": bottom}
+        supported = example_packet("valid-inert-task")
+        supported["expected_output"]["notes"] = bottom
+        cases = {
+            "unsupported schema_version": (unsupported, {"FORBIDDEN_AUTHORITY_FIELD", "DELEGATION_PACKET_SCHEMA_INVALID"}),
+            "supported schema_version": (supported, {"FORBIDDEN_AUTHORITY_FIELD"}),
+        }
+        for label, (packet, codes) in cases.items():
+            with self.subTest(f"direct call, {label}"):
+                errors: list[dict] = []
+                self.deep_research.validate_delegation_packet(packet, pathlib.Path("packet.json"), errors)
+                self.assertEqual({error["code"] for error in errors}, codes)
+        text = (
+            '{"schema_version": "cross-agent-delegation.task.v9", "notes": '
+            + "[" * depth + '{"execute": true}' + "]" * depth + "}"
+        )
+        with self.subTest("unsupported schema_version, read from delegation/"):
+            try:
+                json.loads(text)
+            except RecursionError:
+                self.skipTest(f"json.loads on this Python refuses {depth} levels before validate scans them")
+            with tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp) / "research"
+                root.mkdir()
+                self.deep_research.write_minimal_v2_not_ready(root)
+                (root / "delegation" / "packet.json").write_text(text, encoding="utf-8")
+                result = self.deep_research.validate_directory(root)
+            self.assertEqual(result["checked"]["delegation_packets"], 1)
+            self.assertEqual(
+                {error["code"] for error in result["errors"]},
+                {"FORBIDDEN_AUTHORITY_FIELD", "DELEGATION_PACKET_SCHEMA_INVALID"},
+            )
+
     def test_deep_research_refuses_authority_keys_and_unknown_fields(self) -> None:
         """Deep research refuses the installer's authority keys at any depth and top-level fields outside the contract.
 

@@ -2479,28 +2479,32 @@ def recursive_forbidden_packet_material(value: Any) -> list[str]:
 
     A key is checked for hidden characters before its name is compared, since
     a hidden character inside a forbidden name makes it match no name.
-    Hidden text is refused, never removed.
+    Hidden text is refused, never removed. The walk keeps its own stack, so a
+    packet nested deeper than Python's recursion limit, which json.loads can
+    still accept, is scanned rather than raising RecursionError.
     """
     errors: list[str] = []
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if hidden_text_positions(key):
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if hidden_text_positions(key):
+                    errors.append("HIDDEN_TEXT")
+                if key in AUTHORITY_PACKET_KEYS:
+                    errors.append("FORBIDDEN_AUTHORITY_FIELD")
+                if key in FORBIDDEN_PACKET_KEYS:
+                    errors.append("FORBIDDEN_DELEGATION_FIELD")
+                if FORBIDDEN_KEY_RE.search(key):
+                    errors.append("SECRET_MATERIAL")
+                pending.append(child)
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, str):
+            if hidden_text_positions(item):
                 errors.append("HIDDEN_TEXT")
-            if key in AUTHORITY_PACKET_KEYS:
-                errors.append("FORBIDDEN_AUTHORITY_FIELD")
-            if key in FORBIDDEN_PACKET_KEYS:
-                errors.append("FORBIDDEN_DELEGATION_FIELD")
-            if FORBIDDEN_KEY_RE.search(key):
+            if FORBIDDEN_VALUE_RE.search(item):
                 errors.append("SECRET_MATERIAL")
-            errors.extend(recursive_forbidden_packet_material(item))
-    elif isinstance(value, list):
-        for item in value:
-            errors.extend(recursive_forbidden_packet_material(item))
-    elif isinstance(value, str):
-        if hidden_text_positions(value):
-            errors.append("HIDDEN_TEXT")
-        if FORBIDDEN_VALUE_RE.search(value):
-            errors.append("SECRET_MATERIAL")
     return errors
 
 
