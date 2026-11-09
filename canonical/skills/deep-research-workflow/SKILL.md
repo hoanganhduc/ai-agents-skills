@@ -396,13 +396,16 @@ and `unverified` never counts. A stamp names the provider the dispatcher was
 asked to launch: it is recorded provenance, not a verified model identity.
 
 For a `ready` or `ready-with-caveats` v2 delivery, a supported claim without
-`source_ids` whose cited evidence is only `agd_result` rows other than
-`independent_rederivation` (rows without `verdict_kind` included), with at
-most uncounted computation rows beside them, gets
-`READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT`. Cite source, formal or counted
-computation evidence or a bound `independent_rederivation`, or mark the claim
-`provisional` with a caveat. These checks are code-enforced; whether a
-re-derivation really re-derives the claim stays the parent's judgement.
+`source_ids` that cites an `agd_result` row other than
+`independent_rederivation` (rows without `verdict_kind` included) gets
+`READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT` unless it also cites positive
+support: a `formal_check`, counted computation or `source_note` row, a bound
+`independent_rederivation`, or a row of another type whose `source_ids` lists
+a source. An `agd_result` or computation row never counts for the sources it
+lists, and a `report`, `other`, `guard` or `formal_statement` row without
+sources does not count. Cite positive support, or mark the claim `provisional`
+with a caveat. These checks are code-enforced; whether a re-derivation really
+re-derives the claim stays the parent's judgement.
 
 ### Optional formal verification lane
 

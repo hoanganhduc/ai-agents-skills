@@ -2568,6 +2568,101 @@ class AgdVerdictEvidenceTests(unittest.TestCase):
             result = self.mod.delivery_check(root)
             self.assertEqual((result["verdict"], result["codes"]), ("READY", []), result)
 
+    def test_only_positive_support_beside_a_referee_row_carries_a_ready_claim(self) -> None:
+        """Beside a referee verdict, a ready claim without source_ids needs a row of positive support.
+
+        Positive support is a formal_check, counted computation or source_note
+        row, a bound independent_rederivation, or a row of another type whose
+        source_ids lists a source. A report, other, guard or formal_statement
+        row without sources no longer clears the rule. The other cases are
+        regression checks that held before: each kind of positive support keeps
+        the claim READY; a referee row or an uncounted computation row stays
+        judgement whatever sources it lists; a claim citing no agd_result row
+        is outside the rule.
+        """
+        referee = self.agd_row(verdict_kind="referee_accepted")
+
+        def plain_row(evidence_type: str, source_ids: list[str]) -> dict:
+            """E-PLAIN-1, a row of ``evidence_type`` for C1 with only the common fields."""
+            row = self.mod.report_evidence()
+            row.update(
+                evidence_id="E-PLAIN-1", evidence_type=evidence_type, source_ids=source_ids, artifact_ref="checks/sample.json"
+            )
+            return row
+
+        def evidence(*rows: dict):
+            return lambda root: self.write_evidence(root, *rows)
+
+        def referee_and_counted_computation(root: Path) -> None:
+            """The verdict, then E-COMP-1: a Sage result for C1 recorded from a research_compute envelope, which counts."""
+            self.write_evidence(root, referee)
+            runner = load_runtime_module("research_compute_runner_referee", RESEARCH_COMPUTE_RUNNER)
+            sage = json.loads(sage_counterexample_output(SAGE_CLEAN_CONJECTURE))
+            job = {"job_id": "job-referee-1", "template": "python-v1", "payload": {"python_source": f"RESULT = {sage!r}"}}
+            envelope = root.parent / "envelope.json"
+            envelope.write_text(json.dumps(runner.execute_manifest(job, resource_class="cpu-small")) + "\n", encoding="utf-8")
+            report = self.mod.add_computation_evidence(
+                SimpleNamespace(
+                    dir=str(root),
+                    result=str(envelope),
+                    claim_id="C1",
+                    relation="asserts",
+                    source_id=[],
+                    evidence_id=None,
+                    inspection_status="checked",
+                    redaction_status="safe",
+                    sensitivity_class="public",
+                    created_at=None,
+                    limitation=[],
+                )
+            )
+            self.assertEqual((report["status"], report["evidence_id"]), ("ok", "E-COMP-1"), report)
+            row = json.loads((root / "evidence.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+            self.assertTrue(self.mod.is_counted_computation_evidence(row), row)
+
+        referee_only = ("NOT READY", ["READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT"])
+        for evidence_type in ("report", "other", "guard", "formal_statement"):
+            with self.subTest(f"{evidence_type} row without sources beside the verdict"):
+                root = self.ready_run(f"plain-{evidence_type}", cites=("E-AGD-1", "E-PLAIN-1"))
+                self.write_evidence(root, referee, plain_row(evidence_type, []))
+                self.assertIn("READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT", self.codes(root))
+                result = self.mod.delivery_check(root)
+                self.assertEqual((result["verdict"], result["codes"]), referee_only, result)
+
+        formal_check = self.mod.formal_check_evidence()
+        formal_check.update(source_ids=[], claim_ids=["C1"])
+        weak_with_source = self.weak_computation_row()
+        weak_with_source["source_ids"] = ["S1"]
+        cases = {
+            "the stock report row, which cites S1": (("E-AGD-1", "E-REPORT"), evidence(referee), ("READY", [])),
+            "a source_note row without source_ids": (
+                ("E-AGD-1", "E-PLAIN-1"),
+                evidence(referee, plain_row("source_note", [])),
+                ("READY", []),
+            ),
+            "an other row that cites S1": (("E-AGD-1", "E-PLAIN-1"), evidence(referee, plain_row("other", ["S1"])), ("READY", [])),
+            "a formal_check row without source_ids": (("E-AGD-1", "E1"), evidence(referee, formal_check), ("READY", [])),
+            "a counted computation row": (("E-AGD-1", "E-COMP-1"), referee_and_counted_computation, ("READY", [])),
+            "a bound independent_rederivation": (
+                ("E-AGD-1", "E-AGD-2"),
+                lambda root: self.write_evidence(root, referee, self.bound_row(root, evidence_id="E-AGD-2")),
+                ("READY", []),
+            ),
+            "a referee row that cites S1, alone": (
+                ("E-AGD-1",),
+                evidence(self.agd_row(verdict_kind="referee_accepted", source_ids=["S1"])),
+                referee_only,
+            ),
+            "an uncounted computation row that cites S1": (("E-AGD-1", "E-COMP-1"), evidence(referee, weak_with_source), referee_only),
+            "a claim citing no agd_result row": (("E-PLAIN-1",), evidence(plain_row("report", [])), ("READY", [])),
+        }
+        for index, (name, (cites, build, expected)) in enumerate(cases.items()):
+            with self.subTest(f"regression check: {name}"):
+                root = self.ready_run(f"positive-{index}", cites=cites)
+                build(root)
+                result = self.mod.delivery_check(root)
+                self.assertEqual((result["verdict"], result["codes"]), expected, result)
+
     def test_bound_different_verified_families_pass(self) -> None:
         """Two bound stamp copies of different verified families let independent_rederivation carry a ready claim."""
         with self.subTest("an anthropic reviewer and an openai producer"):

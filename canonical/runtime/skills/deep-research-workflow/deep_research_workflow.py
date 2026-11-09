@@ -2203,15 +2203,16 @@ def validate_finalizable_delivery_claims(
                 status == "supported"
                 and not source_ids
                 and any(is_referee_judgement_evidence(item) for item in linked_evidence)
-                and all(is_referee_judgement_evidence(item) or is_weak_computation_evidence(item) for item in linked_evidence)
+                and not any(is_positive_support_evidence(item) for item in linked_evidence)
             ):
                 add_error(
                     errors,
                     "READY_CLAIM_RELIES_ONLY_ON_REFEREE_JUDGEMENT",
                     path,
-                    f"claim {claim_id} relies only on panel judgement: agd_result rows other than independent_rederivation, "
-                    "with at most uncounted computation rows beside them; cite source, formal or counted computation "
-                    "evidence or a bound independent_rederivation, or mark the claim provisional",
+                    f"claim {claim_id} relies only on panel judgement: it cites agd_result rows other than "
+                    "independent_rederivation and no positive support; cite a formal_check, counted computation or "
+                    "source_note row, a bound independent_rederivation, or a row of another type whose source_ids lists "
+                    "a source, or mark the claim provisional",
                 )
             validate_bounded_computation_caveat(claim_id, source_ids, linked_evidence, caveats, path, errors)
             validate_claim_library_provenance(claim_id, source_ids, source_map, root, path, errors)
@@ -2391,6 +2392,27 @@ def is_referee_judgement_evidence(row: dict[str, Any] | None) -> bool:
     if not row or row.get("evidence_type") != "agd_result":
         return False
     return row.get("verdict_kind") != "independent_rederivation"
+
+
+def is_positive_support_evidence(row: dict[str, Any] | None) -> bool:
+    """A row that lets a claim citing panel judgement be ready: support the panel did not give.
+
+    A formal_check or source_note row, a counted computation row, an
+    independent_rederivation row (validate accepts one only with both sides
+    bound to two different verified families), or a row of another type whose
+    source_ids lists a source. A panel or computation row never counts for the
+    sources it lists.
+    """
+    if not row:
+        return False
+    evidence_type = row.get("evidence_type")
+    if evidence_type in ("formal_check", "source_note"):
+        return True
+    if evidence_type == "computation":
+        return is_counted_computation_evidence(row)
+    if evidence_type == "agd_result":
+        return row.get("verdict_kind") == "independent_rederivation"
+    return is_nonempty_string_list(row.get("source_ids"))
 
 
 def validate_delegation_dir(path: Path, errors: list[dict[str, Any]]) -> list[Path]:
