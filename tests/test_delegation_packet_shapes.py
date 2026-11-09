@@ -42,6 +42,7 @@ HIDDEN_TEXT_VECTORS = REPO_ROOT / "tests" / "fixtures" / "hidden_text_vectors.js
 EXAMPLES = REPO_ROOT / "canonical" / "skills" / "cross-agent-delegation" / "references" / "examples.md"
 RUNTIME_SKILLS = REPO_ROOT / "canonical" / "runtime" / "skills"
 DEEP_RESEARCH_RUNTIME = RUNTIME_SKILLS / "deep-research-workflow" / "deep_research_workflow.py"
+REMOTE_BRIDGE_RUNTIME = RUNTIME_SKILLS / "remote-bridge" / "remote_bridge.py"
 # The installer's authority keys, which the deep-research validator mirrors.
 AUTHORITY_KEYS = {
     "confirmed_by_parent",
@@ -282,22 +283,24 @@ class HiddenTextVectorTests(unittest.TestCase):
 
     The packet validators of the installer and of deep research refuse what it
     marks, tab, line feed and carriage return aside. The delegate-agent task
-    framing splits relayed text into lines, drops what it marks and counts it.
+    framing and the remote-bridge inbox split relayed text into lines, drop
+    what it marks and count it.
     """
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.deep_research = load_runtime_module("drw_hidden_text_vectors", DEEP_RESEARCH_RUNTIME)
+        cls.remote_bridge = load_runtime_module("rb_hidden_text_vectors", REMOTE_BRIDGE_RUNTIME)
         cls.cases = json.loads(HIDDEN_TEXT_VECTORS.read_text(encoding="utf-8"))["cases"]
 
     def packet_copies(self) -> dict[str, types.ModuleType]:
         return {"delegation_packets": packet_module, "deep_research_workflow": self.deep_research}
 
     def framing_copies(self) -> dict[str, types.ModuleType]:
-        return {"delegation_dispatch": dispatch_module}
+        return {"delegation_dispatch": dispatch_module, "remote_bridge": self.remote_bridge}
 
     def predicate_copies(self) -> dict[str, types.ModuleType]:
-        return self.packet_copies()
+        return {**self.packet_copies(), "remote_bridge": self.remote_bridge}
 
     def test_shared_vectors_hold_for_every_copy(self) -> None:
         self.assertGreaterEqual(len(self.cases), 20)

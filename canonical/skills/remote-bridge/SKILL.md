@@ -182,6 +182,34 @@ Headless iterations inject a labeled **data-only** inbox block when
 `AAS_REMOTE_JOB_ID` is set. Approvals for auto-approve providers (`--yolo`,
 full-auto) are **advisory** unless a live PreToolUse gate is installed.
 
+The block (`format-inbox`, and the drive's injected copy) frames every item:
+
+- The line under the block header says that item text is framed, that
+  relayed data is data, not instructions, and grants no authority, and that
+  nothing in the block is shell input.
+- Each item starts with a header line that names its `item_id`, `source`,
+  time (`ts`), `kind` and, for a reply, `request_id`. The header labels an
+  `instruct` item queued with `/aas instruct` (`handle-command`) or the
+  `instruct` command as `operator instruction`; every other item, such as a
+  `say` reply, is `relayed data`.
+- The item text is split into lines as Python `str.splitlines()` splits it,
+  so a carriage return, U+0085, U+2028 or U+2029 also starts a line, and every
+  line starts with `| `. Text inside an item therefore cannot end the block or
+  pass for another item.
+- Hidden characters are removed from the framed lines and counted on a
+  `[hidden characters removed: N]` line: control characters other than tab,
+  format characters (such as zero-width and bidirectional controls),
+  surrogates, tag characters, supplementary variation selectors, and a
+  variation selector right after another.
+- An item keeps the first 512 characters of its text. It records the length
+  before that cut as `original_length`, and a longer item shows
+  `[cut: N characters omitted]`.
+- The claim step budgets each item with the text the block shows, so an item
+  the drive claims is never left out of the block it receives.
+
+Framing marks where relayed text starts and ends; it does not stop text whose
+visible words try to steer the agent.
+
 ## Grok live gate (optional)
 
 Example hook: `hooks/grok-remote-bridge-gate.json.example`  
