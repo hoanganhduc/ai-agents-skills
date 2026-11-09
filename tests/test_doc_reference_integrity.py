@@ -5,11 +5,11 @@ reads as an order to use it. When the named thing is missing, an agent either
 invents it or reports a step it could not take. Four checks guard canonical
 markdown:
 
-(a) a runtime command written as ``skills/<name>/<file>`` is a source declared
-    in ``manifest/runtime.yaml``;
-(b) a subcommand written after the strict-gate, deep-research or
-    autonomous-research-loop wrapper is defined in that runtime's argparse
-    (read statically with ``ast``);
+(a) a runtime command written as ``skills/<name>/<file>`` is a path declared in
+    ``manifest/runtime.yaml``, as a source or as an installed target;
+(b) a subcommand written right after the strict-gate, deep-research or
+    autonomous-research-loop wrapper is a root subcommand of that runtime's
+    argparse (read statically with ``ast``);
 (c) a script name (``*.py``, ``*.sh``, ``*.ps1``) is a file tracked in this
     repository, or an allowlisted name with a recorded reason;
 (d) every template in agent-group-discuss ``TEMPLATES.md`` has an execution
@@ -86,38 +86,75 @@ def canonical_markdown() -> dict[str, str]:
     }
 
 
-def declared_runtime_sources() -> set[str]:
+def declared_runtime_paths() -> set[str]:
+    """Runtime paths declared in manifest/runtime.yaml: sources and installed targets.
+
+    A target is relative to the runtime root (``workspace/skills/...``); docs name
+    it as ``skills/...``, and it may come from another skill's source.
+    """
     manifest = json.loads((ROOT / "manifest" / "runtime.yaml").read_text(encoding="utf-8"))
-    sources: set[str] = set()
+    paths: set[str] = set()
 
     def walk(value: object) -> None:
         if isinstance(value, dict):
             for key, item in value.items():
                 if key == "source" and isinstance(item, str):
-                    sources.add(item)
+                    paths.add(item)
+                if key == "target" and isinstance(item, str):
+                    paths.add(item.removeprefix("workspace/"))
                 walk(item)
         elif isinstance(value, list):
             for item in value:
                 walk(item)
 
     walk(manifest)
-    return sources
+    return paths
+
+
+def _assigned_names(node: ast.Assign) -> set[str]:
+    return {target.id for target in node.targets if isinstance(target, ast.Name)}
 
 
 def argparse_names(module_path: str) -> set[str]:
-    """Every literal name passed to ``add_parser`` in a runtime module."""
+    """Root subcommand names (and aliases) of a runtime module's argparse.
+
+    Only ``add_parser`` calls on the subparsers object of an
+    ``argparse.ArgumentParser`` count; nested verbs such as ARL's
+    ``goal-focus replan`` are not root subcommands.
+    """
     tree = ast.parse((ROOT / module_path).read_text(encoding="utf-8"))
+    assigns = [node for node in ast.walk(tree) if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)]
+    roots: set[str] = set()
+    for node in assigns:
+        func = node.value.func
+        if isinstance(func, ast.Attribute) and func.attr == "ArgumentParser":
+            roots |= _assigned_names(node)
+    root_subparsers: set[str] = set()
+    for node in assigns:
+        func = node.value.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "add_subparsers"
+            and isinstance(func.value, ast.Name)
+            and func.value.id in roots
+        ):
+            root_subparsers |= _assigned_names(node)
     names: set[str] = set()
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_parser"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in root_subparsers
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
         ):
             names.add(node.args[0].value)
+            for keyword in node.keywords:
+                if keyword.arg == "aliases" and isinstance(keyword.value, (ast.List, ast.Tuple)):
+                    names |= {item.value for item in keyword.value.elts if isinstance(item, ast.Constant) and isinstance(item.value, str)}
     return names
 
 
@@ -206,7 +243,7 @@ class DocReferenceIntegrityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.docs = canonical_markdown()
-        cls.sources = declared_runtime_sources()
+        cls.sources = declared_runtime_paths()
         cls.names = {stem: argparse_names(path) for stem, path in WRAPPER_RUNTIMES.items()}
         cls.basenames = tracked_basenames()
 
@@ -265,6 +302,13 @@ class DocReferenceIntegrityTests(unittest.TestCase):
             unknown_subcommands("skills/deep-research-workflow/run_deep_research_workflow.sh frobnicate --dir x", self.names),
         )
         self.assertEqual({"verify_everything.py"}, absent_scripts("Run `verify_everything.py` first.", self.basenames))
+        # A nested verb named without its parent command is not a root subcommand.
+        self.assertEqual(
+            {("run_autonomous_research_loop", "replan")},
+            unknown_subcommands("skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh replan --dir x", self.names),
+        )
+        # An installed target sourced from another skill is a valid runtime path.
+        self.assertEqual(set(), undeclared_runtime_commands("python3 skills/remote-bridge/notify_v2.py", self.sources))
         templates_md = (AGD / "TEMPLATES.md").read_text(encoding="utf-8") + "\n## Template: Phantom Panel\n\nNo plan.\n"
         problems = template_structure_problems(
             templates_md,
