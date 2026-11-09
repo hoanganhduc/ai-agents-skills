@@ -2156,3 +2156,36 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
             result = self.mod.delivery_check(root)
             self.assertEqual(result["verdict"], "NOT READY", result)
             self.assertIn("DELIVERY_INPUT_UNREADABLE", result["codes"])
+
+    def test_a_status_that_is_not_a_string_gets_codes_not_a_traceback(self) -> None:
+        """A list or object in result_status or coverage_status gets its code; nothing raises.
+
+        Before this fix the verb ended with a TypeError and printed no JSON,
+        and validate raised TypeError on such a row. The validate crash
+        already existed at 60ca4a4, before the verb.
+        """
+        sage = json.loads(sage_counterexample_output(SAGE_CLEAN_CONJECTURE))
+        cases = {
+            "result_status as a list": ("result_status", ["passed"], "COMPUTATION_RESULT_STATUS_INVALID"),
+            "coverage_status as an object": ("coverage_status", {}, "COMPUTATION_COVERAGE_STATUS_INVALID"),
+        }
+        for index, (label, (field, value, expected)) in enumerate(cases.items()):
+            with self.subTest(label):
+                block = {**sage["computation_evidence"], field: value}
+                result = self.result_file(f"status-{index}.json", json.dumps({**sage, "computation_evidence": block}))
+                root = self.not_ready_run(f"case-{index}")
+                before = self.tree(root)
+                code, out = self.add(root, result)
+                self.assertEqual((code, out["status"]), (1, "refused"), out)
+                self.assertEqual(out["codes"], sorted(["COMPUTATION_EVIDENCE_FIELD_REQUIRED", expected]))
+                self.assertEqual(self.tree(root), before)
+
+        with self.subTest("validate on a row typed by hand"):
+            root = self.not_ready_run("validate")
+            self.mod.write_jsonl_rows(
+                root / "evidence.jsonl", [self.hand_typed_row(result_status=["passed"], coverage_status={})]
+            )
+            self.assertEqual(
+                self.validate_codes(root),
+                {"COMPUTATION_EVIDENCE_FIELD_REQUIRED", "COMPUTATION_RESULT_STATUS_INVALID", "COMPUTATION_COVERAGE_STATUS_INVALID"},
+            )

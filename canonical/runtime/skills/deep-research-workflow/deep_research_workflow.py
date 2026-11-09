@@ -1356,11 +1356,14 @@ def validate_computation_evidence(
     for field in COMPUTATION_REQUIRED_FIELDS:
         if not is_nonempty_string(row.get(field)):
             add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", path, f"{location}computation evidence requires {field}")
-    if row.get("result_status") not in COMPUTATION_RESULT_STATUSES:
+    # The type is checked first: a list or object is unhashable, so set membership would raise.
+    result_status = row.get("result_status")
+    if not isinstance(result_status, str) or result_status not in COMPUTATION_RESULT_STATUSES:
         add_error(errors, "COMPUTATION_RESULT_STATUS_INVALID", path, f"{location}invalid computation result_status")
-    if row.get("coverage_status") not in COMPUTATION_COVERAGE_STATUSES:
+    coverage_status = row.get("coverage_status")
+    if not isinstance(coverage_status, str) or coverage_status not in COMPUTATION_COVERAGE_STATUSES:
         add_error(errors, "COMPUTATION_COVERAGE_STATUS_INVALID", path, f"{location}invalid computation coverage_status")
-    if row.get("coverage_status") in {"exhaustive", "bounded_complete"} and not is_nonempty_string(row.get("exhaustiveness_argument")):
+    if isinstance(coverage_status, str) and coverage_status in {"exhaustive", "bounded_complete"} and not is_nonempty_string(row.get("exhaustiveness_argument")):
         add_error(errors, "COMPUTATION_EXHAUSTIVENESS_REQUIRED", path, f"{location}exhaustive computation evidence requires exhaustiveness_argument")
     if "claim_relation" in row:
         relation = row.get("claim_relation")
