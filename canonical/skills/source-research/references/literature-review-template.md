@@ -368,7 +368,8 @@ FUNDING/COI: _____
 **Version:** [1.0] | **Last updated:** [Date]
 
 **Quality checks:**
-- [ ] Citations verified with verify_citations.py
+- [ ] Citations checked by hand against the primary sources (DOIs resolved)
+- [ ] If a structured deep-research run exists, `sources.jsonl` and `claims.jsonl` pass deep-research `validate` (structure and links only)
 - [ ] PRISMA checklist completed
 - [ ] Search reproducible
 - [ ] Independent data verification
