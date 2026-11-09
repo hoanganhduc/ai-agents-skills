@@ -1,24 +1,37 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.manifest import REPO_ROOT
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 
+# The computation-evidence tests load runtime modules in this process.
+sys.dont_write_bytecode = True
 
 DEEP_RESEARCH = REPO_ROOT / "canonical" / "skills" / "deep-research-workflow"
 CROSS_AGENT = REPO_ROOT / "canonical" / "skills" / "cross-agent-delegation"
 TEMPLATES = REPO_ROOT / "canonical" / "templates"
 RUNTIME_WORKSPACE = REPO_ROOT / "canonical" / "runtime" / "workspace"
 DEEP_RESEARCH_RUNTIME = REPO_ROOT / "canonical" / "runtime" / "skills" / "deep-research-workflow" / "deep_research_workflow.py"
+GRAPH_VERIFIER_RUNTIME = REPO_ROOT / "canonical" / "runtime" / "skills" / "graph-verifier" / "graph_verifier.py"
+SAGE_COUNTEREXAMPLE_TEMPLATE = (
+    REPO_ROOT / "canonical" / "runtime" / "skills" / "sagemath" / "templates" / "counterexample_search.sage"
+)
+RESEARCH_COMPUTE_RUNNER = RUNTIME_WORKSPACE / "research_compute" / "template_runner.py"
 
 
 class Args:
@@ -1419,3 +1432,674 @@ class DeliveryCheckVerbTests(unittest.TestCase):
         for code, payload in results:
             self.assertEqual(code, 1, payload)
             self.assertEqual(payload["verdict"], "NOT READY")
+
+
+SAGE_STUB_VERSION = "SageMath version 0.0 (test stub)"
+# True on every simple graph: the run passes and is bounded_complete.
+SAGE_CLEAN_CONJECTURE = "G.size() <= G.order() * (G.order() - 1) // 2"
+# Raises on every edgeless graph: the run is partial, with evaluation errors.
+SAGE_RAISING_CONJECTURE = "1 / G.size() > 0"
+# False on every complete graph with an edge: the run finds counterexamples.
+SAGE_REFUTED_CONJECTURE = "G.size() == 0"
+COMPUTATION_BLOCK_FIELDS = (
+    "tool_name",
+    "tool_version",
+    "input_encoding_ref",
+    "checked_domain",
+    "graph_model_assumptions",
+    "resource_bounds",
+    "enumeration_method",
+    "timeout_status",
+    "result_status",
+    "coverage_status",
+    "evaluated_predicate",
+)
+
+
+class StubSageGraph:
+    """The Sage graph methods counterexample_search.sage and the conjectures above call."""
+
+    def __init__(self, order: int, complete: bool) -> None:
+        self._order = order
+        self._edges = [(u, v) for u in range(order) for v in range(u + 1, order)] if complete else []
+
+    def order(self) -> int:
+        return self._order
+
+    def size(self) -> int:
+        return len(self._edges)
+
+    def edges(self, labels: bool = True) -> list:
+        return [(u, v, None) if labels else (u, v) for u, v in self._edges]
+
+    def chromatic_number(self) -> int:
+        return self._order if self._edges else 1
+
+    def clique_number(self) -> int:
+        return self._order if self._edges else 1
+
+
+def stub_sage_graphs(n: int):
+    """Stub ``graphs(n)``: the edgeless graph, and the complete graph when n >= 2."""
+    yield StubSageGraph(n, complete=False)
+    if n >= 2:
+        yield StubSageGraph(n, complete=True)
+
+
+def sage_counterexample_output(conjecture: str, n_max: int = 5) -> str:
+    """What counterexample_search.sage prints when run as Python with stub ``graphs()`` and ``version()``.
+
+    No Sage starts; the template's own counting and its computation_evidence block run as written.
+    """
+    code = compile(SAGE_COUNTEREXAMPLE_TEMPLATE.read_text(encoding="utf-8"), str(SAGE_COUNTEREXAMPLE_TEMPLATE), "exec")
+    namespace = {"__name__": "__main__", "graphs": stub_sage_graphs, "version": lambda: SAGE_STUB_VERSION}
+    stdout = io.StringIO()
+    environment = {"SAGE_PARAM_N_MAX": str(n_max), "SAGE_PARAM_CONJECTURE": conjecture}
+    with mock.patch.dict(os.environ, environment):
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            exec(code, namespace)
+    return stdout.getvalue()
+
+
+def load_runtime_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AddComputationEvidenceVerbTests(unittest.TestCase):
+    """add-computation-evidence turns one helper result into one computation row bound to its bytes.
+
+    The row copies the result's computation_evidence block, and the run keeps a
+    copy of the file. validate re-hashes the copy and compares the row with the
+    block. A ready claim counts the row only when its relation matches the
+    result and the block came from a research_compute broker envelope.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.mod = load_runtime_module("drw_add_computation_evidence", DEEP_RESEARCH_RUNTIME)
+        cls.runner = load_runtime_module("research_compute_template_runner", RESEARCH_COMPUTE_RUNNER)
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def not_ready_run(self, name: str = "run", *, cites: str = "E-COMP-1") -> Path:
+        """A valid not-ready v2 run with source S1 and a claim C1 that cites ``cites``."""
+        root = self.tmp / name / "research"
+        root.mkdir(parents=True)
+        self.mod.write_minimal_v2_not_ready(root)
+        self.mod.write_jsonl_rows(root / "sources.jsonl", [self.mod.paper_source()])
+        self.mod.write_jsonl_rows(root / "claims.jsonl", [self.mod.claim_row(source_ids=[], evidence_ids=[cites])])
+        return root
+
+    def ready_run(self, name: str = "run", *, decision: str = "ready") -> Path:
+        """A finalizable run whose claim C1 has no source_ids and rests on E-COMP-1 alone."""
+        root = self.tmp / name / "research"
+        root.mkdir(parents=True)
+        self.mod.write_base_v2_run(root, decision=decision, claim_evidence_ids=["E-COMP-1"], source_ids=[])
+        return root
+
+    def result_file(self, name: str, text: str) -> Path:
+        path = self.tmp / name
+        path.write_bytes(text.encode("utf-8"))
+        return path
+
+    def graph_verifier_output(self, name: str, payload: dict | None) -> str:
+        """What graph-verifier prints for ``payload``, or for no input when ``payload`` is None."""
+        if importlib.util.find_spec("networkx") is None:
+            self.skipTest("graph-verifier needs networkx")
+        args = [sys.executable, str(GRAPH_VERIFIER_RUNTIME)]
+        if payload is not None:
+            path = self.result_file(f"{name}-input.json", json.dumps(payload))
+            args += ["--input", str(path)]
+        completed = subprocess.run(
+            args, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=120
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout
+
+    def broker_envelope(self, result: dict) -> str:
+        """The record a research_compute job leaves when its Python payload returns ``result``."""
+        job = {"job_id": "job-test-1", "template": "python-v1", "payload": {"python_source": f"RESULT = {result!r}"}}
+        envelope = self.runner.execute_manifest(job, resource_class="cpu-small")
+        return json.dumps(envelope, indent=2, sort_keys=True) + "\n"
+
+    def run_runtime(self, *args: str) -> subprocess.CompletedProcess:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        return subprocess.run(
+            [sys.executable, str(DEEP_RESEARCH_RUNTIME), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+        )
+
+    def run_verb(self, *args: str) -> tuple[int, dict]:
+        completed = self.run_runtime(*args)
+        try:
+            return completed.returncode, json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            self.fail(f"{args[0]} printed no JSON (exit {completed.returncode}): {completed.stderr.strip()[-400:]}")
+
+    def add(self, root: Path, result: Path, *extra: str, claim_id: str = "C1", relation: str = "asserts") -> tuple[int, dict]:
+        return self.run_verb(
+            "add-computation-evidence",
+            "--dir",
+            str(root),
+            "--result",
+            str(result),
+            "--claim-id",
+            claim_id,
+            "--relation",
+            relation,
+            *extra,
+        )
+
+    def delivery_check(self, root: Path) -> tuple[int, dict]:
+        return self.run_verb("delivery-check", "--dir", str(root))
+
+    def evidence_rows(self, root: Path) -> list[dict]:
+        text = (root / "evidence.jsonl").read_text(encoding="utf-8")
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+    def tree(self, root: Path) -> tuple[bytes, list[str]]:
+        """evidence.jsonl's bytes and every path in the run: what a refusal leaves alone."""
+        paths = sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
+        return (root / "evidence.jsonl").read_bytes(), paths
+
+    def validate_codes(self, root: Path) -> set[str]:
+        return {error["code"] for error in self.mod.validate_directory(root)["errors"]}
+
+    def hand_typed_row(self, **fields) -> dict:
+        """An exhaustive, passed computation row typed by hand: no claim_relation, no payload_hash."""
+        row = {
+            "schema_version": "deep-research.evidence.v2",
+            "evidence_id": "E-COMP-1",
+            "evidence_type": "computation",
+            "source_ids": [],
+            "claim_ids": ["C1"],
+            "artifact_ref": "checks/sample.json",
+            "summary": "Hand-typed graph check.",
+            "inspection_status": "checked",
+            "redaction_status": "safe",
+            "sensitivity_class": "public",
+            "created_at": "2026-05-28T00:00:00Z",
+            "limitations": [],
+            "tool_name": "graph-verifier",
+            "tool_version": "networkx test",
+            "input_encoding_ref": "sha256:" + "0" * 64,
+            "checked_domain": "the one graph in the input file (3 vertices, 3 edges)",
+            "graph_model_assumptions": "simple undirected graph",
+            "resource_bounds": "none",
+            "enumeration_method": "none: each property is computed directly",
+            "timeout_status": "completed",
+            "result_status": "passed",
+            "coverage_status": "exhaustive",
+            "exhaustiveness_argument": "Every expected value was computed on the whole graph.",
+        }
+        row.update(fields)
+        return row
+
+    def test_a_sage_result_is_copied_hashed_and_validates(self) -> None:
+        root = self.not_ready_run()
+        result = self.result_file("sage.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE))
+        source = result.read_bytes()
+        block = json.loads(source)["computation_evidence"]
+        self.assertEqual((block["result_status"], block["coverage_status"]), ("partial", "partial"))
+        digest = "sha256:" + hashlib.sha256(source).hexdigest()
+        started = datetime.now(timezone.utc).replace(microsecond=0)
+
+        code, out = self.add(root, result)
+
+        self.assertEqual(code, 0, out)
+        self.assertEqual(
+            out,
+            {
+                "schema_version": "deep-research.add-computation-evidence.v1",
+                "status": "ok",
+                "codes": [],
+                "errors": [],
+                "evidence_id": "E-COMP-1",
+                "artifact_ref": "artifacts/computation/E-COMP-1.json",
+                "payload_hash": digest,
+                "verification_source": "submitted_file",
+                "claim_relation": "asserts",
+            },
+        )
+        self.assertEqual((root / "artifacts" / "computation" / "E-COMP-1.json").read_bytes(), source)
+        [row] = self.evidence_rows(root)
+        self.assertEqual(
+            {key: row[key] for key in COMPUTATION_BLOCK_FIELDS},
+            {key: block[key] for key in COMPUTATION_BLOCK_FIELDS},
+        )
+        self.assertEqual(row["evaluated_predicate"], SAGE_RAISING_CONJECTURE)
+        self.assertNotIn("exhaustiveness_argument", row)
+        self.assertEqual(row["summary"], block["outcome"])
+        self.assertEqual(row["limitations"], block["limitations"])
+        self.assertEqual(
+            {
+                key: row[key]
+                for key in (
+                    "schema_version",
+                    "evidence_id",
+                    "evidence_type",
+                    "source_ids",
+                    "claim_ids",
+                    "artifact_ref",
+                    "payload_hash",
+                    "verification_source",
+                    "claim_relation",
+                    "inspection_status",
+                    "redaction_status",
+                    "sensitivity_class",
+                )
+            },
+            {
+                "schema_version": "deep-research.evidence.v2",
+                "evidence_id": "E-COMP-1",
+                "evidence_type": "computation",
+                "source_ids": [],
+                "claim_ids": ["C1"],
+                "artifact_ref": "artifacts/computation/E-COMP-1.json",
+                "payload_hash": digest,
+                "verification_source": "submitted_file",
+                "claim_relation": "asserts",
+                "inspection_status": "unchecked",
+                "redaction_status": "not_reviewed",
+                "sensitivity_class": "unknown",
+            },
+        )
+        self.assertRegex(row["created_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        created = datetime.strptime(row["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        self.assertLessEqual(started, created)
+        self.assertLessEqual(created, datetime.now(timezone.utc))
+        validation = self.mod.validate_directory(root)
+        self.assertEqual(validation["status"], "ok", validation["errors"])
+
+        # A second result takes the next free id; the ledger keeps its bytes and gains one line.
+        before = (root / "evidence.jsonl").read_bytes()
+        code, out = self.add(root, result)
+        self.assertEqual((code, out["evidence_id"]), (0, "E-COMP-2"), out)
+        after = (root / "evidence.jsonl").read_bytes()
+        self.assertTrue(after.startswith(before))
+        self.assertEqual(len(after.splitlines()), len(before.splitlines()) + 1)
+        self.assertEqual((root / "artifacts" / "computation" / "E-COMP-2.json").read_bytes(), source)
+        validation = self.mod.validate_directory(root)
+        self.assertEqual(validation["status"], "ok", validation["errors"])
+
+    def test_validate_rehashes_and_compares_the_payload(self) -> None:
+        """validate re-reads the copy behind a computation row that carries payload_hash.
+
+        The AXLE subtest is a regression check that already held before the
+        verb existed: a request hash on a row of another type is not re-hashed.
+        """
+        result = self.result_file("sage.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE))
+
+        def copy_of(root: Path) -> Path:
+            return root / "artifacts" / "computation" / "E-COMP-1.json"
+
+        def edit_copy(root: Path) -> None:
+            copy_of(root).write_bytes(copy_of(root).read_bytes() + b" ")
+
+        def delete_copy(root: Path) -> None:
+            copy_of(root).unlink()
+
+        def widen_row(root: Path) -> None:
+            rows = self.evidence_rows(root)
+            rows[0].update({"coverage_status": "bounded_complete", "exhaustiveness_argument": "Every graph was checked."})
+            self.mod.write_jsonl_rows(root / "evidence.jsonl", rows)
+
+        cases = {
+            "an edited copy": (edit_copy, "COMPUTATION_PAYLOAD_HASH_MISMATCH"),
+            "a deleted copy": (delete_copy, "COMPUTATION_PAYLOAD_HASH_MISMATCH"),
+            "a row edited from partial to bounded_complete": (widen_row, "COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD"),
+        }
+        for index, (label, (tamper, expected)) in enumerate(cases.items()):
+            with self.subTest(label):
+                root = self.not_ready_run(f"case-{index}")
+                code, out = self.add(root, result)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(self.validate_codes(root), set())
+                tamper(root)
+                codes = self.validate_codes(root)
+                self.assertIn(expected, codes)
+                self.assertNotIn("UNKNOWN_FIELD", codes)
+                if expected == "COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD":
+                    self.assertNotIn("COMPUTATION_PAYLOAD_HASH_MISMATCH", codes)
+
+        with self.subTest("an AXLE row keeps its request hash"):
+            root = self.not_ready_run("axle", cites="E-AXLE-1")
+            self.mod.write_jsonl_rows(root / "evidence.jsonl", [self.mod.axle_evidence()])
+            self.assertEqual(self.mod.axle_evidence()["payload_hash"], "sha256:test")
+            self.assertEqual(self.validate_codes(root), set())
+
+    def test_a_result_without_exactly_one_block_is_refused(self) -> None:
+        """Anything but exactly one readable computation_evidence block is refused, and nothing is written."""
+        sage = json.loads(sage_counterexample_output(SAGE_CLEAN_CONJECTURE))
+        directory = self.tmp / "a-directory"
+        directory.mkdir()
+
+        def no_verdict_envelope() -> Path:
+            text = self.graph_verifier_output("no-input", None)
+            self.assertEqual(json.loads(text)["verdict"], "no_verdict")
+            return self.result_file("no-verdict.json", text)
+
+        def symlink_to_a_result() -> Path:
+            link = self.tmp / "link.json"
+            try:
+                os.symlink(self.result_file("target.json", json.dumps(sage)), link)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            return link
+
+        def not_utf8() -> Path:
+            path = self.tmp / "latin-1.json"
+            path.write_bytes(b'{"note": "caf\xe9"}')
+            return path
+
+        cases = {
+            "an execute_manifest envelope with no block": (
+                lambda: self.result_file("no-block.json", self.broker_envelope({"answer": 42})),
+                "NO_COMPUTATION_EVIDENCE_BLOCK",
+            ),
+            "two blocks": (
+                lambda: self.result_file(
+                    "two-blocks.json", json.dumps({"computation_evidence": sage["computation_evidence"], "result": sage})
+                ),
+                "NO_COMPUTATION_EVIDENCE_BLOCK",
+            ),
+            "a graph-verifier no_verdict envelope": (no_verdict_envelope, "NO_COMPUTATION_EVIDENCE_BLOCK"),
+            "malformed JSON": (lambda: self.result_file("malformed.json", '{"computation_evidence": {'), "NO_COMPUTATION_EVIDENCE_BLOCK"),
+            "a JSON list": (lambda: self.result_file("list.json", json.dumps([sage])), "NO_COMPUTATION_EVIDENCE_BLOCK"),
+            "a missing --result": (lambda: self.tmp / "absent.json", "COMPUTATION_RESULT_UNREADABLE"),
+            "a directory": (lambda: directory, "COMPUTATION_RESULT_UNREADABLE"),
+            "bytes that are not UTF-8": (not_utf8, "COMPUTATION_RESULT_UNREADABLE"),
+            "a symbolic link": (symlink_to_a_result, "COMPUTATION_RESULT_UNREADABLE"),
+        }
+        for index, (label, (make, expected)) in enumerate(cases.items()):
+            with self.subTest(label):
+                result = make()
+                root = self.not_ready_run(f"case-{index}")
+                before = self.tree(root)
+                code, out = self.add(root, result)
+                self.assertEqual((code, out["status"]), (1, "refused"), out)
+                self.assertIn(expected, out["codes"])
+                self.assertEqual(self.tree(root), before)
+
+        with self.subTest("a result over the size cap"):
+            self.assertEqual(self.mod.COMPUTATION_RESULT_MAX_BYTES, 16 * 1024 * 1024)
+            big = self.result_file("big.json", "x" * 9)
+            with self.assertRaises(ValueError):
+                self.mod.read_regular_file(big, 8)
+
+    def test_a_contradicting_relation_is_refused(self) -> None:
+        """asserts with a failed result, or refutes with a passed one, is refused and writes nothing."""
+        triangle = {"edges": [[0, 1], [1, 2], [2, 0]], "expected": {"n": 3, "connected": True}}
+        cases = {
+            "a Sage counterexample recorded as asserts": (
+                lambda: self.result_file("refuted.json", sage_counterexample_output(SAGE_REFUTED_CONJECTURE)),
+                "asserts",
+                "failed",
+            ),
+            "a graph-verifier pass recorded as refutes": (
+                lambda: self.result_file("passed.json", self.graph_verifier_output("triangle", triangle)),
+                "refutes",
+                "passed",
+            ),
+        }
+        for index, (label, (make, relation, status)) in enumerate(cases.items()):
+            with self.subTest(label):
+                result = make()
+                self.assertEqual(json.loads(result.read_bytes())["computation_evidence"]["result_status"], status)
+                root = self.not_ready_run(f"case-{index}")
+                before = self.tree(root)
+                code, out = self.add(root, result, relation=relation)
+                self.assertEqual((code, out["status"]), (1, "refused"), out)
+                self.assertEqual(out["codes"], ["COMPUTATION_RELATION_CONTRADICTS_RESULT"])
+                self.assertEqual(self.tree(root), before)
+
+        with self.subTest("the same counterexample recorded as refutes is accepted"):
+            root = self.not_ready_run("refutes")
+            result = self.result_file("refuted.json", sage_counterexample_output(SAGE_REFUTED_CONJECTURE))
+            code, out = self.add(root, result, relation="refutes")
+            self.assertEqual((code, out["claim_relation"]), (0, "refutes"), out)
+
+    def test_only_matching_broker_rows_support_a_ready_claim(self) -> None:
+        """C1 rests on one computation row; only a matching row from a broker envelope makes it READY.
+
+        The hand-typed row is the case that was READY before this change.
+        """
+        triangle = [[0, 1], [1, 2], [2, 0]]
+        passed = self.graph_verifier_output("triangle", {"edges": triangle, "expected": {"n": 3, "connected": True}})
+        dump = self.graph_verifier_output("dump", {"edges": triangle})
+        self.assertEqual(json.loads(passed)["computation_evidence"]["coverage_status"], "exhaustive")
+        self.assertEqual(json.loads(dump)["computation_evidence"]["coverage_status"], "partial")
+        weak_results = {
+            "a graph-verifier property dump": self.result_file("dump.json", dump),
+            "a Sage result with evaluation errors": self.result_file(
+                "errors.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE)
+            ),
+            "an exhaustive passed block in a submitted file": self.result_file("submitted.json", passed),
+        }
+        for index, (label, result) in enumerate(weak_results.items()):
+            with self.subTest(label):
+                root = self.ready_run(f"weak-{index}")
+                code, out = self.add(root, result)
+                self.assertEqual(code, 0, out)
+                code, check = self.delivery_check(root)
+                self.assertEqual((code, check["verdict"]), (1, "NOT READY"), check)
+                self.assertEqual(check["codes"], ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"])
+
+        with self.subTest("a hand-typed exhaustive row with no relation"):
+            root = self.ready_run("hand-typed")
+            self.mod.write_jsonl_rows(root / "evidence.jsonl", [self.mod.report_evidence(), self.hand_typed_row()])
+            code, check = self.delivery_check(root)
+            self.assertEqual((code, check["verdict"]), (1, "NOT READY"), check)
+            self.assertEqual(check["codes"], ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"])
+
+        with self.subTest("control: the same block inside an execute_manifest envelope"):
+            root = self.ready_run("broker")
+            envelope = self.result_file("envelope.json", self.broker_envelope(json.loads(passed)))
+            code, out = self.add(root, envelope)
+            self.assertEqual((code, out["verification_source"]), (0, "research_compute_envelope"), out)
+            code, check = self.delivery_check(root)
+            self.assertEqual((code, check["verdict"], check["codes"]), (0, "READY", []), check)
+
+    def test_a_bounded_claim_needs_a_caveat_naming_the_bound(self) -> None:
+        root = self.ready_run(decision="ready-with-caveats")
+        sage = json.loads(sage_counterexample_output(SAGE_CLEAN_CONJECTURE))
+        block = sage["computation_evidence"]
+        self.assertEqual((block["result_status"], block["coverage_status"]), ("passed", "bounded_complete"))
+        code, out = self.add(root, self.result_file("envelope.json", self.broker_envelope(sage)))
+        self.assertEqual((code, out["verification_source"]), (0, "research_compute_envelope"), out)
+
+        caveats = {
+            "no caveat": ([], False),
+            "a caveat that names the claim but not the bound": (["C1 rests on a computation."], False),
+            "a caveat that names the claim and the bound": ([f"C1 is checked only on {block['checked_domain']}."], True),
+        }
+        for label, (caveat_list, ready) in caveats.items():
+            with self.subTest(label):
+                delivery = json.loads((root / "delivery.json").read_text(encoding="utf-8"))
+                delivery["caveats"] = caveat_list
+                self.mod.write_json(root / "delivery.json", delivery)
+                code, check = self.delivery_check(root)
+                if ready:
+                    self.assertEqual((code, check["verdict"], check["codes"]), (0, "READY", []), check)
+                    self.assertEqual(self.validate_codes(root), set())
+                else:
+                    self.assertEqual((code, check["verdict"]), (1, "NOT READY"), check)
+                    self.assertEqual(check["codes"], ["READY_BOUNDED_COMPUTATION_WITHOUT_CAVEAT"])
+
+    def test_metadata_flags_and_relation_values(self) -> None:
+        rows = {
+            "claim_relation maybe": (
+                self.hand_typed_row(claim_relation="maybe", evaluated_predicate="G is connected"),
+                "COMPUTATION_CLAIM_RELATION_INVALID",
+            ),
+            "claim_relation as a list": (
+                self.hand_typed_row(claim_relation=["asserts"], evaluated_predicate="G is connected"),
+                "COMPUTATION_CLAIM_RELATION_INVALID",
+            ),
+            "claim_relation without evaluated_predicate": (
+                self.hand_typed_row(claim_relation="asserts"),
+                "COMPUTATION_EVIDENCE_FIELD_REQUIRED",
+            ),
+        }
+        for index, (label, (row, expected)) in enumerate(rows.items()):
+            with self.subTest(label):
+                run = self.not_ready_run(f"row-{index}")
+                self.mod.write_jsonl_rows(run / "evidence.jsonl", [row])
+                self.assertEqual(self.validate_codes(run), {expected})
+
+        root = self.not_ready_run(cites="E-SAGE-1")
+        result = self.result_file("sage.json", sage_counterexample_output(SAGE_CLEAN_CONJECTURE))
+        block = json.loads(result.read_bytes())["computation_evidence"]
+        with self.subTest("the override flags are applied"):
+            code, out = self.add(
+                root,
+                result,
+                "--evidence-id",
+                "E-SAGE-1",
+                "--source-id",
+                "S1",
+                "--inspection-status",
+                "checked",
+                "--redaction-status",
+                "safe",
+                "--sensitivity-class",
+                "public",
+                "--created-at",
+                "2026-11-09T12:00:00Z",
+                "--limitation",
+                "the graphs came from a stub generator",
+            )
+            self.assertEqual(code, 0, out)
+            [row] = self.evidence_rows(root)
+            self.assertEqual(
+                {
+                    key: row[key]
+                    for key in (
+                        "evidence_id",
+                        "artifact_ref",
+                        "source_ids",
+                        "inspection_status",
+                        "redaction_status",
+                        "sensitivity_class",
+                        "created_at",
+                    )
+                },
+                {
+                    "evidence_id": "E-SAGE-1",
+                    "artifact_ref": "artifacts/computation/E-SAGE-1.json",
+                    "source_ids": ["S1"],
+                    "inspection_status": "checked",
+                    "redaction_status": "safe",
+                    "sensitivity_class": "public",
+                    "created_at": "2026-11-09T12:00:00Z",
+                },
+            )
+            self.assertEqual(row["limitations"], [*block["limitations"], "the graphs came from a stub generator"])
+            self.assertEqual(row["exhaustiveness_argument"], block["exhaustiveness_argument"])
+            self.assertEqual(self.validate_codes(root), set())
+
+        refusals = {
+            "a --created-at that is not a timestamp": (("--created-at", "yesterday"), "C1", "TIMESTAMP_INVALID"),
+            "an unknown claim": ((), "C9", "UNKNOWN_CLAIM_ID"),
+            "a claim id of the wrong form": ((), "claim-1", "CLAIM_ID_INVALID"),
+            "an unknown source": (("--source-id", "S9"), "C1", "UNKNOWN_SOURCE_ID"),
+            "an evidence id already in use": (("--evidence-id", "E-SAGE-1"), "C1", "DUPLICATE_ID"),
+            "an evidence id of the wrong form": (("--evidence-id", "comp-1"), "C1", "EVIDENCE_ID_INVALID"),
+        }
+        for label, (extra, claim_id, expected) in refusals.items():
+            with self.subTest(label):
+                before = self.tree(root)
+                code, out = self.add(root, result, *extra, claim_id=claim_id)
+                self.assertEqual((code, out["status"]), (1, "refused"), out)
+                self.assertEqual(out["codes"], [expected])
+                self.assertEqual(self.tree(root), before)
+
+        with self.subTest("a relation other than asserts or refutes is a usage error"):
+            before = self.tree(root)
+            completed = self.run_runtime(
+                "add-computation-evidence",
+                "--dir",
+                str(root),
+                "--result",
+                str(result),
+                "--claim-id",
+                "C1",
+                "--relation",
+                "maybe",
+            )
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertIn("invalid choice: 'maybe'", completed.stderr)
+            self.assertEqual(self.tree(root), before)
+
+    def call_verb_in_process(self, root: Path, result: Path) -> tuple[int, dict]:
+        """Run the verb in this process, so a test can replace one of its steps."""
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = self.mod.main(
+                ["add-computation-evidence", "--dir", str(root), "--result", str(result), "--claim-id", "C1", "--relation", "asserts"]
+            )
+        return code, json.loads(stdout.getvalue())
+
+    def test_the_row_and_its_copy_are_written_together_or_not_at_all(self) -> None:
+        """The ledger gains one whole line; a write that cannot finish leaves the run as it was."""
+        result = self.result_file("sage.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE))
+
+        with self.subTest("a last ledger line without a newline"):
+            root = self.not_ready_run("no-newline")
+            before = json.dumps(self.hand_typed_row(evidence_id="E-HAND-1"), sort_keys=True).encode("utf-8")
+            (root / "evidence.jsonl").write_bytes(before)
+            code, out = self.add(root, result)
+            self.assertEqual(code, 0, out)
+            self.assertTrue((root / "evidence.jsonl").read_bytes().startswith(before + b"\n"))
+            self.assertEqual([row["evidence_id"] for row in self.evidence_rows(root)], ["E-HAND-1", "E-COMP-1"])
+            self.assertEqual(self.validate_codes(root), set())
+
+        with self.subTest("a symbolic link in place of the artifacts directory"):
+            root = self.not_ready_run("linked-artifacts")
+            elsewhere = self.tmp / "elsewhere"
+            elsewhere.mkdir()
+            try:
+                os.symlink(elsewhere, root / "artifacts", target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            before = self.tree(root)
+            code, out = self.add(root, result)
+            self.assertEqual((code, out["codes"]), (1, ["COMPUTATION_EVIDENCE_NOT_WRITABLE"]), out)
+            self.assertEqual(self.tree(root), before)
+            self.assertEqual(list(elsewhere.iterdir()), [])
+
+        with self.subTest("a ledger write that fails"):
+            root = self.not_ready_run("failed-write")
+            before = self.tree(root)
+            with mock.patch.object(self.mod, "append_line_atomically", side_effect=OSError("disk full")):
+                code, out = self.call_verb_in_process(root, result)
+            self.assertEqual((code, out["codes"]), (1, ["COMPUTATION_EVIDENCE_NOT_WRITABLE"]), out)
+            self.assertEqual(self.tree(root), before)
+
+        with self.subTest("a ledger that changes while the row is prepared"):
+            root = self.not_ready_run("changed-ledger")
+            concurrent = (json.dumps(self.hand_typed_row(evidence_id="E-HAND-2"), sort_keys=True) + "\n").encode("utf-8")
+            original = self.mod.append_line_atomically
+
+            def append_after_another_writer(path: Path, before: bytes, line: bytes) -> None:
+                path.write_bytes(before + concurrent)
+                original(path, before, line)
+
+            with mock.patch.object(self.mod, "append_line_atomically", side_effect=append_after_another_writer):
+                code, out = self.call_verb_in_process(root, result)
+            self.assertEqual((code, out["codes"]), (1, ["COMPUTATION_EVIDENCE_NOT_WRITABLE"]), out)
+            self.assertEqual((root / "evidence.jsonl").read_bytes(), concurrent)
+            self.assertEqual(sorted(path.name for path in root.iterdir()), sorted(
+                ["research_schema.json", "sources.jsonl", "claims.jsonl", "guards.jsonl", "evidence.jsonl", "delivery.json", "delegation"]
+            ))

@@ -94,9 +94,20 @@ prints `NOT READY` with the `validate` codes and its own codes
 (`DELIVERY_DECISION_NOT_FINALIZABLE`,
 `DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED`, `DELIVERY_INPUT_CHANGED`,
 `DELIVERY_INPUT_UNREADABLE` for an input that cannot be hashed,
-`DELIVERY_VALIDATE_CRASHED`) and exits 1. The verdict and exit code are code-enforced; `validate` itself is
-unchanged. A Delivery Check quotes this output verbatim and never upgrades
+`DELIVERY_VALIDATE_CRASHED`) and exits 1. The verdict and exit code are code-enforced; `delivery-check` adds
+its codes without changing what `validate` checks. A Delivery Check quotes this output verbatim and never upgrades
 `NOT READY`.
+
+Record a `graph-verifier` or Sage counterexample result as computation evidence
+for a claim with:
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/deep-research-workflow/run_deep_research_workflow.sh add-computation-evidence --dir /path/to/workspace/research --result /path/to/result.json --claim-id C1 --relation asserts
+```
+
+The verb, its refusals and the delivery rule for computation rows are described
+under "Computation evidence" below.
 
 Verify the helper setup with:
 
@@ -238,6 +249,81 @@ supported claim, a checked report evidence record, current model freshness
 metadata in `model_freshness.json`, and no blocking guard gaps. Use v1 only for
 compatibility workflows that do not claim those serious-research guarantees.
 
+### Computation evidence
+
+`graph-verifier` and the Sage template `counterexample_search.sage` print a
+`computation_evidence` block in their JSON result. Record such a result with
+`add-computation-evidence` rather than typing a `computation` row by hand:
+
+- `--result` must be a regular file, not a symbolic link, of at most 16 MiB in
+  UTF-8, holding exactly one `computation_evidence` object: at the top level,
+  or under `result` as in the record a `research_compute` job leaves. The block
+  carries the ten computation fields (`tool_name`, `tool_version`,
+  `input_encoding_ref`, `checked_domain`, `graph_model_assumptions`,
+  `resource_bounds`, `enumeration_method`, `timeout_status`, `result_status`,
+  `coverage_status`), `evaluated_predicate`, a one-line `outcome`,
+  `limitations`, and `exhaustiveness_argument` when the coverage is
+  `exhaustive` or `bounded_complete`.
+- The verb copies the file byte for byte to
+  `artifacts/computation/<evidence_id>.json` and appends one row to
+  `evidence.jsonl`. The row takes the ten fields, `exhaustiveness_argument` and
+  `evaluated_predicate` from the block, `summary` from `outcome`, `limitations`
+  from the block followed by each `--limitation`, and `payload_hash`, the
+  `sha256:<hex>` of the copy.
+- `--relation asserts` means the claim states that `evaluated_predicate` holds
+  on `checked_domain`; `--relation refutes` means the claim states that it
+  fails there. The verb refuses `asserts` with a `failed` result and `refutes`
+  with a `passed` one. It accepts any other result with either relation, but
+  such a row never counts for delivery.
+- `verification_source` records where the block sat: `research_compute_envelope`
+  when it is under `result` in an object with `job_id`, `template`,
+  `resource_class`, `started_at`, `finished_at`, `result` and `status`
+  `completed`, and `submitted_file` otherwise. It is read from the file's
+  shape, so it is recorded provenance, not a verified identity.
+- Defaults: the evidence id is the smallest free `E-COMP-<n>` (`--evidence-id`
+  sets another), `source_ids` is empty (repeat `--source-id`),
+  `inspection_status` is `unchecked`, `redaction_status` `not_reviewed`,
+  `sensitivity_class` `unknown` and `created_at` the current UTC time;
+  `--inspection-status`, `--redaction-status`, `--sensitivity-class` and
+  `--created-at` override them.
+- The verb prints a `deep-research.add-computation-evidence.v1` object
+  (`status`, `codes`, `errors`, `evidence_id`, `artifact_ref`, `payload_hash`,
+  `verification_source`, `claim_relation`). It exits 0 when the row was
+  appended, 1 when it refused and wrote nothing, and 2 on a usage error.
+  Refusal codes: `NO_COMPUTATION_EVIDENCE_BLOCK` (not JSON, not an object, or
+  zero or two blocks), `COMPUTATION_RESULT_UNREADABLE`,
+  `COMPUTATION_RELATION_CONTRADICTS_RESULT`, `COMPUTATION_EVIDENCE_NOT_WRITABLE`
+  (a link or a file in place of `artifacts/computation/`, an `evidence.jsonl`
+  that is not a regular file, or a write that could not finish), and the
+  `validate` codes for the claim, source and evidence ids, the timestamp, a
+  missing ledger and the block's fields.
+- The verb does not edit `claims.jsonl`: add the printed `evidence_id` to the
+  claim's `evidence_ids` so the claim cites the row.
+
+`validate` re-reads the copy behind every computation row that carries
+`payload_hash`. It reports `COMPUTATION_PAYLOAD_HASH_MISMATCH` when the copy is
+missing, unreadable or has other bytes, and
+`COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD` when the copy does not hold exactly one
+block or the row differs from it (the row's `limitations` must include the
+block's). A `claim_relation` other than `asserts` or `refutes` gives
+`COMPUTATION_CLAIM_RELATION_INVALID`, and a `claim_relation` without
+`evaluated_predicate` gives `COMPUTATION_EVIDENCE_FIELD_REQUIRED`.
+
+For a `ready` or `ready-with-caveats` delivery, a computation row counts only
+when its coverage is `exhaustive` or `bounded_complete`, its relation matches
+its result (`asserts` with `passed`, `refutes` with `failed`), its
+`verification_source` is `research_compute_envelope`, and it has
+`payload_hash`. A claim without `source_ids` that cites only uncounted
+computation rows gets `READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION`. Rows from
+a submitted file, hand-typed rows and rows written before this verb existed
+therefore stay weak; a host re-run that could make a submitted file count is
+deferred. When such a claim cites only computation rows and every counted one
+is `bounded_complete`, one delivery caveat must name the claim id and each
+counted row's `checked_domain`; otherwise `validate` reports
+`READY_BOUNDED_COMPUTATION_WITHOUT_CAVEAT`. These checks are code-enforced.
+Whether the checked domain and the predicate fit the claim stays the parent's
+judgement.
+
 ### Optional formal verification lane
 
 Use the formal lane only when it fits the research object. Lean formalization is
@@ -364,6 +450,9 @@ Output structure guidance:
 - Use `paper-lookup` during Phase 1 when external literature metadata/discovery is needed after the local library-first workflow.
 - Use `research-digest-wrapper` or `rss-news-digest` to seed Phase 1 when the task starts from tracked topics, alerts, or feeds.
 - Use `tikz-draw` only after Phase 2 when there is an explicit figure request or a clear post-analysis figure brief to execute.
+- Use `graph-verifier` or the `sagemath` counterexample template for finite
+  graph checks, and record their JSON result with `add-computation-evidence`
+  (see Computation evidence).
 - Use `formal-skeleton-helper`, `lean-formalization-intake`,
   `lean-explore-mcp`, and `lean-strict-verification-gate` only for optional
   formalization candidates; they supplement the research workflow and do not
@@ -415,6 +504,9 @@ Output structure guidance:
 - [ ] Nontrivial runs include guard outputs with `guard_output_id`
 - [ ] Supported `pass` or `warn` guard outputs cite source or evidence IDs
 - [ ] V2 claims cite evidence IDs, not only source IDs
+- [ ] Computation results a claim cites were recorded with
+      `add-computation-evidence`, the claim's `evidence_ids` name the row, and
+      a claim resting on a bounded run carries a caveat that names the bound
 - [ ] Formalized claims have `formal_targets.jsonl`,
       `statement_equivalence_reviews.jsonl`, scan/typecheck artifacts, and lead
       or human review before support is promoted

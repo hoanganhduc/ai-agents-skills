@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -64,6 +66,7 @@ EVIDENCE_SCHEMA_VERSION = "deep-research.evidence.v2"
 FORMAL_TARGET_SCHEMA_VERSION = "deep-research.formal-target.v1"
 STATEMENT_REVIEW_SCHEMA_VERSION = "deep-research.statement-equivalence-review.v1"
 DELIVERY_CHECK_SCHEMA_VERSION = "deep-research.delivery-check.v1"
+ADD_COMPUTATION_EVIDENCE_SCHEMA_VERSION = "deep-research.add-computation-evidence.v1"
 EVIDENCE_TYPES = {
     "source_note",
     "formal_statement",
@@ -151,6 +154,25 @@ PROMOTION_REVIEW_STATUSES = {"reviewed_by_lead", "reviewed_by_human"}
 PROMOTED_SUPPORT = "supports_claim_after_equivalence_review"
 BLOCKING_LEAN_CHECK_STATUSES = {"not_run", "tool_unavailable", "command_failed", "typecheck_failed"}
 WEAK_COMPUTATION_COVERAGE = {"bounded_only", "partial", "sampled", "heuristic", "timed_out", "failed", "unavailable"}
+COMPUTATION_REQUIRED_FIELDS = (
+    "tool_name",
+    "tool_version",
+    "input_encoding_ref",
+    "checked_domain",
+    "graph_model_assumptions",
+    "resource_bounds",
+    "result_status",
+    "coverage_status",
+    "enumeration_method",
+    "timeout_status",
+)
+COMPUTATION_CLAIM_RELATIONS = {"asserts", "refutes"}
+# For each claim_relation, the result_status that supports the claim and the one that contradicts it.
+SUPPORTING_COMPUTATION_RESULT = {"asserts": "passed", "refutes": "failed"}
+CONTRADICTING_COMPUTATION_RESULT = {"asserts": "failed", "refutes": "passed"}
+# Keys of the record research_compute keeps for a job (template_runner.execute_manifest).
+RESEARCH_COMPUTE_ENVELOPE_KEYS = {"job_id", "status", "template", "resource_class", "started_at", "finished_at", "result"}
+COMPUTATION_RESULT_MAX_BYTES = 16 * 1024 * 1024
 
 SOURCE_REQUIRED = {"source_id", "source", "source_type", "library_status"}
 SOURCE_FIELDS = SOURCE_REQUIRED | {
@@ -211,6 +233,8 @@ EVIDENCE_FIELDS = EVIDENCE_REQUIRED | {
     "enumeration_method",
     "exhaustiveness_argument",
     "timeout_status",
+    "evaluated_predicate",
+    "claim_relation",
     "verification_source",
     "agd_participant_id",
     "agd_round",
@@ -338,6 +362,19 @@ def main(argv: list[str] | None = None) -> int:
     delivery_check_parser.add_argument("--dir", default=".")
     delivery_check_parser.add_argument("--schema-version", choices=["1", "2"], default=None)
 
+    computation_parser = sub.add_parser("add-computation-evidence")
+    computation_parser.add_argument("--dir", default=".")
+    computation_parser.add_argument("--result", required=True)
+    computation_parser.add_argument("--claim-id", required=True)
+    computation_parser.add_argument("--relation", required=True, choices=sorted(COMPUTATION_CLAIM_RELATIONS))
+    computation_parser.add_argument("--source-id", action="append", default=[])
+    computation_parser.add_argument("--evidence-id", default=None)
+    computation_parser.add_argument("--inspection-status", choices=sorted(INSPECTION_STATUSES), default="unchecked")
+    computation_parser.add_argument("--redaction-status", choices=sorted(REDACTION_STATUSES), default="not_reviewed")
+    computation_parser.add_argument("--sensitivity-class", choices=sorted(SENSITIVITY_CLASSES), default="unknown")
+    computation_parser.add_argument("--created-at", default=None)
+    computation_parser.add_argument("--limitation", action="append", default=[])
+
     sub.add_parser("selftest")
 
     args = parser.parse_args(argv)
@@ -353,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
         result = delivery_check(Path(args.dir), schema_version=args.schema_version)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["verdict"] == "READY" else 1
+    if args.command == "add-computation-evidence":
+        result = add_computation_evidence(args)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] == "ok" else 1
     if args.command == "selftest":
         result = selftest()
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -762,6 +803,285 @@ def file_sha256(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+def add_computation_evidence(args: argparse.Namespace) -> dict[str, Any]:
+    """Copy one helper result into the run and append one computation row bound to its bytes.
+
+    Every check runs before anything is written, so a refusal leaves the run as it
+    was. The verb never edits claims.jsonl.
+    """
+    root = Path(args.dir)
+    errors: list[dict[str, Any]] = []
+    report: dict[str, Any] = {
+        "schema_version": ADD_COMPUTATION_EVIDENCE_SCHEMA_VERSION,
+        "status": "refused",
+        "codes": [],
+        "errors": errors,
+        "evidence_id": None,
+        "artifact_ref": None,
+        "payload_hash": None,
+        "verification_source": None,
+        "claim_relation": args.relation,
+    }
+
+    result_path = Path(args.result)
+    payload: bytes | None = None
+    block: dict[str, Any] | None = None
+    provenance: str | None = None
+    try:
+        payload = read_regular_file(result_path, COMPUTATION_RESULT_MAX_BYTES)
+        text = payload.decode("utf-8-sig")
+    except (OSError, ValueError) as exc:
+        payload = None
+        add_error(errors, "COMPUTATION_RESULT_UNREADABLE", result_path, f"--result cannot be read: {exc}")
+    else:
+        try:
+            block, provenance = locate_computation_evidence(parse_computation_result(text))
+        except ValueError as exc:
+            add_error(errors, "NO_COMPUTATION_EVIDENCE_BLOCK", result_path, str(exc))
+
+    claims_path = root / "claims.jsonl"
+    claim_ids = {row.get("claim_id") for row in read_jsonl(claims_path, "claims", errors) if isinstance(row.get("claim_id"), str)}
+    if not CLAIM_ID_RE.fullmatch(args.claim_id):
+        add_error(errors, "CLAIM_ID_INVALID", claims_path, f"--claim-id must look like C1, not {args.claim_id!r}")
+    elif claims_path.is_file() and args.claim_id not in claim_ids:
+        add_error(errors, "UNKNOWN_CLAIM_ID", claims_path, f"unknown claim_id {args.claim_id}")
+
+    source_ids = list(dict.fromkeys(args.source_id))
+    if source_ids:
+        sources_path = root / "sources.jsonl"
+        known_sources = {
+            row.get("source_id") for row in read_jsonl(sources_path, "sources", errors) if isinstance(row.get("source_id"), str)
+        }
+        for source_id in source_ids:
+            if sources_path.is_file() and source_id not in known_sources:
+                add_error(errors, "UNKNOWN_SOURCE_ID", sources_path, f"unknown source_id {source_id}")
+
+    evidence_path = root / "evidence.jsonl"
+    ledger: bytes | None = None
+    evidence_ids: set[str] = set()
+    if not path_present_nofollow(evidence_path):
+        add_error(errors, "MISSING_FILE", evidence_path, "missing evidence file")
+    else:
+        try:
+            ledger = read_regular_file(evidence_path)
+            rows = parse_jsonl_text(ledger.decode("utf-8"), evidence_path, errors)
+        except UnicodeDecodeError as exc:
+            add_error(errors, "FILE_ENCODING_INVALID", evidence_path, f"evidence must be valid UTF-8: {exc}")
+        except (OSError, ValueError) as exc:
+            add_error(errors, "COMPUTATION_EVIDENCE_NOT_WRITABLE", evidence_path, f"evidence.jsonl cannot be read and rewritten: {exc}")
+        else:
+            evidence_ids = {row.get("evidence_id") for row in rows if isinstance(row.get("evidence_id"), str)}
+
+    artifact_dir = root / "artifacts" / "computation"
+    for directory in (root / "artifacts", artifact_dir):
+        if path_present_nofollow(directory) and (directory.is_symlink() or not directory.is_dir()):
+            add_error(errors, "COMPUTATION_EVIDENCE_NOT_WRITABLE", directory, "must be a directory, not a symbolic link or a file")
+    if args.evidence_id is not None:
+        evidence_id = args.evidence_id
+        if not EVIDENCE_ID_RE.fullmatch(evidence_id) or evidence_id.startswith("E-AGD-"):
+            add_error(errors, "EVIDENCE_ID_INVALID", evidence_path, f"--evidence-id {evidence_id!r} must look like E1 or E-NAME, outside the E-AGD- prefix")
+        elif evidence_id in evidence_ids or path_present_nofollow(artifact_dir / f"{evidence_id}.json"):
+            add_error(errors, "DUPLICATE_ID", evidence_path, f"evidence_id {evidence_id} or its artifact already exists")
+    else:
+        number = 1
+        while f"E-COMP-{number}" in evidence_ids or path_present_nofollow(artifact_dir / f"E-COMP-{number}.json"):
+            number += 1
+        evidence_id = f"E-COMP-{number}"
+
+    created_at = args.created_at
+    if created_at is None:
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif parse_rfc3339(created_at) is None:
+        add_error(errors, "TIMESTAMP_INVALID", evidence_path, f"--created-at {created_at!r} must be an RFC3339 timestamp")
+
+    row: dict[str, Any] = {}
+    if block is not None and payload is not None:
+        if CONTRADICTING_COMPUTATION_RESULT[args.relation] == block.get("result_status"):
+            add_error(
+                errors,
+                "COMPUTATION_RELATION_CONTRADICTS_RESULT",
+                result_path,
+                f"--relation {args.relation} contradicts result_status {block.get('result_status')!r}",
+            )
+        limitations = block.get("limitations")
+        if not isinstance(limitations, list) or not all(isinstance(item, str) for item in limitations):
+            add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", result_path, "computation_evidence requires limitations, a list of strings")
+            limitations = []
+        if not is_nonempty_string(block.get("outcome")):
+            add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", result_path, "computation_evidence requires a non-empty outcome")
+        row = {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
+            "evidence_id": evidence_id,
+            "evidence_type": "computation",
+            "source_ids": source_ids,
+            "claim_ids": [args.claim_id],
+            "artifact_ref": f"artifacts/computation/{evidence_id}.json",
+            "summary": block.get("outcome"),
+            "inspection_status": args.inspection_status,
+            "redaction_status": args.redaction_status,
+            "sensitivity_class": args.sensitivity_class,
+            "created_at": created_at,
+            "limitations": [*limitations, *args.limitation],
+            **{field: block.get(field) for field in COMPUTATION_REQUIRED_FIELDS},
+            "evaluated_predicate": block.get("evaluated_predicate"),
+            "verification_source": provenance,
+            "claim_relation": args.relation,
+            "payload_hash": "sha256:" + hashlib.sha256(payload).hexdigest(),
+        }
+        if "exhaustiveness_argument" in block:
+            row["exhaustiveness_argument"] = block["exhaustiveness_argument"]
+        validate_computation_evidence(row, result_path, errors, None)
+
+    if not errors:
+        assert payload is not None and ledger is not None
+        line = (json.dumps(row, sort_keys=True) + "\n").encode("utf-8")
+        try:
+            write_computation_evidence(root, artifact_dir / f"{evidence_id}.json", payload, evidence_path, ledger, line)
+        except (OSError, ValueError) as exc:
+            add_error(errors, "COMPUTATION_EVIDENCE_NOT_WRITABLE", evidence_path, f"nothing was written: {exc}")
+    report["codes"] = sorted({error["code"] for error in errors})
+    if not errors:
+        report.update({
+            "status": "ok",
+            "evidence_id": evidence_id,
+            "artifact_ref": row["artifact_ref"],
+            "payload_hash": row["payload_hash"],
+            "verification_source": provenance,
+        })
+    return report
+
+
+def read_regular_file(path: Path, limit: int | None = None) -> bytes:
+    """Read a regular file through a descriptor that does not follow a final symbolic link.
+
+    Raise ValueError for a symbolic link, a file that is not regular, one over
+    limit bytes or one that changed while it was read; OSError when it cannot be
+    opened.
+    """
+    status = os.lstat(path)
+    if stat.S_ISLNK(status.st_mode):
+        raise ValueError(f"{path} is a symbolic link")
+    if not stat.S_ISREG(status.st_mode):
+        raise ValueError(f"{path} is not a regular file")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"{path} is not a regular file")
+        if limit is not None and before.st_size > limit:
+            raise ValueError(f"{path} is larger than {limit} bytes")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read() if limit is None else stream.read(limit + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if limit is not None and len(raw) > limit:
+        raise ValueError(f"{path} is larger than {limit} bytes")
+    if any(getattr(before, key) != getattr(after, key) for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")):
+        raise ValueError(f"{path} changed while it was read")
+    return raw
+
+
+def parse_computation_result(text: str) -> Any:
+    """Parse a helper's JSON result. A repeated key makes the result ambiguous, so it is refused."""
+    try:
+        return json.loads(text, object_pairs_hook=object_without_duplicate_keys)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"the result is not valid JSON: {exc}") from None
+    except RecursionError:
+        raise ValueError("the result is nested too deeply to parse") from None
+
+
+def object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"the result repeats the JSON key {key!r}")
+        value[key] = item
+    return value
+
+
+def locate_computation_evidence(payload: Any) -> tuple[dict[str, Any], str]:
+    """Return a helper result's one computation_evidence block and where the block came from.
+
+    The block sits at the top level, or under "result" in the record research_compute
+    keeps for a job. The provenance is research_compute_envelope when that record has
+    all its keys and its job completed, and submitted_file otherwise. It is read from
+    the file's shape: it records where the bytes say they come from, not who ran them.
+    Raise ValueError unless there is exactly one block and it is a JSON object.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("the result is not a JSON object")
+    found: list[tuple[Any, bool]] = []
+    if "computation_evidence" in payload:
+        found.append((payload["computation_evidence"], False))
+    nested = payload.get("result")
+    if isinstance(nested, dict) and "computation_evidence" in nested:
+        found.append((nested["computation_evidence"], True))
+    if len(found) != 1:
+        raise ValueError(
+            f"the result holds {len(found)} computation_evidence blocks; exactly one is required, "
+            "at the top level or under result"
+        )
+    block, under_result = found[0]
+    if not isinstance(block, dict):
+        raise ValueError("computation_evidence is not a JSON object")
+    envelope = under_result and RESEARCH_COMPUTE_ENVELOPE_KEYS <= set(payload) and payload.get("status") == "completed"
+    return block, "research_compute_envelope" if envelope else "submitted_file"
+
+
+def write_computation_evidence(root: Path, artifact: Path, payload: bytes, ledger_path: Path, ledger: bytes, line: bytes) -> None:
+    """Write the artifact exclusively, then the ledger; on failure remove what this call created."""
+    created: list[Path] = []
+    try:
+        for directory in (root / "artifacts", root / "artifacts" / "computation"):
+            try:
+                os.mkdir(directory)
+            except FileExistsError:
+                if directory.is_symlink() or not directory.is_dir():
+                    raise NotADirectoryError(f"{directory} is not a directory") from None
+            else:
+                created.append(directory)
+        opened = False
+        try:
+            with open(artifact, "xb") as handle:
+                opened = True
+                handle.write(payload)
+            append_line_atomically(ledger_path, ledger, line)
+        except BaseException:
+            if opened:
+                with contextlib.suppress(OSError):
+                    artifact.unlink()
+            raise
+    except BaseException:
+        for directory in reversed(created):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+        raise
+
+
+def append_line_atomically(path: Path, before: bytes, line: bytes) -> None:
+    """Replace path with its earlier bytes plus one line, through a temporary file and os.replace.
+
+    Refuse when the file no longer holds the bytes the line was prepared against.
+    """
+    separator = b"\n" if before and not before.endswith(b"\n") else b""
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(before + separator + line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, stat.S_IMODE(os.lstat(path).st_mode))
+        if read_regular_file(path) != before:
+            raise ValueError(f"{path.name} changed while the row was prepared")
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
 def read_jsonl(path: Path, artifact: str, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not path.is_file():
         add_error(errors, "MISSING_FILE", path, f"missing {artifact} file")
@@ -769,6 +1089,10 @@ def read_jsonl(path: Path, artifact: str, errors: list[dict[str, Any]]) -> list[
     text = read_utf8_text(path, artifact, errors)
     if text is None:
         return []
+    return parse_jsonl_text(text, path, errors)
+
+
+def parse_jsonl_text(text: str, path: Path, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
@@ -972,7 +1296,7 @@ def validate_evidence(
         for claim_id in row_claim_ids:
             if claim_id not in claim_ids:
                 add_error(errors, "UNKNOWN_CLAIM_ID", path, f"line {line}: unknown claim_id {claim_id}")
-        validate_artifact_ref(row.get("artifact_ref"), root, path, errors, line, "artifact_ref")
+        artifact = validate_artifact_ref(row.get("artifact_ref"), root, path, errors, line, "artifact_ref")
         if not is_nonempty_string(row.get("summary")):
             add_error(errors, "EVIDENCE_SUMMARY_EMPTY", path, f"line {line}: summary must be non-empty")
         if row.get("inspection_status") not in INSPECTION_STATUSES:
@@ -985,6 +1309,8 @@ def validate_evidence(
         require_string_list(row.get("limitations"), errors, path, line, "limitations")
         if evidence_type == "computation":
             validate_computation_evidence(row, path, errors, line)
+            if "payload_hash" in row:
+                validate_computation_payload(row, artifact, path, errors, line)
         if evidence_type == "lean_declaration_search":
             validate_lean_declaration_search_evidence(row, path, errors, line)
         if evidence_type == "axle_remote_check":
@@ -1006,26 +1332,68 @@ def validate_computation_evidence(
     errors: list[dict[str, Any]],
     line: int | None,
 ) -> None:
-    for field in (
-        "tool_name",
-        "tool_version",
-        "input_encoding_ref",
-        "checked_domain",
-        "graph_model_assumptions",
-        "resource_bounds",
-        "result_status",
-        "coverage_status",
-        "enumeration_method",
-        "timeout_status",
-    ):
+    # add-computation-evidence checks a row it has not written yet, so it passes no line.
+    location = f"line {line}: " if line is not None else ""
+    for field in COMPUTATION_REQUIRED_FIELDS:
         if not is_nonempty_string(row.get(field)):
-            add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", path, f"line {line}: computation evidence requires {field}")
+            add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", path, f"{location}computation evidence requires {field}")
     if row.get("result_status") not in COMPUTATION_RESULT_STATUSES:
-        add_error(errors, "COMPUTATION_RESULT_STATUS_INVALID", path, f"line {line}: invalid computation result_status")
+        add_error(errors, "COMPUTATION_RESULT_STATUS_INVALID", path, f"{location}invalid computation result_status")
     if row.get("coverage_status") not in COMPUTATION_COVERAGE_STATUSES:
-        add_error(errors, "COMPUTATION_COVERAGE_STATUS_INVALID", path, f"line {line}: invalid computation coverage_status")
+        add_error(errors, "COMPUTATION_COVERAGE_STATUS_INVALID", path, f"{location}invalid computation coverage_status")
     if row.get("coverage_status") in {"exhaustive", "bounded_complete"} and not is_nonempty_string(row.get("exhaustiveness_argument")):
-        add_error(errors, "COMPUTATION_EXHAUSTIVENESS_REQUIRED", path, f"line {line}: exhaustive computation evidence requires exhaustiveness_argument")
+        add_error(errors, "COMPUTATION_EXHAUSTIVENESS_REQUIRED", path, f"{location}exhaustive computation evidence requires exhaustiveness_argument")
+    if "claim_relation" in row:
+        relation = row.get("claim_relation")
+        if not isinstance(relation, str) or relation not in COMPUTATION_CLAIM_RELATIONS:
+            add_error(errors, "COMPUTATION_CLAIM_RELATION_INVALID", path, f"{location}claim_relation must be 'asserts' or 'refutes'")
+        if not is_nonempty_string(row.get("evaluated_predicate")):
+            add_error(errors, "COMPUTATION_EVIDENCE_FIELD_REQUIRED", path, f"{location}computation evidence with claim_relation requires evaluated_predicate")
+
+
+def validate_computation_payload(
+    row: dict[str, Any],
+    artifact: Path | None,
+    path: Path,
+    errors: list[dict[str, Any]],
+    line: int | None,
+) -> None:
+    """Re-hash the result a computation row's payload_hash binds, then compare the row with its block."""
+    try:
+        if artifact is None:
+            raise ValueError("artifact_ref does not name a file in the run")
+        payload = read_regular_file(artifact, COMPUTATION_RESULT_MAX_BYTES)
+    except (OSError, ValueError) as exc:
+        add_error(errors, "COMPUTATION_PAYLOAD_HASH_MISMATCH", path, f"line {line}: the payload behind payload_hash cannot be read: {exc}")
+        return
+    if "sha256:" + hashlib.sha256(payload).hexdigest() != row.get("payload_hash"):
+        add_error(errors, "COMPUTATION_PAYLOAD_HASH_MISMATCH", path, f"line {line}: payload_hash does not match the bytes of {row.get('artifact_ref')}")
+        return
+    try:
+        block, provenance = locate_computation_evidence(parse_computation_result(payload.decode("utf-8-sig")))
+    except ValueError as exc:
+        add_error(errors, "COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD", path, f"line {line}: {exc}")
+        return
+    differing = [
+        field
+        for field in (*COMPUTATION_REQUIRED_FIELDS, "exhaustiveness_argument", "evaluated_predicate")
+        if row.get(field) != block.get(field)
+    ]
+    if row.get("summary") != block.get("outcome"):
+        differing.append("summary")
+    if row.get("verification_source") != provenance:
+        differing.append("verification_source")
+    block_limitations = block.get("limitations")
+    row_limitations = row.get("limitations") if isinstance(row.get("limitations"), list) else []
+    if not isinstance(block_limitations, list) or any(item not in row_limitations for item in block_limitations):
+        differing.append("limitations")
+    if differing:
+        add_error(
+            errors,
+            "COMPUTATION_ROW_DIVERGES_FROM_PAYLOAD",
+            path,
+            f"line {line}: fields differ from the payload's computation_evidence block: {differing}",
+        )
 
 
 def validate_lean_declaration_search_evidence(
@@ -1576,7 +1944,15 @@ def validate_finalizable_delivery_claims(
         if v2_mode:
             linked_evidence = [evidence_map.get(evidence_id) for evidence_id in evidence_ids if evidence_id in evidence_map]
             if not source_ids and linked_evidence and all(is_weak_computation_evidence(item) for item in linked_evidence):
-                add_error(errors, "READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION", path, f"claim {claim_id} relies only on bounded/partial computation evidence")
+                add_error(
+                    errors,
+                    "READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION",
+                    path,
+                    f"claim {claim_id} relies only on computation evidence that does not count: a counted row has "
+                    "exhaustive or bounded_complete coverage, a claim_relation its result_status supports, "
+                    "verification_source research_compute_envelope and a payload_hash",
+                )
+            validate_bounded_computation_caveat(claim_id, source_ids, linked_evidence, caveats, path, errors)
             validate_claim_library_provenance(claim_id, source_ids, source_map, root, path, errors)
     for target_id, target in formal_targets.items():
         if target.get("claim_support_status") == PROMOTED_SUPPORT:
@@ -1585,6 +1961,32 @@ def validate_finalizable_delivery_claims(
             continue
         if target.get("formal_check_requirement") == "required_for_delivery":
             add_error(errors, "READY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED", path, f"required formal target {target_id} is not promoted formal support")
+
+
+def validate_bounded_computation_caveat(
+    claim_id: str,
+    source_ids: list[str],
+    linked_evidence: list[dict[str, Any] | None],
+    caveats: Any,
+    path: Path,
+    errors: list[dict[str, Any]],
+) -> None:
+    """A claim that rests only on computation, counted only within a bound, needs a caveat naming the bound."""
+    if source_ids or not linked_evidence or any(not item or item.get("evidence_type") != "computation" for item in linked_evidence):
+        return
+    counted = [item for item in linked_evidence if is_counted_computation_evidence(item)]
+    if not counted or any(item.get("coverage_status") != "bounded_complete" for item in counted):
+        return
+    domains = [str(item.get("checked_domain")) for item in counted]
+    caveat_texts = [str(caveat) for caveat in caveats] if isinstance(caveats, list) else []
+    if not any(claim_id in caveat and all(domain in caveat for domain in domains) for caveat in caveat_texts):
+        add_error(
+            errors,
+            "READY_BOUNDED_COMPUTATION_WITHOUT_CAVEAT",
+            path,
+            f"claim {claim_id} rests only on bounded_complete computation; one delivery caveat must name "
+            f"{claim_id} and each checked_domain: {domains}",
+        )
 
 
 def validate_finalizable_guards(
@@ -1690,10 +2092,33 @@ def validate_model_freshness(root: Path, path: Path, errors: list[dict[str, Any]
     validate_artifact_ref(data.get("model_catalog_ref"), root, path, errors, None, "model_catalog_ref")
 
 
-def is_weak_computation_evidence(row: dict[str, Any] | None) -> bool:
+def is_counted_computation_evidence(row: dict[str, Any] | None) -> bool:
+    """Whether a computation row can carry a ready claim.
+
+    Its coverage is exhaustive or bounded_complete, its claim_relation is one its
+    result_status supports, its block came from a research_compute envelope, and
+    payload_hash binds the bytes that validate re-hashes.
+    """
     if not row or row.get("evidence_type") != "computation":
         return False
-    return row.get("coverage_status") in WEAK_COMPUTATION_COVERAGE
+    coverage = row.get("coverage_status")
+    relation = row.get("claim_relation")
+    return (
+        isinstance(coverage, str)
+        and coverage in COMPUTATION_COVERAGE_STATUSES - WEAK_COMPUTATION_COVERAGE
+        and isinstance(relation, str)
+        and relation in SUPPORTING_COMPUTATION_RESULT
+        and SUPPORTING_COMPUTATION_RESULT[relation] == row.get("result_status")
+        and row.get("verification_source") == "research_compute_envelope"
+        and is_nonempty_string(row.get("payload_hash"))
+    )
+
+
+def is_weak_computation_evidence(row: dict[str, Any] | None) -> bool:
+    """A computation row that does not count; a row of another type is never weak."""
+    if not row or row.get("evidence_type") != "computation":
+        return False
+    return not is_counted_computation_evidence(row)
 
 
 def validate_delegation_dir(path: Path, errors: list[dict[str, Any]]) -> list[Path]:

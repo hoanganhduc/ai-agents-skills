@@ -27,6 +27,11 @@ delivery-check (validate, then READY only for a finalizable decision, promoted r
   & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
     "skills/deep-research-workflow/run_deep_research_workflow.ps1" delivery-check --dir C:\path\to\workspace\research
 
+add-computation-evidence (copy a graph-verifier or Sage result into the run and append one computation row for a claim; exit 1 refuses and writes nothing):
+
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" add-computation-evidence --dir C:\path\to\workspace\research --result C:\path\to\result.json --claim-id C1 --relation asserts
+
 selftest:
 
   & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
