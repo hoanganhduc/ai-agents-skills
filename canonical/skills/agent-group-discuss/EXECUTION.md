@@ -461,6 +461,7 @@ Additional files for `external_cli` participants:
 | `raw/` | parent-owned raw stdout/stderr or command-shape artifacts |
 | `parsed/` | parsed participant outputs |
 | `validation/` | parent validation reports |
+| `stamps/` | dispatcher stamps, written before launch: provider and model family from the dispatch plan |
 | `transport_manifest.json` | prompt/input transport and chunk manifest |
 | `timeout_events.jsonl` | timeout and missing-final-marker events |
 | `truncation_events.jsonl` | truncation or malformed-rendering events |

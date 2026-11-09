@@ -11,7 +11,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .delegation import PROVIDER_CLI_SPECS, build_external_agent_prechecks, redacted_command
+from .delegation import (
+    PROVIDER_CLI_SPECS,
+    PROVIDER_ENDPOINT_IDENTITY_VARS,
+    VERIFIED_FAMILIES,
+    build_external_agent_prechecks,
+    provider_family,
+    redacted_command,
+)
 from .delegation_packets import RESULT_SCHEMA_VERSION, TASK_SCHEMA_VERSION, validate_result
 from .discovery import current_platform, discover_tool
 from .grok import (
@@ -150,6 +157,7 @@ CLAIMED_IDENTITY_KEYS = frozenset({
     "family_source",
 })
 MAX_TASK_CHARS = 200_000
+DISPATCH_STAMP_SCHEMA_VERSION = "external-agent-dispatch-stamp.v1"
 
 
 def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, Any]:
@@ -162,6 +170,7 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
         args.resolved_model,
         env,
     )
+    exclude_families = excluded_families(getattr(args, "exclude_family", None) or [])
     run_id = now_run_id()
     run_dir = resolve_run_dir(args.root, args.run_dir, run_id)
     prechecks = build_external_agent_prechecks(args.root, platform, manifests["delegation"], env=env)
@@ -176,6 +185,7 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
         resolved_model=args.resolved_model,
         resolved_thinking=args.resolved_thinking,
         env=env,
+        exclude_families=exclude_families,
     )
     result: dict[str, Any] = {
         "schema_version": "external-agent-dispatch.v1",
@@ -209,11 +219,12 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
         if item["status"] != "ready":
             participants.append(item)
             continue
+        stamped = {**item, "stamp_ref": write_dispatch_stamp(args.root, run_dir, run_id, item)}
         participants.append(
             run_external_participant(
                 args.root,
                 run_dir,
-                item,
+                stamped,
                 task_text,
                 role=args.role,
                 template=args.template,
@@ -248,6 +259,16 @@ def validate_resolved_model_syntax_before_prechecks(
         model = resolved_model or env.get("AAS_KIMI_LATEST_MODEL")
         if model and KIMI_MODEL_ID_RE.fullmatch(model) is None:
             raise ValueError("resolved Kimi model ID is invalid")
+
+
+def excluded_families(values: list[str]) -> frozenset[str]:
+    """The model families --exclude-family names; only a verified family can be named."""
+    unknown = sorted(str(value) for value in set(values) - VERIFIED_FAMILIES)
+    if unknown:
+        raise ValueError(
+            f"--exclude-family takes {', '.join(sorted(VERIFIED_FAMILIES))}, not {', '.join(unknown)}"
+        )
+    return frozenset(values)
 
 
 def read_task_text(task: str | None, task_file: Path | None) -> str:
@@ -301,7 +322,7 @@ def resolve_run_dir(root: Path, run_dir: Path | None, run_id: str) -> Path:
 def ensure_run_dir(root: Path, run_dir: Path) -> None:
     path = run_dir / "manifest.json"
     preflight_state_path(root, path)
-    for child in ("profiles", "probes", "raw", "parsed", "validation"):
+    for child in ("profiles", "probes", "raw", "parsed", "validation", "stamps"):
         child_path = run_dir / child / ".keep"
         preflight_state_path(root, child_path)
         child_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,6 +362,7 @@ def run_manifest(result: dict[str, Any], participants: list[dict[str, Any]]) -> 
                 "parsed_ref": item.get("parsed_ref"),
                 "result_packet_ref": item.get("result_packet_ref"),
                 "validation_ref": item.get("validation_ref"),
+                "stamp_ref": item.get("stamp_ref"),
             }
             for item in participants
         ],
@@ -359,9 +381,10 @@ def build_dispatch_plan(
     resolved_model: str | None,
     resolved_thinking: str | None,
     env: dict[str, str],
+    exclude_families: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     provider_checks = {item["provider"]: item for item in prechecks["providers"]}
-    providers = expand_auto_providers(requested, prechecks, max_providers)
+    providers = expand_auto_providers(requested, prechecks, max_providers, exclude_families=exclude_families)
     return [
         build_provider_dispatch_plan(
             root,
@@ -373,12 +396,19 @@ def build_dispatch_plan(
             resolved_model=resolved_model,
             resolved_thinking=resolved_thinking,
             env=env,
+            exclude_families=exclude_families,
         )
         for provider in providers
     ]
 
 
-def expand_auto_providers(requested: list[str], prechecks: dict[str, Any], max_providers: int) -> list[str]:
+def expand_auto_providers(
+    requested: list[str],
+    prechecks: dict[str, Any],
+    max_providers: int,
+    *,
+    exclude_families: frozenset[str] = frozenset(),
+) -> list[str]:
     if requested != ["auto"]:
         return requested
     candidates = [
@@ -386,6 +416,14 @@ def expand_auto_providers(requested: list[str], prechecks: dict[str, Any], max_p
         for provider in prechecks["policy"]["active_providers"]
         if provider in EXTERNAL_PROVIDERS
     ]
+    if exclude_families:
+        # An exclusion asks for families that can be told apart, so the
+        # providers the table leaves unverified go too.
+        candidates = [
+            provider
+            for provider in candidates
+            if provider_family(provider) not in exclude_families | {"unverified"}
+        ]
     return candidates[:max(1, max_providers)]
 
 
@@ -400,7 +438,17 @@ def build_provider_dispatch_plan(
     resolved_model: str | None,
     resolved_thinking: str | None,
     env: dict[str, str],
+    exclude_families: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
+    # Checked before any command is resolved or discovered, so an excluded
+    # provider's CLI is never started, not even for a probe.
+    family = provider_family(provider)
+    if family in exclude_families:
+        return {
+            "provider": provider,
+            "status": "blocked",
+            "reason": f"provider family {family} is excluded by --exclude-family",
+        }
     if provider == "codex":
         return {
             "provider": provider,
@@ -503,6 +551,7 @@ def build_provider_dispatch_plan(
     command = render_model_placeholders(command_template, model_profile)
     spec = delegation["providers"][provider]
     transport = RUNTIME_ARGV_TRANSPORT if provider in ARGV_PROMPT_PROVIDERS else "stdin"
+    model_family, unverified_by = dispatch_family(provider, {**env, **provider_env_defaults(provider, env)})
     item = {
         "provider": provider,
         "status": "ready",
@@ -515,6 +564,8 @@ def build_provider_dispatch_plan(
         "input_transport": transport,
         "output_contract": "json-envelope-final-marker",
         "research_model_policy": model_profile,
+        "model_family": model_family,
+        "unverified_by": unverified_by,
     }
     if grok_profile_status is not None:
         item["grok_profile_status"] = grok_profile_status
@@ -920,6 +971,31 @@ def dispatch_command_env_name(provider: str) -> str:
     return f"AAS_{provider.upper()}_DISPATCH_COMMAND"
 
 
+def dispatch_family(provider: str, env: dict[str, str]) -> tuple[str, list[str]]:
+    """Return the model family a stamp records for ``provider``, and why it is unverified.
+
+    ``env`` is the child's environment. The provider table names the family only
+    while nothing there can change what runs or where it connects: the
+    dispatch-command override, the binary override AAS_<PROVIDER>, or one of the
+    provider's endpoint variables (DEEPSEEK_BASE_URL at the dispatcher's own
+    default aside). Each such variable that is set is listed by name, never by
+    value, and the family is then "unverified". A configuration file the CLI
+    reads can still route the request elsewhere, so even a table family is a
+    recorded label, not a verified model identity.
+    """
+    names = {
+        dispatch_command_env_name(provider),
+        f"AAS_{provider.upper()}",
+        *PROVIDER_ENDPOINT_IDENTITY_VARS.get(provider, ()),
+    }
+    unverified_by = sorted(
+        name
+        for name in names
+        if env.get(name) and not (name == "DEEPSEEK_BASE_URL" and env[name] == DEEPSEEK_DEFAULT_BASE_URL)
+    )
+    return ("unverified" if unverified_by else provider_family(provider)), unverified_by
+
+
 def resolve_model_profile(
     provider: str,
     research: bool,
@@ -1126,7 +1202,7 @@ def run_external_participant(
     )
     write_json(root, run_dir / "validation" / f"{participant_id}.json", validation)
     write_event_artifacts(root, run_dir, participant_id, completed, validation)
-    write_evidence_map(root, run_dir, participant_id, parsed, validation)
+    write_evidence_map(root, run_dir, plan, parsed, validation)
     return participant_result(plan, run_dir, validation["status"], validation, parsed)
 
 
@@ -1707,13 +1783,35 @@ def write_event_artifacts(
         })
 
 
+def write_dispatch_stamp(root: Path, run_dir: Path, run_id: str, plan: dict[str, Any]) -> str:
+    """Write stamps/<participant_id>.json before the participant launches; return its run-relative ref.
+
+    The stamp takes the provider and model family from the dispatcher's own
+    plan, never from what the participant prints. It is recorded provenance,
+    not a verified model identity.
+    """
+    participant_id = plan["participant_id"]
+    path = run_dir / "stamps" / f"{participant_id}.json"
+    write_json(root, path, {
+        "schema_version": DISPATCH_STAMP_SCHEMA_VERSION,
+        "run_id": run_id,
+        "participant_id": participant_id,
+        "provider": plan["provider"],
+        "model_family": plan["model_family"],
+        "unverified_by": plan["unverified_by"],
+        "stamped_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    })
+    return rel_ref(run_dir, path)
+
+
 def write_evidence_map(
     root: Path,
     run_dir: Path,
-    participant_id: str,
+    plan: dict[str, Any],
     parsed: dict[str, Any],
     validation: dict[str, Any],
 ) -> None:
+    participant_id = plan["participant_id"]
     findings = parsed.get("findings", []) if isinstance(parsed, dict) else []
     if not isinstance(findings, list):
         return
@@ -1721,6 +1819,11 @@ def write_evidence_map(
         finding_id = finding.get("id") if isinstance(finding, dict) else None
         append_jsonl(root, run_dir / "evidence-map.jsonl", {
             "participant_id": participant_id,
+            # From the plan, never from the participant's output; a plan built
+            # without a family counts as unverified.
+            "provider": plan["provider"],
+            "model_family": plan.get("model_family", "unverified"),
+            "stamp_ref": plan.get("stamp_ref"),
             "role": "external_cli",
             "parsed_finding_id": finding_id or f"finding-{index}",
             "validation_artifact": f"validation/{participant_id}.json",
@@ -1763,6 +1866,7 @@ def participant_result(
         "profile_ref": rel_ref(run_dir, run_dir / "profiles" / f"{participant_id}.json"),
         "parsed_ref": rel_ref(run_dir, run_dir / "parsed" / f"{participant_id}.json"),
         "validation_ref": rel_ref(run_dir, run_dir / "validation" / f"{participant_id}.json"),
+        "stamp_ref": plan.get("stamp_ref"),
         "validation": validation,
     }
     if parsed is not None and parsed.get("status") != "parse-failed":

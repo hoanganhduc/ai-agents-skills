@@ -105,6 +105,73 @@ PROVIDER_CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "kimi": (".kimi-code",),
 }
 
+# Provider -> model family, the same table as panel_parent._PROVIDER_FAMILIES (a
+# test keeps the two equal). "unverified" marks a CLI that can route a request to
+# models of several families, so without a host-attested upstream model its
+# output never counts as an independent family.
+PROVIDER_FAMILIES: dict[str, str] = {
+    "claude": "anthropic",
+    "codex": "openai",
+    "grok": "xai",
+    "kimi": "unverified",
+    "codewhale": "deepseek",
+    "deepseek": "deepseek",
+    "antigravity": "google",
+    "antigravity-cli": "google",
+    "opencode": "unverified",
+    "copilot": "unverified",
+}
+VERIFIED_FAMILIES = frozenset(family for family in PROVIDER_FAMILIES.values() if family != "unverified")
+
+# Endpoint variables that can point a provider's CLI at another service, the
+# same table as the autonomous-research-loop runtime's
+# PROVIDER_ENDPOINT_IDENTITY_VARS (a test keeps the two equal).
+PROVIDER_ENDPOINT_IDENTITY_VARS: dict[str, frozenset[str]] = {
+    "claude": frozenset(
+        {
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_API_URL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        }
+    ),
+    "codex": frozenset(
+        {
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+            "CODEX_BASE_URL",
+            "AZURE_OPENAI_ENDPOINT",
+        }
+    ),
+    "deepseek": frozenset(
+        {
+            "DEEPSEEK_BASE_URL",
+            "DEEPSEEK_API_BASE",
+            "CODEWHALE_BASE_URL",
+            "CODEWHALE_PROVIDER",
+        }
+    ),
+    "grok": frozenset({"XAI_BASE_URL", "GROK_BASE_URL"}),
+    "antigravity": frozenset(
+        {
+            "GOOGLE_GEMINI_BASE_URL",
+            "GOOGLE_VERTEX_BASE_URL",
+            "GEMINI_NEXT_GEN_API_BASE_URL",
+        }
+    ),
+}
+
+
+def provider_family(provider: str) -> str:
+    """Return the model family the provider table names, "unverified" for any other provider.
+
+    Normalised as panel_parent.provider_family normalises: case, surrounding
+    space and "_" for "-" do not matter.
+    """
+    normalized = str(provider or "unknown").strip().lower().replace("_", "-")
+    return PROVIDER_FAMILIES.get(normalized, "unverified")
+
 
 def build_external_agent_prechecks(
     root: Path,

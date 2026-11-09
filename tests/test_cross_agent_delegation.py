@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import errno
 import io
@@ -13,11 +14,11 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from installer.ai_agents_skills.agents import detect_agents
 from installer.ai_agents_skills.apply import apply_plan
-from installer.ai_agents_skills.cli import main
+from installer.ai_agents_skills.cli import build_parser, main
 from installer.ai_agents_skills.delegation import (
     PROVIDER_CLI_SPECS,
     PROVIDER_ENDPOINT_ENV_NAMES,
@@ -2684,6 +2685,311 @@ class ResultEnvelopeNonceTests(unittest.TestCase):
                 result["validation"]["participant_claimed_identity_ignored"],
                 ["model", "model_family", "provider"],
             )
+
+
+RUNTIME_SKILLS = REPO_ROOT / "canonical" / "runtime" / "skills"
+PANEL_PARENT = RUNTIME_SKILLS / "autonomous-research-loop-runtime" / "panel_parent.py"
+ARL_RUNTIME = RUNTIME_SKILLS / "autonomous-research-loop-runtime" / "autonomous_research_loop_runtime.py"
+STAMP_KEYS = {"schema_version", "run_id", "participant_id", "provider", "model_family", "unverified_by", "stamped_at"}
+
+
+def module_constant(path: Path, name: str) -> Any:
+    """A module-level constant read with ast, without importing the module."""
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            return literal_with_frozensets(node.value)
+    raise AssertionError(f"{name} is not assigned at the top level of {path.name}")
+
+
+def literal_with_frozensets(node: ast.AST) -> Any:
+    """ast.literal_eval, extended to dict values written as frozenset({...})."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "frozenset"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return frozenset(literal_with_frozensets(node.args[0]))
+    if isinstance(node, ast.Dict):
+        return {
+            literal_with_frozensets(key): literal_with_frozensets(value)
+            for key, value in zip(node.keys, node.values)
+        }
+    return ast.literal_eval(node)
+
+
+def missing_cli(name: str, *_args: Any) -> dict[str, Any]:
+    """A discover_tool stand-in that finds nothing, so the prechecks start no CLI."""
+    return {"logical_name": name, "status": "missing"}
+
+
+def delegate_args(root: Path, **overrides: Any) -> SimpleNamespace:
+    """delegate-agent arguments for one live, non-research claude participant."""
+    values: dict[str, Any] = {
+        "root": root,
+        "platform": None,
+        "task": "Review the claim.",
+        "task_file": None,
+        "providers": None,
+        "provider": "claude",
+        "resolved_model": None,
+        "resolved_thinking": None,
+        "run_dir": None,
+        "max_providers": 1,
+        "research": False,
+        "dry_run": False,
+        "allow_external_cli": True,
+        "role": "reviewer",
+        "template": None,
+        "timeout": 60,
+        "exclude_family": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class DispatchStampTests(unittest.TestCase):
+    """delegate-agent stamps each participant with the provider and family of its own plan.
+
+    The family comes from a table equal to panel_parent's. It is "unverified"
+    when the child environment holds a dispatch-command or binary override or
+    a provider endpoint variable, and the stamp then names those variables,
+    never their values. --exclude-family leaves providers out by family.
+    """
+
+    # Every variable that can change which claude binary runs or where it connects.
+    CLAUDE_IDENTITY_ENV = (
+        "AAS_CLAUDE",
+        "AAS_CLAUDE_DISPATCH_COMMAND",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_API_URL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+    )
+
+    def dispatch_claude(
+        self,
+        root: Path,
+        mode: str,
+        *,
+        env: dict[str, str] | None = None,
+        override_command: bool = False,
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        """Dispatch claude to the Python fake with no identity variable set but ``env``.
+
+        The fake is what command discovery finds, or, with override_command,
+        what AAS_CLAUDE_DISPATCH_COMMAND names.
+        """
+        script = root / "fake_participant.py"
+        script.write_text(FAKE_PARTICIPANT_PY, encoding="utf-8")
+        command = f'"{sys.executable}" "{script}" {mode}'
+
+        def discover(name: str, *_args: Any) -> dict[str, Any]:
+            return {"logical_name": name, "status": "ok", "command": command}
+
+        with patch.dict(os.environ, {}, clear=False):
+            for name in self.CLAUDE_IDENTITY_ENV:
+                os.environ.pop(name, None)
+            os.environ.update(env or {})
+            if override_command:
+                os.environ["AAS_CLAUDE_DISPATCH_COMMAND"] = command
+            with (
+                patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli),
+                patch("installer.ai_agents_skills.delegation_dispatch.discover_tool", discover),
+            ):
+                return dispatch_external_agents(delegate_args(root, **overrides), load_manifests())
+
+    def test_family_tables_match_panel_parent_and_arl(self) -> None:
+        """The dispatcher's family and endpoint tables equal the ones ARL enforces, read without importing them."""
+        from installer.ai_agents_skills.delegation import (
+            PROVIDER_ENDPOINT_IDENTITY_VARS,
+            PROVIDER_FAMILIES,
+            VERIFIED_FAMILIES,
+            provider_family,
+        )
+
+        panel_families = module_constant(PANEL_PARENT, "_PROVIDER_FAMILIES")
+        verified = set(panel_families.values()) - {"unverified"}
+        self.assertEqual(PROVIDER_FAMILIES, panel_families)
+        self.assertEqual(PROVIDER_ENDPOINT_IDENTITY_VARS, module_constant(ARL_RUNTIME, "PROVIDER_ENDPOINT_IDENTITY_VARS"))
+        self.assertEqual(set(VERIFIED_FAMILIES), verified)
+        self.assertEqual(verified, {"anthropic", "openai", "xai", "deepseek", "google"})
+        self.assertLessEqual(EXTERNAL_PROVIDERS, set(PROVIDER_FAMILIES))
+        # Normalised as panel_parent.provider_family does; anything unknown is unverified.
+        self.assertEqual(provider_family(" CodeWhale "), "deepseek")
+        self.assertEqual(provider_family("antigravity_cli"), "google")
+        for provider in ("kimi", "copilot", "opencode", "openmath", ""):
+            self.assertEqual(provider_family(provider), "unverified", provider)
+
+    def test_stamp_carries_plan_family_and_ignores_claimed_identity(self) -> None:
+        """The stamp, the plan item and the evidence-map rows name the plan's provider and family.
+
+        The participant claims to be codex of family openai; that claim is
+        recorded as ignored and changes nothing the dispatcher writes.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.dispatch_claude(Path(tmp), "claims-identity")
+            run_dir = Path(result["run_dir"])
+            participant = result["participants"][0]
+            self.assertEqual(participant["status"], "ok", participant["validation"])
+            self.assertEqual(participant["stamp_ref"], "stamps/claude-external-1.json")
+            data = (run_dir / "stamps" / "claude-external-1.json").read_bytes()
+            stamp = json.loads(data)
+            self.assertEqual(set(stamp), STAMP_KEYS)
+            self.assertEqual(data, (json.dumps(stamp, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+            self.assertEqual(
+                {key: stamp[key] for key in STAMP_KEYS - {"stamped_at"}},
+                {
+                    "schema_version": "external-agent-dispatch-stamp.v1",
+                    "run_id": result["run_id"],
+                    "participant_id": "claude-external-1",
+                    "provider": "claude",
+                    "model_family": "anthropic",
+                    "unverified_by": [],
+                },
+            )
+            self.assertRegex(stamp["stamped_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            plan_item = result["dispatch_plan"][0]
+            self.assertEqual((plan_item["model_family"], plan_item["unverified_by"]), ("anthropic", []))
+            self.assertEqual(
+                [(row["provider"], row["model_family"], row["stamp_ref"]) for row in evidence_map_rows(run_dir)],
+                [("claude", "anthropic", "stamps/claude-external-1.json")],
+            )
+            self.assertEqual(
+                participant["validation"]["participant_claimed_identity_ignored"],
+                ["model", "model_family", "provider"],
+            )
+            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["participants"][0]["stamp_ref"], "stamps/claude-external-1.json")
+
+    def test_stamp_is_unverified_under_override_or_endpoint_variable(self) -> None:
+        """An override or endpoint variable makes the stamp unverified and is named, never quoted."""
+        endpoint = "https://gateway.invalid/anthropic"
+        cases = {
+            "dispatch-command override": ({}, True, ["AAS_CLAUDE_DISPATCH_COMMAND"]),
+            "endpoint variable": ({"ANTHROPIC_BASE_URL": endpoint}, False, ["ANTHROPIC_BASE_URL"]),
+        }
+        for name, (env, override_command, expected) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                result = self.dispatch_claude(root, "echo-answer", env=env, override_command=override_command)
+                run_dir = Path(result["run_dir"])
+                participant = result["participants"][0]
+                self.assertEqual(participant["status"], "ok", participant["validation"])
+                data = (run_dir / participant["stamp_ref"]).read_bytes()
+                stamp = json.loads(data)
+                self.assertEqual((stamp["model_family"], stamp["unverified_by"]), ("unverified", expected))
+                self.assertEqual(
+                    (result["dispatch_plan"][0]["model_family"], result["dispatch_plan"][0]["unverified_by"]),
+                    ("unverified", expected),
+                )
+                self.assertEqual([row["model_family"] for row in evidence_map_rows(run_dir)], ["unverified"])
+                for value in (endpoint, "fake_participant.py", sys.executable):
+                    self.assertNotIn(value.encode("utf-8"), data)
+
+        with self.subTest("dispatch_family"):
+            from installer.ai_agents_skills.delegation_dispatch import DEEPSEEK_DEFAULT_BASE_URL, dispatch_family
+
+            def family(provider: str, env: dict[str, str]) -> tuple[str, list[str]]:
+                return dispatch_family(provider, {**env, **provider_env_defaults(provider, env)})
+
+            self.assertEqual(family("claude", {}), ("anthropic", []))
+            self.assertEqual(family("claude", {"ANTHROPIC_BASE_URL": ""}), ("anthropic", []))
+            self.assertEqual(family("claude", {"AAS_CLAUDE": "/opt/elsewhere/claude"}), ("unverified", ["AAS_CLAUDE"]))
+            self.assertEqual(family("deepseek", {}), ("deepseek", []))
+            self.assertEqual(family("deepseek", {"DEEPSEEK_BASE_URL": DEEPSEEK_DEFAULT_BASE_URL}), ("deepseek", []))
+            self.assertEqual(
+                family("deepseek", {"DEEPSEEK_BASE_URL": "https://openmath.invalid/v1"}),
+                ("unverified", ["DEEPSEEK_BASE_URL"]),
+            )
+            self.assertEqual(
+                family("deepseek", {"AAS_DEEPSEEK_DISPATCH_COMMAND": "codewhale exec", "CODEWHALE_PROVIDER": "other"}),
+                ("unverified", ["AAS_DEEPSEEK_DISPATCH_COMMAND", "CODEWHALE_PROVIDER"]),
+            )
+            self.assertEqual(family("grok", {"XAI_BASE_URL": "https://gateway.invalid/xai"}), ("unverified", ["XAI_BASE_URL"]))
+            self.assertEqual(family("antigravity", {}), ("google", []))
+            for provider in ("kimi", "copilot"):
+                self.assertEqual(family(provider, {}), ("unverified", []), provider)
+
+    def test_exclude_family_selection(self) -> None:
+        """--exclude-family drops a family from auto selection and blocks an explicitly named provider of it."""
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli):
+                prechecks = build_external_agent_prechecks(root, "linux", manifests["delegation"], env={})
+            everyone = ["claude", "deepseek", "copilot", "antigravity", "grok", "kimi"]
+
+            with self.subTest("auto selection drops the family and every unverified one"):
+                self.assertEqual(
+                    expand_auto_providers(["auto"], prechecks, 10, exclude_families=frozenset({"anthropic"})),
+                    ["deepseek", "antigravity", "grok"],
+                )
+                self.assertEqual(
+                    expand_auto_providers(["auto"], prechecks, 2, exclude_families=frozenset({"anthropic", "deepseek"})),
+                    ["antigravity", "grok"],
+                )
+                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10, exclude_families=frozenset()), everyone)
+
+            with self.subTest("regression check: without the flag auto selection keeps unverified providers"):
+                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10), everyone)
+
+            with self.subTest("an explicitly named provider is blocked before command discovery"):
+                discover = Mock(side_effect=AssertionError("command discovery ran for an excluded provider"))
+                with (
+                    patch.dict(os.environ, {"AAS_CLAUDE_DISPATCH_COMMAND": ""}, clear=False),
+                    patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli),
+                    patch("installer.ai_agents_skills.delegation_dispatch.discover_tool", discover),
+                ):
+                    result = dispatch_external_agents(delegate_args(root, exclude_family=["anthropic"]), manifests)
+                discover.assert_not_called()
+                self.assertEqual(
+                    [(item["provider"], item["status"], item["reason"]) for item in result["dispatch_plan"]],
+                    [("claude", "blocked", "provider family anthropic is excluded by --exclude-family")],
+                )
+
+            with self.subTest("an excluded provider's configured command never runs"):
+                marker = root / "marker-invoked"
+                cli = write_marker_cli(root / "claude-marker", marker)
+                with (
+                    patch.dict(os.environ, {"AAS_CLAUDE_DISPATCH_COMMAND": str(cli)}, clear=False),
+                    patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli),
+                    patch("installer.ai_agents_skills.delegation_dispatch.discover_tool", missing_cli),
+                ):
+                    result = dispatch_external_agents(
+                        delegate_args(root, providers="claude,grok", exclude_family=["anthropic", "xai"]),
+                        manifests,
+                    )
+                self.assertEqual([item["status"] for item in result["dispatch_plan"]], ["blocked", "blocked"])
+                self.assertEqual(result["status"], "blocked")
+                self.assertNotIn("participants", result)
+                self.assertFalse(marker.exists())
+
+            with self.subTest("a family outside the verified ones is refused"):
+                with (
+                    patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli),
+                    patch("installer.ai_agents_skills.delegation_dispatch.discover_tool", missing_cli),
+                    self.assertRaisesRegex(ValueError, "--exclude-family"),
+                ):
+                    dispatch_external_agents(delegate_args(root, exclude_family=["unverified"], dry_run=True), manifests)
+
+            with self.subTest("the CLI takes the flag repeatedly and only for verified families"):
+                parsed = build_parser().parse_args(
+                    ["delegate-agent", "--exclude-family", "anthropic", "--exclude-family", "google"]
+                )
+                self.assertEqual(parsed.exclude_family, ["anthropic", "google"])
+                self.assertIsNone(build_parser().parse_args(["delegate-agent"]).exclude_family)
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    build_parser().parse_args(["delegate-agent", "--exclude-family", "foo"])
 
 
 if __name__ == "__main__":

@@ -102,12 +102,19 @@ participants. It:
 
 - selects providers from `manifest/delegation.yaml` when `--provider auto` is
   used
+- leaves out the providers of each family named by a repeatable
+  `--exclude-family` (`anthropic`, `deepseek`, `google`, `openai` or `xai`):
+  auto selection then also leaves out the providers whose family is
+  `unverified` (`copilot`, `kimi`), and a provider named with `--provider` or
+  `--providers` whose family is excluded is blocked before its command is
+  resolved or discovered
 - blocks live external execution unless `--allow-external-cli` is supplied
 - blocks research execution unless latest-model and highest-thinking settings
   are resolved for the provider
 - sends bounded prompts over stdin
 - requires exactly one result envelope carrying the call's nonce, plus a final
   marker
+- writes `stamps/<participant_id>.json` before each participant launches
 - writes run artifacts under `.ai-agents-skills/delegation-runs/<run-id>/`
 - returns parsed results and validation status, not raw stdout/stderr
 
@@ -148,6 +155,29 @@ Besides `status` and `errors`, each `validation/<participant_id>.json` records:
 
 The result packet contract (`cross-agent-delegation.result.v1`) and its status
 values are unchanged.
+
+A stamp is an `external-agent-dispatch-stamp.v1` object with `run_id`,
+`participant_id`, `provider`, `model_family`, `unverified_by` and
+`stamped_at`. The provider and family come from the dispatcher's own plan,
+never from the participant's output, through the provider-to-family table
+that `panel_parent.py` applies to panel independence: `claude` is
+`anthropic`, `deepseek` is `deepseek`, `antigravity` is `google`, `grok` is
+`xai`, and `copilot` and `kimi`, which can route to several model families,
+are `unverified`. The family is also `unverified` when the child environment
+sets a variable that can change what runs or where it connects:
+`AAS_<PROVIDER>_DISPATCH_COMMAND`, the binary override `AAS_<PROVIDER>`, or a
+provider endpoint variable such as `ANTHROPIC_BASE_URL` (a `DEEPSEEK_BASE_URL`
+equal to the dispatcher's default `https://api.deepseek.com` aside).
+`unverified_by` names those variables, never their values. Research dispatch
+needs `AAS_<PROVIDER>_DISPATCH_COMMAND` for every provider but grok, so grok
+aside, research stamps are `unverified` until a configured command can be
+attested.
+Even a table family is the label of the provider the dispatcher was asked to
+launch: a configuration file the CLI reads can route it to another model, so
+a stamp is recorded provenance, not a verified model identity. Ready
+dispatch-plan items carry `model_family` and `unverified_by`; participant
+results and run-manifest entries carry `stamp_ref`; evidence-map rows carry
+`provider`, `model_family` and `stamp_ref`.
 
 Provider dispatch commands are intentionally configured outside the repo with
 environment variables, for example:
@@ -423,6 +453,7 @@ raw/<participant_id>/stderr.txt
 raw/<participant_id>/command-shape.txt
 parsed/<participant_id>.json
 validation/<participant_id>.json
+stamps/<participant_id>.json
 transport_manifest.json
 timeout_events.jsonl
 truncation_events.jsonl

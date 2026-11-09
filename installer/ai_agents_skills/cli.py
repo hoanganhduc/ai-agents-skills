@@ -19,7 +19,7 @@ from .agents import (
 from .antigravity_fixup import antigravity_fixup
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root
-from .delegation import build_external_agent_prechecks
+from .delegation import VERIFIED_FAMILIES, build_external_agent_prechecks
 from .delegation_dispatch import dispatch_external_agents
 from .delegation_packets import validate_packet_file
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
@@ -267,6 +267,16 @@ def build_parser() -> argparse.ArgumentParser:
     delegate_agent.add_argument("--resolved-model")
     delegate_agent.add_argument("--resolved-thinking")
     delegate_agent.add_argument("--max-providers", type=int, default=1)
+    delegate_agent.add_argument(
+        "--exclude-family",
+        action="append",
+        default=None,
+        choices=sorted(VERIFIED_FAMILIES),
+        help=(
+            "leave out providers of this model family (repeatable); auto selection then also "
+            "leaves out providers whose family is unverified"
+        ),
+    )
     delegate_agent.add_argument(
         "--timeout",
         type=int,
