@@ -29,6 +29,7 @@ CORE_GATES = {
         "markers": [
             "Research Brief",
             "Goal",
+            "Fixed claim statement",
             "Scope",
             "Evidence plan",
             "Workflow",
@@ -138,6 +139,10 @@ DEFECT_GATE_KEYWORDS = {
     "restated_goal_as_progress": {
         "research-report-reviewer": ["restates the goal"],
     },
+    "claim_drift_without_delta": {
+        "research-report-reviewer": ["without a recorded delta"],
+        "research-verification-gate": ["fixed claim"],
+    },
 }
 
 # Checker outcomes that are no verdict: the check did not conclude, so it
@@ -238,6 +243,12 @@ def _poison_predicates(artifact: dict) -> dict[str, bool]:
         "restated_goal_as_progress": any(
             lemma.get("restates_goal") is True and lemma.get("presented_as") == "progress"
             for lemma in artifact.get("lemmas", [])
+        ),
+        "claim_drift_without_delta": (
+            bool(artifact.get("fixed_claim"))
+            and bool(artifact.get("delivered_claim"))
+            and artifact.get("delivered_claim") != artifact.get("fixed_claim")
+            and not artifact.get("recorded_delta")
         ),
     }
 

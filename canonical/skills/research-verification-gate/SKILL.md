@@ -50,6 +50,9 @@ Use this as the last gate before claiming a research output is ready.
   deep-research `validate` checks
 - when a structured deep-research run exists, run its `delivery-check` verb and
   quote the output verbatim; never upgrade its `NOT READY`
+- when a fixed claim statement exists (a research brief's Fixed claim statement
+  or an AGD `fixed_claim`), the delivered claim is quoted verbatim and labelled
+  `fixed claim`, or `corrected claim (delta: ...)` for a recorded correction
 
 ## Output contract
 

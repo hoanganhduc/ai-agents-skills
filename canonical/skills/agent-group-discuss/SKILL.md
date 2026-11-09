@@ -433,6 +433,7 @@ Use a `state.json` structure like:
   "profile": "math-heavy | premium | balanced | budget",
   "interaction": "star | debate | panel_judge",
   "template": "string or null",
+  "fixed_claim": {"text": "string or null", "sha256": "string or null"},
   "roles": ["string"],
   "participants": {
     "participant_id": {
@@ -617,7 +618,8 @@ When chaining:
 Before any template begins:
 
 1. produce the plan output
-2. restate the target claim in exact terms
+2. restate the target claim in exact terms and record it as `fixed_claim` in
+   `state.json`
 3. list assumptions explicitly
 4. separate what is given, to be proved, and conjectured
 5. identify notation and definitions
@@ -629,7 +631,8 @@ If a decisive counterexample or fatal gap is found:
 
 1. stop defending the broken claim
 2. switch to diagnosis
-3. determine the strongest defensible corrected claim
+3. determine the strongest defensible corrected claim, reported as
+   `corrected claim (delta: ...)` beside the unchanged `fixed_claim`
 4. do not keep expanding a broken proof across later rounds
 
 ## External verification in Codex

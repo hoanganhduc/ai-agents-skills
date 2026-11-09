@@ -54,6 +54,7 @@ proposed `study-design-and-power` skill if that lands.
 | `feedback_read_as_acceptance` | feedback (bare scan, typecheck without trust-base evidence, `exact?`, LeanExplore, AXLE, OpenGauss) presented as an accepted formal result |
 | `verdict_upgraded` | a structured run's `delivery-check` printed `NOT READY` and the report upgrades it to `READY` |
 | `restated_goal_as_progress` | a lemma that restates the goal is presented as progress (reviewer `FLAG`) |
+| `claim_drift_without_delta` | the delivered claim differs from the fixed claim statement and no delta is recorded |
 | `none` | clean control (expected verdict `READY`) |
 
 ## Fixture schema

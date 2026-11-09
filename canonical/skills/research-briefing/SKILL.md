@@ -28,6 +28,11 @@ Produce a short visible section titled `Research Brief`.
 Keep it brief and include:
 
 - `Goal` — what question the work must answer
+- `Fixed claim statement` (optional, for a mathematical claim) — the exact
+  statement with its hypotheses, quoted verbatim from the user or the source
+  and recorded before work starts; when a draft claim ledger exists, give the
+  matching frozen claim ID. A later correction is a new claim with an explicit
+  delta, never an edit of this text
 - `Scope` — what is in and out
 - `Constraints` — time, tools, source class, or formatting limits
 - `Context/style artifacts` — prior posts, templates, house style, examples,

@@ -71,6 +71,9 @@ Before any high-stakes research template begins, the orchestrator must also prod
 2. list all assumptions explicitly
 3. separate what is given, to be proved, and conjectured
 4. identify the notation and definitions in use
+5. record the restated claim as `fixed_claim` in `state.json` before Round 1:
+   its text, and its sha256 when the orchestrator can compute it; when the
+   research brief has a Fixed claim statement, reuse that text verbatim
 
 ## Stop rule
 
@@ -78,7 +81,9 @@ If a decisive counterexample or fatal gap is found during any round:
 
 1. stop defending the broken claim
 2. switch to diagnosis
-3. determine the strongest defensible corrected claim
+3. determine the strongest defensible corrected claim, and record it as a new
+   claim with an explicit delta from `fixed_claim` (an added hypothesis, a
+   weaker conclusion, a changed quantifier); never overwrite `fixed_claim`
 4. do not continue expanding a broken proof across further rounds
 
 ## Default research output format
@@ -92,6 +97,10 @@ The final synthesis for research-mode templates must contain:
 5. `Strongest surviving proof skeleton`
 6. `Verification status`
 7. `Single recommended next action`
+
+Above `Accepted`, quote the claim verbatim with its label: `fixed claim`, or
+`corrected claim (delta: ...)` when the Stop rule replaced it with a corrected
+claim.
 
 ---
 

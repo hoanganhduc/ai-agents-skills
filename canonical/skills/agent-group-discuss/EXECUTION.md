@@ -591,7 +591,9 @@ When a task spans multiple concerns:
 
 1. Show the plan to the user.
 2. Show the selected template and why it was chosen.
-3. For research templates, produce the Step 0 claim restatement.
+3. For research templates, produce the Step 0 claim restatement and record it
+   as `fixed_claim` in `state.json`; a later correction is reported as
+   `corrected claim (delta: ...)`, never as an edit of `fixed_claim`.
 4. Get explicit user confirmation.
 5. Only then spawn agents.
 

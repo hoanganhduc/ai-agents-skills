@@ -1,0 +1,15 @@
+{
+  "fixture_id": "claim-drift-without-delta",
+  "defect_class": "claim_drift_without_delta",
+  "defect_label": "The delivered claim differs from the fixed claim statement and no delta is recorded.",
+  "target_gates": ["research-report-reviewer", "research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "fixed_claim": "Every connected graph with n >= 3 vertices and minimum degree at least n/2 is Hamiltonian.",
+    "delivered_claim": "Every connected graph with n >= 5 vertices and minimum degree at least n/2 is Hamiltonian.",
+    "recorded_delta": null,
+    "report_text": "We proved the claim as stated."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["delivered claim differs from the fixed claim statement without a recorded delta"]
+}

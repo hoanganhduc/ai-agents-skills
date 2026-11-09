@@ -44,6 +44,8 @@ Do not reconstruct it from memory.
   or OpenGauss results presented as an accepted formal result
 - a lemma that restates the goal, or a step that only pads the argument,
   presented as progress
+- a delivered claim that differs from its fixed claim statement without a
+  recorded delta
 - whether prior posts, templates, style guides, or supplied examples were
   inspected before a format-matched draft
 - whether the draft or workflow records an active writing-style profile from
@@ -71,8 +73,9 @@ Recommendation Contract in `writing-review.md`. Bind the recommendation to the
 affected frozen claim IDs, evidence refs, and active requirement IDs; flag any
 claim, caveat, citation, or support change. Review remains advisory.
 
-Use `BLOCK` when a no verdict is read as a refutation or as support, or when
-feedback is presented as acceptance. Use `FLAG` when a lemma restates the goal
+Use `BLOCK` when a no verdict is read as a refutation or as support, when
+feedback is presented as acceptance, or when a delivered claim differs from its
+fixed claim statement without a recorded delta. Use `FLAG` when a lemma restates the goal
 or a step only pads the argument; this flag is a model judgement.
 
 If there are no issues, say so explicitly and keep the pass short.
