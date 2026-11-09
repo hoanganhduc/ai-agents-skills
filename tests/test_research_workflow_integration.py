@@ -2103,3 +2103,56 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in root.iterdir()), sorted(
                 ["research_schema.json", "sources.jsonl", "claims.jsonl", "guards.jsonl", "evidence.jsonl", "delivery.json", "delegation"]
             ))
+
+    def passed_triangle_check(self) -> dict:
+        """graph-verifier's result for a triangle with two expected values: passed and exhaustive."""
+        triangle = {"edges": [[0, 1], [1, 2], [2, 0]], "expected": {"n": 3, "connected": True}}
+        return json.loads(self.graph_verifier_output("triangle", triangle))
+
+    def ready_broker_run(self, name: str, result: dict) -> Path:
+        """A ready run whose C1 rests only on ``result``, recorded through the verb from a broker envelope."""
+        root = self.ready_run(name)
+        envelope = self.result_file(f"{name}-envelope.json", self.broker_envelope(result))
+        code, out = self.add(root, envelope)
+        self.assertEqual((code, out["verification_source"]), (0, "research_compute_envelope"), out)
+        return root
+
+    def test_delivery_check_hashes_the_copy_behind_each_payload_hash(self) -> None:
+        """validate re-reads the copy behind a payload_hash row, so delivery-check hashes it before and after validate.
+
+        A copy changed after validate returns makes the run NOT READY, and
+        input_files lists the copy. A copy that cannot be hashed, here a
+        symbolic link to itself, gives DELIVERY_INPUT_UNREADABLE.
+        """
+        payload = "artifacts/computation/E-COMP-1.json"
+        check = self.passed_triangle_check()
+        original = self.mod.validate_directory
+
+        def validate_then_append(root: Path, *args, **kwargs) -> dict:
+            result = original(root, *args, **kwargs)
+            with (root / payload).open("ab") as handle:
+                handle.write(b"\n")
+            return result
+
+        with self.subTest("an unchanged copy"):
+            result = self.mod.delivery_check(self.ready_broker_run("unchanged", check))
+            self.assertEqual((result["verdict"], result["codes"]), ("READY", []), result)
+            self.assertIn(payload, [name for name, _ in result["input_files"]])
+
+        with self.subTest("a copy changed after validate returns"):
+            root = self.ready_broker_run("changed", check)
+            with mock.patch.object(self.mod, "validate_directory", side_effect=validate_then_append):
+                result = self.mod.delivery_check(root)
+            self.assertEqual((result["verdict"], result["codes"]), ("NOT READY", ["DELIVERY_INPUT_CHANGED"]), result)
+            self.assertIn(payload, [name for name, _ in result["input_files"]])
+
+        with self.subTest("a copy replaced by a symbolic link to itself"):
+            root = self.ready_broker_run("looped", check)
+            (root / payload).unlink()
+            try:
+                os.symlink("E-COMP-1.json", root / payload)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            result = self.mod.delivery_check(root)
+            self.assertEqual(result["verdict"], "NOT READY", result)
+            self.assertIn("DELIVERY_INPUT_UNREADABLE", result["codes"])

@@ -94,7 +94,12 @@ prints `NOT READY` with the `validate` codes and its own codes
 (`DELIVERY_DECISION_NOT_FINALIZABLE`,
 `DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED`, `DELIVERY_INPUT_CHANGED`,
 `DELIVERY_INPUT_UNREADABLE` for an input that cannot be hashed,
-`DELIVERY_VALIDATE_CRASHED`) and exits 1. The verdict and exit code are code-enforced; `delivery-check` adds
+`DELIVERY_VALIDATE_CRASHED`) and exits 1. The input files, hashed before and
+after `validate` and listed with their digests in `input_files`, are
+`research_schema.json`, `sources.jsonl`, `claims.jsonl`, `guards.jsonl`,
+`delivery.json`, `evidence.jsonl`, `model_freshness.json`, `formal/*.jsonl`,
+the `report_ref` file and the copy behind each computation row that carries
+`payload_hash`. The verdict and exit code are code-enforced; `delivery-check` adds
 its codes without changing what `validate` checks. A Delivery Check quotes this output verbatim and never upgrades
 `NOT READY`.
 

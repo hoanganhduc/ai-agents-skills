@@ -51,7 +51,8 @@ DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
 FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
 # Digest values for inputs whose content cannot be hashed; any of them makes delivery-check NOT READY.
 UNHASHABLE_INPUT_STATES = {"unreadable", "not-a-regular-file", "unresolvable"}
-# Files a delivery verdict rests on, besides formal/*.jsonl and the report_ref file.
+# Files a delivery verdict rests on, besides formal/*.jsonl, the report_ref file and the copy
+# behind each computation row's payload_hash.
 DELIVERY_CHECK_INPUT_FILES = (
     "research_schema.json",
     "sources.jsonl",
@@ -762,7 +763,12 @@ def delivery_check(root: Path, schema_version: str | None = None) -> dict[str, A
 
 
 def delivery_input_digests(root: Path) -> list[list[str]]:
-    """Sorted [relative path, sha256] pairs for the files a delivery verdict rests on."""
+    """Sorted [relative path, sha256] pairs for the files a delivery verdict rests on.
+
+    validate re-reads the copy behind each computation row's payload_hash, so those
+    copies are inputs too. A report_ref or artifact_ref that cannot be resolved is
+    recorded after the pairs as unresolvable.
+    """
     names = set(DELIVERY_CHECK_INPUT_FILES)
     formal_dir = root / "formal"
     if formal_dir.is_dir():
@@ -778,9 +784,22 @@ def delivery_input_digests(root: Path) -> list[list[str]]:
             unresolvable = True
     if report_path is not None:
         names.add(report_path.relative_to(root).as_posix())
+    unresolvable_payloads: list[str] = []
+    # An unreadable or malformed evidence.jsonl adds nothing here; its own digest covers it.
+    for row in read_jsonl(root / "evidence.jsonl", "evidence", read_errors):
+        if row.get("evidence_type") != "computation" or not is_nonempty_string(row.get("payload_hash")):
+            continue
+        try:
+            payload_path = validate_artifact_ref(row.get("artifact_ref"), root, root / "evidence.jsonl", read_errors, None, "artifact_ref")
+        except (RuntimeError, OSError, ValueError):  # as for report_ref
+            unresolvable_payloads.append(f"<artifact_ref {row.get('artifact_ref')}>")
+            continue
+        if payload_path is not None:
+            names.add(payload_path.relative_to(root).as_posix())
     pairs = [[name, file_sha256(root / name)] for name in sorted(names)]
     if unresolvable:
         pairs.append(["<report_ref>", "unresolvable"])
+    pairs.extend([marker, "unresolvable"] for marker in unresolvable_payloads)
     return pairs
 
 
