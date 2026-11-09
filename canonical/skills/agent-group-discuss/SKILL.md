@@ -609,9 +609,20 @@ Template chaining is allowed when a task spans multiple concerns.
 When chaining:
 
 1. run one template per phase
-2. pass only surviving claims and strongest proof skeletons forward
+2. pass only accepted claims, strongest proof skeletons and the `Rejected`
+   ledger forward
 3. keep per-phase round files
 4. state the planned chain before starting
+
+The `Rejected` ledger travels with the accepted claims into every later phase.
+Each entry names the rejected claim or route, the reason for the rejection, the
+counterexample or failing step, and a reproduction ref (a round file entry, an
+artifact path with its sha256, or a deep-research evidence id), and is marked
+`taken: do not retry without an evidence delta`. Entries are framed as data,
+checked and capped as "Relaying findings between rounds" in `EXECUTION.md`
+states for `Dead ends` rows: an entry over a cap is refused and listed as not
+forwarded, never cut. "Template chaining" in `EXECUTION.md` says where the
+ledger goes in each role prompt and how a retry is judged.
 
 ## Mandatory rules for template runs
 

@@ -36,9 +36,19 @@ Common chains:
 How chaining works:
 
 1. Run Phase 1 to completion.
-2. Pass only accepted claims and strongest surviving proof skeletons into the next phase.
+2. Pass only accepted claims, strongest surviving proof skeletons and the `Rejected` ledger into the next phase.
 3. Keep per-phase round files.
 4. Combine all phase ledgers in the final output.
+
+The `Rejected` ledger travels with the accepted claims into every later phase.
+Each entry names the rejected claim or route, the reason for the rejection, the
+counterexample or failing step, and a reproduction ref (a round file entry, an
+artifact path with its sha256, or a deep-research evidence id), and is marked
+`taken: do not retry without an evidence delta`. Entries are framed as data,
+checked and capped as "Relaying findings between rounds" in `EXECUTION.md`
+states for `Dead ends` rows: an entry over a cap is refused and listed as not
+forwarded, never cut. "Template chaining" in `EXECUTION.md` says where the
+ledger goes in each role prompt and how a retry is judged.
 
 ## Mandatory plan
 

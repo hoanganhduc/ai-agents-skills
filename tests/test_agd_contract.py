@@ -1,11 +1,13 @@
-"""Pin the fixed-claim and counterexample-check sentences of agent-group-discuss.
+"""Pin the fixed-claim, counterexample-check and chaining sentences of agent-group-discuss.
 
 Step 0 records the restated claim as ``fixed_claim``; a Stop-rule correction is
 a new claim reported as ``corrected claim (delta: ...)``. A reported
 counterexample is decisive only after the parent checks the witness, and the
 files say what each fixed checker can confirm and how a check is recorded.
-These tests pin that vocabulary in the three AGD files. They measure
-vocabulary coverage, not behaviour: AGD rules are prompt conventions.
+When templates are chained, the ``Rejected`` ledger travels with the accepted
+claims under the relay caps. These tests pin that vocabulary in the three AGD
+files. They measure vocabulary coverage, not behaviour: AGD rules are prompt
+conventions.
 """
 
 from __future__ import annotations
@@ -23,11 +25,33 @@ COUNTEREXAMPLE_SENTENCES = (
     "reports as `checked`",
     "stays a candidate counterexample",
 )
+CHAINING_SENTENCES = (
+    "The `Rejected` ledger travels with the accepted claims",
+    "taken: do not retry without an evidence delta",
+    "reproduction ref",
+    "never cut",
+)
+# Where the chaining text of each AGD file starts; it ends at the next level-2 heading.
+CHAINING_STARTS = {
+    "TEMPLATES.md": "\n## Template chaining\n",
+    "EXECUTION.md": "\n## Template chaining\n",
+    "SKILL.md": "\nTemplate chaining is allowed",
+}
+# The relay cap numbers. A chaining section cites "Relaying findings between
+# rounds" in EXECUTION.md for them instead of stating them again.
+RELAY_CAP_NUMBERS = ("1500", "1,500", "12 KB", "12288", "8 entries")
 
 
 def normalized(text: str) -> str:
     """The text with each run of whitespace, line breaks included, made one space."""
     return " ".join(text.split())
+
+
+def chaining_section(name: str) -> str:
+    """The normalized chaining text of one AGD file, up to the next level-2 heading."""
+    text = (AGD / name).read_text(encoding="utf-8")
+    start = text.index(CHAINING_STARTS[name])
+    return normalized(text[start:text.index("\n## ", start + 1)])
 
 
 class AgdFixedClaimContractTests(unittest.TestCase):
@@ -92,6 +116,59 @@ class AgdCounterexampleConfirmationTests(unittest.TestCase):
         ):
             with self.subTest(sentence=sentence):
                 self.assertIn(sentence, text)
+
+
+class AgdChainingRejectedLedgerTests(unittest.TestCase):
+    """Chained templates forward the ``Rejected`` ledger with the accepted claims.
+
+    Each forwarded entry names the claim or route, the reason, the
+    counterexample or failing step and a reproduction ref, and is marked
+    "taken: do not retry without an evidence delta". In EXECUTION.md the
+    ledger goes into the ``Topic / Claim`` section of every later phase, after
+    the data statement. Entries are framed, checked and capped as "Relaying
+    findings between rounds" states for ``Dead ends`` rows, cited by name: an
+    entry over a cap is refused and listed as not forwarded, never cut.
+    """
+
+    def test_each_agd_file_forwards_the_rejected_ledger_when_chaining(self) -> None:
+        for name in AGD_FILES:
+            section = chaining_section(name)
+            for sentence in CHAINING_SENTENCES:
+                with self.subTest(file=name, sentence=sentence):
+                    self.assertIn(sentence, section)
+
+    def test_forwarded_entries_use_the_relay_caps(self) -> None:
+        """Each chaining section cites the relay rules by name and states no cap of its own.
+
+        The absent cap numbers are a regression check: no chaining section
+        stated one before this rule either.
+        """
+        for name in AGD_FILES:
+            section = chaining_section(name)
+            for sentence in ('"Relaying findings between rounds"', "never cut"):
+                with self.subTest(file=name, sentence=sentence):
+                    self.assertIn(sentence, section)
+            for number in RELAY_CAP_NUMBERS:
+                with self.subTest(file=name, absent=number):
+                    self.assertNotIn(number, section)
+
+    def test_forwarded_ledger_goes_into_topic_claim_after_the_data_statement(self) -> None:
+        section = chaining_section("EXECUTION.md")
+        for sentence in ("`Topic / Claim` section", "data statement"):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, section)
+        text = (AGD / "EXECUTION.md").read_text(encoding="utf-8")
+        start = text.index("\n## Topic / Claim\n")
+        slot = text[start:text.index("\n## Prior round context\n", start)]
+        self.assertIn('PER "TEMPLATE CHAINING"', slot)
+
+    def test_round_one_independence_sentence_is_unchanged(self) -> None:
+        """Regression check: the sentence held before chaining forwarded the ledger and must stay."""
+        text = (AGD / "EXECUTION.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "\n- Round 1 independent first pass: use fresh participants with no cross-role contamination.\n",
+            text,
+        )
 
 
 if __name__ == "__main__":
