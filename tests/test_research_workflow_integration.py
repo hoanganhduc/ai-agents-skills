@@ -2179,6 +2179,39 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
         result = self.mod.delivery_check(root)
         self.assertEqual((result["verdict"], result["codes"]), ("NOT READY", ["DELIVERY_VALIDATE_CRASHED"]), result)
 
+    def test_an_evidence_integer_over_the_digit_limit_gives_a_report_not_a_traceback(self) -> None:
+        """json raises a plain ValueError for an integer longer than Python's digit limit.
+
+        The payload scan treats that ledger like any other it cannot parse: it
+        adds no copy, and validate's crash on it is reported as
+        DELIVERY_VALIDATE_CRASHED, as on the slice head.
+        """
+        limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+        if not limit:
+            self.skipTest("this Python has no limit on integer digits")
+        root = self.ready_run()
+        with (root / "evidence.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write('{"big": ' + "1" * (limit + 1) + "}\n")
+        result = self.mod.delivery_check(root)
+        self.assertEqual((result["verdict"], result["codes"]), ("NOT READY", ["DELIVERY_VALIDATE_CRASHED"]), result)
+
+    def test_a_ledger_with_an_unparseable_line_adds_no_payload_copy(self) -> None:
+        """A malformed evidence.jsonl adds no copy to the input files, not even for its valid rows.
+
+        Its own digest still covers it, and validate reports the bad line.
+        """
+        payload = "artifacts/computation/E-COMP-1.json"
+        root = self.ready_broker_run("partly-malformed", self.passed_triangle_check())
+        self.assertIn(payload, [name for name, _ in self.mod.delivery_input_digests(root)])
+        with (root / "evidence.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write("{not json\n")
+        names = [name for name, _ in self.mod.delivery_input_digests(root)]
+        self.assertNotIn(payload, names)
+        self.assertIn("evidence.jsonl", names)
+        result = self.mod.delivery_check(root)
+        self.assertEqual(result["verdict"], "NOT READY", result)
+        self.assertIn("JSONL_INVALID", result["codes"])
+
     def test_a_status_that_is_not_a_string_gets_codes_not_a_traceback(self) -> None:
         """A list or object in result_status or coverage_status gets its code; nothing raises.
 
