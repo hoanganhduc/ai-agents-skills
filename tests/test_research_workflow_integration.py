@@ -2698,7 +2698,8 @@ class AgdVerdictEvidenceTests(unittest.TestCase):
         """A claude dispatch under a command override or an endpoint variable stamps unverified; its copy never counts.
 
         The command override names the stand-in CLI; with the endpoint
-        variable, command discovery finds it instead.
+        variable, command discovery finds it instead. The participant's ok
+        status is a regression check: it held before stamps existed.
         """
         from installer.ai_agents_skills.delegation_dispatch import dispatch_external_agents
 

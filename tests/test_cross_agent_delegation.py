@@ -2834,7 +2834,9 @@ class DispatchStampTests(unittest.TestCase):
         """The stamp, the plan item and the evidence-map rows name the plan's provider and family.
 
         The participant claims to be codex of family openai; that claim is
-        recorded as ignored and changes nothing the dispatcher writes.
+        recorded as ignored and changes nothing the dispatcher writes. The ok
+        status and the participant_claimed_identity_ignored list are regression
+        checks: both held before stamps existed.
         """
         with tempfile.TemporaryDirectory() as tmp:
             result = self.dispatch_claude(Path(tmp), "claims-identity")
@@ -2872,7 +2874,10 @@ class DispatchStampTests(unittest.TestCase):
             self.assertEqual(manifest["participants"][0]["stamp_ref"], "stamps/claude-external-1.json")
 
     def test_stamp_is_unverified_under_override_or_endpoint_variable(self) -> None:
-        """An override or endpoint variable makes the stamp unverified and is named, never quoted."""
+        """An override or endpoint variable makes the stamp unverified and is named, never quoted.
+
+        Each participant's ok status is a regression check: it held before stamps existed.
+        """
         endpoint = "https://gateway.invalid/anthropic"
         cases = {
             "dispatch-command override": ({}, True, ["AAS_CLAUDE_DISPATCH_COMMAND"]),
