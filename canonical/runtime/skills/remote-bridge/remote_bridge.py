@@ -859,7 +859,10 @@ class Mailbox:
         or the end of the block. Hidden characters dropped from it, and the
         characters enqueue_inbox cut off, are counted after the frame.
         """
-        operator = item.get("kind") == "instruct" and item.get("source") in INBOX_OPERATOR_SOURCES
+        source = item.get("source")
+        # read_json accepts any JSON object, so a pending item can hold a list
+        # or an object as its source; only a string can name an operator source.
+        operator = item.get("kind") == "instruct" and isinstance(source, str) and source in INBOX_OPERATOR_SOURCES
         header = (
             f"[{'operator instruction' if operator else 'relayed data'}: "
             f"item_id={item['item_id']} source={item.get('source','?')} "
