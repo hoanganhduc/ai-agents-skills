@@ -4736,7 +4736,9 @@
           "wsl": "workspace/skills/graph-verifier/run_graph_verifier.sh",
           "windows": "workspace/skills/graph-verifier/graph_verifier.py"
         },
-        "args": [],
+        "args": [
+          "--demo"
+        ],
         "timeout_seconds": 20,
         "writes": [
           "home"
@@ -4762,6 +4764,10 @@
             {
               "path": "matches_expected",
               "equals": true
+            },
+            {
+              "path": "input_source",
+              "equals": "builtin_demo"
             }
           ]
         }

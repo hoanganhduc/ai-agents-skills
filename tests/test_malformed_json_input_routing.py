@@ -22,6 +22,8 @@ well-formed input and pins that its behaviour did not move.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -30,6 +32,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The graph-verifier tests load deep-research's validator in this process.
+sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS = REPO_ROOT / "canonical" / "runtime" / "skills"
@@ -53,8 +58,29 @@ def assert_no_traceback(case, stderr):
     case.assertNotIn("JSONDecodeError", stderr)
 
 
+def computation_evidence_errors(block):
+    """Return what deep-research's computation-evidence validator reports for ``block``."""
+    path = SKILLS / "deep-research-workflow" / "deep_research_workflow.py"
+    spec = importlib.util.spec_from_file_location("drw_graph_verifier_block", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    errors = []
+    module.validate_computation_evidence(block, Path("evidence.jsonl"), errors, 1)
+    return errors
+
+
+def path_edges(vertices):
+    """Edge list of a path on ``vertices`` vertices."""
+    return [[i, i + 1] for i in range(vertices - 1)]
+
+
 class GraphVerifierTests(unittest.TestCase):
-    """The skill doc tells the caller to read the JSON result from stdout."""
+    """The skill doc tells the caller to read the JSON result from stdout.
+
+    That result must not claim more than was computed: an input the verifier
+    cannot check ends with no verdict, and only a property computed on the
+    input graph can match or contradict an expected value.
+    """
 
     SCRIPT = SKILLS / "graph-verifier" / "graph_verifier.py"
 
@@ -88,6 +114,142 @@ class GraphVerifierTests(unittest.TestCase):
         payload = json.loads(out)  # this is what used to be empty
         self.assertFalse(payload["ok"])
         self.assertIn("invalid graph input", payload["error"])
+
+    def _verify(self, payload):
+        return self._run(json.dumps(payload))
+
+    def test_input_failures_are_no_verdict_without_a_graph(self):
+        """Nothing to check must not become a report on the built-in Petersen graph."""
+        cases = {
+            "no arguments": lambda: run([self.SCRIPT]),
+            "an empty --input": lambda: run([self.SCRIPT, "--input", ""]),
+            "a missing --input path": lambda: run([self.SCRIPT, "--input", self.tmp / "absent.json"]),
+            "a directory as --input": lambda: run([self.SCRIPT, "--input", self.tmp]),
+            "an empty file": lambda: self._run(""),
+            "malformed JSON": lambda: self._run(MALFORMED),
+            "a payload that is not an object": lambda: self._run("[[1, 2]]"),
+            "a payload naming no graph": lambda: self._verify({"claim": "x"}),
+            "an invalid graph": lambda: self._verify({"graph_data": {"not": "a node-link graph"}}),
+            "expected values that are not a map": lambda: self._verify({"edges": [[1, 2]], "expected": [1]}),
+        }
+        for label, call in cases.items():
+            with self.subTest(case=label):
+                rc, out, err = call()
+                self.assertEqual(rc, 0, err)
+                assert_no_traceback(self, err)
+                payload = json.loads(out)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload.get("verdict"), "no_verdict")
+                self.assertNotIn("n", payload)
+
+    def test_demo_runs_the_petersen_graph(self):
+        rc, out, err = run([self.SCRIPT, "--demo"])
+        self.assertEqual(rc, 0, err)
+        payload = json.loads(out)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["input_source"], "builtin_demo")
+        self.assertEqual((payload["n"], payload["m"]), (10, 15))
+        self.assertEqual(payload["computation_evidence"]["input_encoding_ref"], "builtin:petersen_graph")
+        path = self.tmp / "input.json"
+        path.write_text('{"edges": [[1, 2]]}', encoding="utf-8")
+        rc, _out, err = run([self.SCRIPT, "--demo", "--input", path])
+        self.assertEqual(rc, 2, "--demo and --input name two inputs; argparse refuses the pair")
+        self.assertIn("not allowed with", err)
+
+    def test_unchecked_expected_keys_are_never_mismatches(self):
+        """A property the verifier did not compute neither matches nor contradicts."""
+        triangle = {"edges": [[1, 2], [2, 3], [3, 1]]}
+        cases = {
+            "an unknown property": (triangle, "chromatic_number", 3),
+            "the diameter of a disconnected graph": ({"edges": [[1, 2], [3, 4]]}, "diameter", None),
+            "the diameter of a 301-vertex path": ({"edges": path_edges(301)}, "diameter", 300),
+            "the girth of an edgeless graph": ({"edges": [], "nodes": [1, 2, 3]}, "girth", None),
+            "planarity above the size cap": ({"edges": path_edges(1001)}, "planar", True),
+        }
+        for label, (graph, key, want) in cases.items():
+            with self.subTest(case=label):
+                rc, out, err = self._verify({**graph, "expected": {key: want}})
+                self.assertEqual(rc, 0, err)
+                payload = json.loads(out)
+                self.assertNotIn(key, payload.get("mismatches", {}))
+                self.assertFalse(payload["matches_expected"])
+                self.assertIn(key, payload["unchecked_expected_keys"])
+                block = payload["computation_evidence"]
+                self.assertEqual((block["result_status"], block["coverage_status"]), ("partial", "partial"))
+
+    def test_result_status_follows_checked_keys_only(self):
+        triangle = {"edges": [[1, 2], [2, 3], [3, 1]]}
+        cases = {
+            "no expected values": ({}, "partial", "partial"),
+            "a contradicted value": ({"bipartite": True}, "failed", "exhaustive"),
+            "matching values": ({"n": 3, "connected": True}, "passed", "exhaustive"),
+        }
+        for label, (expected, result_status, coverage) in cases.items():
+            with self.subTest(case=label):
+                rc, out, err = self._verify({**triangle, "expected": expected})
+                self.assertEqual(rc, 0, err)
+                payload = json.loads(out)
+                block = payload["computation_evidence"]
+                self.assertEqual((block["result_status"], block["coverage_status"]), (result_status, coverage))
+                self.assertEqual("exhaustiveness_argument" in block, coverage == "exhaustive")
+                self.assertEqual(computation_evidence_errors(block), [])
+                digest = hashlib.sha256((self.tmp / "input.json").read_bytes()).hexdigest()
+                self.assertEqual(block["input_encoding_ref"], f"sha256:{digest}")
+                self.assertEqual(block["evaluated_predicate"], json.dumps(expected, sort_keys=True))
+                self.assertFalse(payload["claim_evaluated"])
+                self.assertIn("the claim text is not evaluated", block["limitations"])
+
+    def test_a_long_degree_sequence_reports_length_and_truncation(self):
+        expected = {"degree_sequence": [2] * 58 + [1, 1]}
+        rc, out, err = self._verify({"edges": path_edges(60), "expected": expected})
+        self.assertEqual(rc, 0, err)
+        payload = json.loads(out)
+        self.assertEqual(payload["degree_sequence_length"], 60)
+        self.assertTrue(payload["degree_sequence_truncated"])
+        self.assertEqual(len(payload["degree_sequence"]), 50)
+        # The comparison reads the whole sequence, not the printed prefix.
+        self.assertTrue(payload["matches_expected"])
+        self.assertEqual(payload["computation_evidence"]["result_status"], "passed")
+
+    def test_a_null_expected_map_reads_as_no_expected_values(self):
+        rc, out, err = self._verify({"edges": [[1, 2]], "expected": None})
+        self.assertEqual(rc, 0, err)
+        assert_no_traceback(self, err)
+        payload = json.loads(out)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["computation_evidence"]["evaluated_predicate"], "{}")
+
+    def test_girth_is_null_when_infinite_and_unchecked_when_it_raises(self):
+        """Stub nx.girth, which networkx 2.8 lacks and newer releases give inf on acyclic graphs."""
+        driver = (
+            "import runpy, sys\n"
+            "import networkx as nx\n"
+            "def acyclic(graph):\n"
+            "    return float('inf')\n"
+            "def broken(graph):\n"
+            "    raise RuntimeError('girth failed')\n"
+            "nx.girth = acyclic if sys.argv[3] == 'inf' else broken\n"
+            "script, source = sys.argv[1], sys.argv[2]\n"
+            "sys.argv = [script, '--input', source]\n"
+            "runpy.run_path(script, run_name='__main__')\n"
+        )
+
+        def strict(constant):
+            raise ValueError(f"{constant} is not JSON")
+
+        path = self.tmp / "input.json"
+        path.write_text(json.dumps({"edges": path_edges(4), "expected": {"girth": None}}), encoding="utf-8")
+        cases = {"inf": ("checked", True), "raises": ("error", False)}
+        for mode, (status, matches) in cases.items():
+            with self.subTest(girth=mode):
+                rc, out, err = run(["-c", driver, self.SCRIPT, path, mode])
+                self.assertEqual(rc, 0, err)
+                payload = json.loads(out, parse_constant=strict)
+                self.assertIsNone(payload["girth"])
+                self.assertNotIn("girth", payload.get("mismatches", {}))
+                self.assertEqual(payload["matches_expected"], matches)
+                self.assertEqual(payload["property_status"]["girth"], status)
+                self.assertEqual("girth" in payload["unchecked_expected_keys"], not matches)
 
 
 class OpenGaussRunStateTests(unittest.TestCase):
