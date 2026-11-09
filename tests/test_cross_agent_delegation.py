@@ -386,7 +386,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             prechecks = build_external_agent_prechecks(root, "linux", delegation, env={})
-            auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10)
+            auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10, env={})
             self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity", "grok", "kimi"])
 
             explicit_plan = build_dispatch_plan(
@@ -2998,17 +2998,17 @@ class DispatchStampTests(unittest.TestCase):
 
             with self.subTest("auto selection drops the family and every unverified one"):
                 self.assertEqual(
-                    expand_auto_providers(["auto"], prechecks, 10, exclude_families=frozenset({"anthropic"})),
+                    expand_auto_providers(["auto"], prechecks, 10, env={}, exclude_families=frozenset({"anthropic"})),
                     ["deepseek", "antigravity", "grok"],
                 )
                 self.assertEqual(
-                    expand_auto_providers(["auto"], prechecks, 2, exclude_families=frozenset({"anthropic", "deepseek"})),
+                    expand_auto_providers(["auto"], prechecks, 2, env={}, exclude_families=frozenset({"anthropic", "deepseek"})),
                     ["antigravity", "grok"],
                 )
-                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10, exclude_families=frozenset()), everyone)
+                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10, env={}, exclude_families=frozenset()), everyone)
 
             with self.subTest("regression check: without the flag auto selection keeps unverified providers"):
-                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10), everyone)
+                self.assertEqual(expand_auto_providers(["auto"], prechecks, 10, env={}), everyone)
 
             with self.subTest("an explicitly named provider is blocked before command discovery"):
                 discover = Mock(side_effect=AssertionError("command discovery ran for an excluded provider"))
@@ -3057,6 +3057,114 @@ class DispatchStampTests(unittest.TestCase):
                 self.assertIsNone(build_parser().parse_args(["delegate-agent"]).exclude_family)
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     build_parser().parse_args(["delegate-agent", "--exclude-family", "foo"])
+
+    def test_exclude_family_auto_selection_drops_env_unverified_providers(self) -> None:
+        """With --exclude-family, auto selection also leaves out the providers the child environment makes unverified.
+
+        A provider is judged by dispatch_family on the child environment, as
+        its stamp would be, before max_providers applies, so the next eligible
+        provider takes its place, and a selection left empty plans nothing.
+        Regression checks that held before: without --exclude-family the same
+        provider is still auto-selected, a provider named with --provider still
+        runs with an unverified stamp, and a named provider of an excluded
+        family is still blocked.
+        """
+        from installer.ai_agents_skills.delegation import PROVIDER_ENDPOINT_IDENTITY_VARS
+
+        manifests = load_manifests()
+        # Every variable that can make an external provider's family unverified.
+        identity_env = {
+            name
+            for provider in EXTERNAL_PROVIDERS
+            for name in (
+                f"AAS_{provider.upper()}_DISPATCH_COMMAND",
+                f"AAS_{provider.upper()}",
+                *PROVIDER_ENDPOINT_IDENTITY_VARS.get(provider, ()),
+            )
+        }
+        research = {"research": True, "resolved_model": "model-x", "resolved_thinking": "max"}
+
+        def plan(root: Path, env: dict[str, str], **overrides: Any) -> dict[str, Any]:
+            """A dry-run delegate-agent result with no identity variable set but ``env``; no CLI is found."""
+            with patch.dict(os.environ, {}, clear=False):
+                for name in identity_env:
+                    os.environ.pop(name, None)
+                os.environ.update(env)
+                with (
+                    patch("installer.ai_agents_skills.delegation.discover_tool", missing_cli),
+                    patch("installer.ai_agents_skills.delegation_dispatch.discover_tool", missing_cli),
+                ):
+                    return dispatch_external_agents(
+                        delegate_args(root, **{"provider": "auto", "dry_run": True, **overrides}), manifests
+                    )
+
+        def selected(root: Path, env: dict[str, str], **overrides: Any) -> list[str]:
+            return [item["provider"] for item in plan(root, env, **overrides)["dispatch_plan"]]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = {
+                "a command override": ({"AAS_CLAUDE_DISPATCH_COMMAND": "claude --print"}, ["openai"], {}, ["deepseek"]),
+                "an endpoint variable": (
+                    {"ANTHROPIC_BASE_URL": "https://gateway.invalid/anthropic"},
+                    ["openai"],
+                    {},
+                    ["deepseek"],
+                ),
+                "research with the DeepSeek override research needs": (
+                    {"AAS_DEEPSEEK_DISPATCH_COMMAND": "codewhale exec"},
+                    ["anthropic"],
+                    {**research, "max_providers": 10},
+                    ["antigravity", "grok"],
+                ),
+                "research with every override research needs, grok aside": (
+                    {"AAS_DEEPSEEK_DISPATCH_COMMAND": "codewhale exec", "AAS_ANTIGRAVITY_DISPATCH_COMMAND": "agy"},
+                    ["anthropic"],
+                    research,
+                    ["grok"],
+                ),
+            }
+            for name, (env, families, overrides, expected) in cases.items():
+                with self.subTest(name):
+                    self.assertEqual(selected(root, env, exclude_family=families, **overrides), expected)
+
+            with self.subTest("a selection the filter leaves empty plans nothing"):
+                result = plan(
+                    root,
+                    {"AAS_CLAUDE_DISPATCH_COMMAND": "claude --print"},
+                    exclude_family=["deepseek", "google", "xai"],
+                    max_providers=10,
+                )
+                self.assertEqual((result["status"], result["dispatch_plan"]), ("blocked", []))
+
+            with self.subTest("regression check: without the flag the provider is still auto-selected"):
+                self.assertEqual(selected(root, {"AAS_CLAUDE_DISPATCH_COMMAND": "claude --print"}), ["claude"])
+                self.assertEqual(selected(root, {"ANTHROPIC_BASE_URL": "https://gateway.invalid/anthropic"}), ["claude"])
+
+            with self.subTest("regression check: a named provider of an excluded family is still blocked"):
+                result = plan(
+                    root,
+                    {"AAS_CLAUDE_DISPATCH_COMMAND": "claude --print"},
+                    provider="claude",
+                    exclude_family=["anthropic"],
+                )
+                self.assertEqual(
+                    [(item["provider"], item["status"], item["reason"]) for item in result["dispatch_plan"]],
+                    [("claude", "blocked", "provider family anthropic is excluded by --exclude-family")],
+                )
+
+        with (
+            self.subTest("regression check: a named provider still runs with an unverified stamp"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            result = self.dispatch_claude(Path(tmp), "echo-answer", override_command=True, exclude_family=["openai"])
+            participant = result["participants"][0]
+            self.assertEqual(participant["status"], "ok", participant["validation"])
+            stamp = json.loads((Path(result["run_dir"]) / participant["stamp_ref"]).read_bytes())
+            self.assertEqual(
+                (stamp["provider"], stamp["model_family"], stamp["unverified_by"]),
+                ("claude", "unverified", ["AAS_CLAUDE_DISPATCH_COMMAND"]),
+            )
 
 
 class RelayedTaskFramingTests(unittest.TestCase):

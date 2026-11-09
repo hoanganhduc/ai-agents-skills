@@ -104,10 +104,13 @@ participants. It:
   used
 - leaves out the providers of each family named by a repeatable
   `--exclude-family` (`anthropic`, `deepseek`, `google`, `openai` or `xai`):
-  auto selection then also leaves out the providers whose family is
-  `unverified` (`copilot`, `kimi`), and a provider named with `--provider` or
-  `--providers` whose family is excluded is blocked before its command is
-  resolved or discovered
+  auto selection then also leaves out, before `--max-providers` applies, the
+  providers whose stamp would be `unverified`, by the table (`copilot`,
+  `kimi`) or because an override or endpoint variable is set for them, as the
+  stamp rules below say; a provider named with `--provider` or `--providers`
+  whose family is excluded is blocked before its command is resolved or
+  discovered, and a named provider that such a variable makes `unverified`
+  still runs, with an `unverified` stamp
 - blocks live external execution unless `--allow-external-cli` is supplied
 - blocks research execution unless latest-model and highest-thinking settings
   are resolved for the provider
@@ -195,7 +198,8 @@ equal to the dispatcher's default `https://api.deepseek.com` aside).
 `unverified_by` names those variables, never their values. Research dispatch
 needs `AAS_<PROVIDER>_DISPATCH_COMMAND` for every provider but grok, so grok
 aside, research stamps are `unverified` until a configured command can be
-attested.
+attested, and with `--exclude-family` research auto selection can dispatch
+grok at most.
 Even a table family is the label of the provider the dispatcher was asked to
 launch: a configuration file the CLI reads can route it to another model, so
 a stamp is recorded provenance, not a verified model identity. Ready

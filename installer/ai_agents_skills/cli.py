@@ -274,7 +274,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(VERIFIED_FAMILIES),
         help=(
             "leave out providers of this model family (repeatable); auto selection then also "
-            "leaves out providers whose family is unverified"
+            "leaves out providers whose family is unverified, by the provider table or because "
+            "an override or endpoint variable is set for them"
         ),
     )
     delegate_agent.add_argument(

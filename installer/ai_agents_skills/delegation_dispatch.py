@@ -391,7 +391,9 @@ def build_dispatch_plan(
     exclude_families: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     provider_checks = {item["provider"]: item for item in prechecks["providers"]}
-    providers = expand_auto_providers(requested, prechecks, max_providers, exclude_families=exclude_families)
+    providers = expand_auto_providers(
+        requested, prechecks, max_providers, env=env, exclude_families=exclude_families
+    )
     return [
         build_provider_dispatch_plan(
             root,
@@ -414,6 +416,7 @@ def expand_auto_providers(
     prechecks: dict[str, Any],
     max_providers: int,
     *,
+    env: dict[str, str],
     exclude_families: frozenset[str] = frozenset(),
 ) -> list[str]:
     if requested != ["auto"]:
@@ -424,12 +427,17 @@ def expand_auto_providers(
         if provider in EXTERNAL_PROVIDERS
     ]
     if exclude_families:
-        # An exclusion asks for families that can be told apart, so the
-        # providers the table leaves unverified go too.
+        # An exclusion asks for families that can be told apart, so every
+        # provider whose stamp would be unverified goes too: one the table
+        # leaves unverified, or one an override or endpoint variable makes
+        # unverified, judged on the child environment as
+        # build_provider_dispatch_plan judges it. The filter runs before
+        # max_providers, so the next eligible provider takes the place.
         candidates = [
             provider
             for provider in candidates
-            if provider_family(provider) not in exclude_families | {"unverified"}
+            if dispatch_family(provider, {**env, **provider_env_defaults(provider, env)})[0]
+            not in exclude_families | {"unverified"}
         ]
     return candidates[:max(1, max_providers)]
 
