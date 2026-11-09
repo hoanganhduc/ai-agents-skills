@@ -208,10 +208,16 @@ this template.
   past either cap are refused and listed as not relayed.
 - **Hidden characters.** Before relaying, check the entry text for control
   characters (Unicode category Cc), format characters (category Cf, which
-  includes zero-width and bidirectional controls), and tag characters (U+E0000
-  to U+E007F). Tab and newline are allowed, and a CRLF pair counts as one
-  newline. Refuse an entry that contains any other such character, or replace
-  each one with a visible escape such as `\u202e`.
+  includes zero-width and bidirectional controls), surrogates (category Cs),
+  every code point from U+E0000 to U+E007F (tag characters) and from U+E0100
+  to U+E01EF (supplementary variation selectors), and a variation selector
+  (U+FE00 to U+FE0F, U+180B to U+180D or U+180F) directly after another
+  variation selector. Tab is allowed, and so is each line break that
+  "Framing" splits on: a boundary of Python `str.splitlines()`, where a CRLF
+  pair counts as one. A variation selector after an ordinary character, such
+  as U+FE0F after an emoji, is allowed too. Refuse an entry that contains any
+  other such character, or replace each one with a visible escape such as
+  `\u202e`.
 - **Framing.** Start each entry with the header line
   `[participant, role, round, kind]` and prefix every line of the entry with
   `| `. Split the entry into lines the way Python `str.splitlines()` does, so a
