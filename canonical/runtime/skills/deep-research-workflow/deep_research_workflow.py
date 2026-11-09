@@ -2445,6 +2445,19 @@ def delegation_packet_paths(path: Path) -> list[Path]:
 
 
 def validate_delegation_packet(packet: dict[str, Any], path: Path, errors: list[dict[str, Any]]) -> None:
+    """Check one delegation packet against its contract.
+
+    The forbidden-material scan runs before the schema is looked up, so a packet
+    with an unsupported schema_version, or a hidden character in that key, still
+    gets its codes.
+    """
+    forbidden = recursive_forbidden_packet_material(packet)
+    for code in sorted(set(forbidden)):
+        if code == "HIDDEN_TEXT":
+            message = "delegation packet has hidden characters in a key or string value"
+        else:
+            message = "delegation packet contains forbidden authority, runtime, model, or secret material"
+        add_error(errors, code, path, message)
     schema_version = packet.get("schema_version")
     if schema_version == TASK_SCHEMA_VERSION:
         required, fields = TASK_REQUIRED, TASK_FIELDS
@@ -2459,13 +2472,6 @@ def validate_delegation_packet(packet: dict[str, Any], path: Path, errors: list[
     unknown = set(packet) - fields
     if unknown:
         add_error(errors, "UNKNOWN_FIELD", path, f"unknown delegation packet fields: {sorted(unknown)}")
-    forbidden = recursive_forbidden_packet_material(packet)
-    for code in sorted(set(forbidden)):
-        if code == "HIDDEN_TEXT":
-            message = "delegation packet has hidden characters in a key or string value"
-        else:
-            message = "delegation packet contains forbidden authority, runtime, model, or secret material"
-        add_error(errors, code, path, message)
 
 
 def recursive_forbidden_packet_material(value: Any) -> list[str]:

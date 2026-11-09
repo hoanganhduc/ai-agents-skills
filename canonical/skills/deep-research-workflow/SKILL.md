@@ -92,7 +92,9 @@ authority keys (`confirmed_by_parent`, `execute`, `execution_target`,
 `HIDDEN_TEXT`: control characters other than tab, line feed and carriage
 return, format characters, surrogates, tag characters, supplementary variation
 selectors, and a variation selector right after another. A packet with hidden
-characters is refused, never cleaned.
+characters is refused, never cleaned. These refusals are checked before the
+schema is looked up, so a packet whose `schema_version` is unsupported, or
+whose `schema_version` key hides a character, still gets them.
 
 Check delivery readiness of a structured run with:
 

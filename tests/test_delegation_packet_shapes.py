@@ -407,6 +407,31 @@ class HiddenTextPacketTests(unittest.TestCase):
             self.assertEqual(validate_task(packet), [])
             self.assertEqual(self.deep_research_codes(packet), set())
 
+    def test_deep_research_scans_a_packet_before_it_looks_up_the_schema(self) -> None:
+        """A packet whose schema is unsupported still gets the forbidden-material codes from deep research.
+
+        Hiding U+200B in the schema_version key leaves no schema_version, and
+        deep research returned DELEGATION_PACKET_SCHEMA_INVALID before it
+        scanned the packet. So did an unsupported schema_version beside a
+        nested authority key. The installer validator, which collects every
+        error, already reported HIDDEN_TEXT and FORBIDDEN_AUTHORITY_FIELD for
+        them: regression checks.
+        """
+        hidden_key = example_packet("valid-inert-task")
+        hidden_key["schema\u200b_version"] = hidden_key.pop("schema_version")
+        authority = example_packet("valid-inert-task")
+        authority["schema_version"] = "cross-agent-delegation.task.v9"
+        authority["expected_output"]["execute"] = True
+        cases = {
+            "schema_version key with U+200B": (hidden_key, "HIDDEN_TEXT"),
+            "unsupported schema_version beside a nested execute key": (authority, "FORBIDDEN_AUTHORITY_FIELD"),
+        }
+        for label, (packet, code) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.deep_research_codes(packet), {code, "DELEGATION_PACKET_SCHEMA_INVALID"})
+            with self.subTest(f"regression check: the installer validator, {label}"):
+                self.assertIn(code, validate_task(packet))
+
     def test_deep_research_refuses_authority_keys_and_unknown_fields(self) -> None:
         """Deep research refuses the installer's authority keys at any depth and top-level fields outside the contract.
 
