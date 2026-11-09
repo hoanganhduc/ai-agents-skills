@@ -127,7 +127,9 @@ nonce as `AAS_DELEGATION_RESULT_NONCE` and its final marker as
 counts only as a whole line (surrounding whitespace aside) with this call's
 nonce; a bare marker, another call's marker and marker text inside a sentence
 are ordinary output. No envelope gives `missing result envelope`, and a second
-start or end line gives `ambiguous_envelope`. Both prompts name the markers
+start or end line gives `ambiguous_envelope`. An envelope whose JSON object has
+`status` `parse-failed`, the form the dispatcher records for a parse failure,
+is a parse failure too: `reserved_status`. Both prompts name the markers
 inside sentences and show their example JSON without markers, so a CLI that
 echoes its prompt prints no envelope. The nonce stops envelopes written before
 the call, such as one inside the task text or a smoke reply replayed at the
@@ -155,9 +157,10 @@ Besides `status` and `errors`, each `validation/<participant_id>.json` records:
   exactly one parseable envelope, otherwise `no_verdict`: not launched, timed
   out, a failed smoke probe, or no single parseable envelope, which covers a
   non-zero exit without one. A `no_verdict` participant has no `result`, its
-  `parsed/<participant_id>.json` holds only the parse failure, and it adds no
-  evidence-map rows. A non-zero exit with one envelope is `reported` with
-  status `failed`.
+  `parsed/<participant_id>.json` holds only the parse failure, its normalized
+  result packet `parsed/<participant_id>.result.json` has no findings and no
+  evidence, and it adds no evidence-map rows. A non-zero exit with one
+  envelope is `reported` with status `failed`.
 - `exited` and `completed`, about the command of the record's phase (the smoke
   probe when that failed): launched and not timed out; and also exited 0 with
   the final marker in stdout, a substring check that an echoed prompt
@@ -507,6 +510,7 @@ Use stable diagnostic codes in participant state and validation artifacts:
 - `file_read_fidelity_failed`
 - `output_parse_failed`
 - `ambiguous_envelope`
+- `reserved_status`
 - `text_renderer_malformed`
 - `timeout_no_final`
 - `truncated_output`

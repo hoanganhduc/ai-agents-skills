@@ -2401,6 +2401,8 @@ elif mode == "exit-envelope":
     envelope("EXITED")
     print(final_marker)
     sys.exit(3)
+elif mode == "reserved-status":
+    envelope("RESERVED", {"status": "parse-failed", "errors": []})
 print(final_marker)
 """
 
@@ -2674,6 +2676,65 @@ class ResultEnvelopeNonceTests(unittest.TestCase):
                 {key: result["validation"][key] for key in ("exited", "completed")},
                 {"exited": False, "completed": False},
             )
+
+    def test_reserved_parse_failed_status_is_no_verdict(self) -> None:
+        """An envelope whose object has status "parse-failed" is a parse failure, reserved_status.
+
+        "parse-failed" is the form the parser returns for a failure, never a
+        participant status. A participant that prints such an envelope, exits
+        0 and prints its final marker gets no verdict: a failed validation, no
+        result, no evidence-map rows and a result packet without findings or
+        evidence. Regression checks that held before: the participant's
+        exited and completed facts, and an ok envelope still giving outcome
+        reported, with its evidence-map row and its finding in the result
+        packet.
+        """
+        nonce = self.NONCE
+        start, end = f"AAS_RESULT_JSON_START_{nonce}", f"AAS_RESULT_JSON_END_{nonce}"
+        body = {
+            "status": "parse-failed",
+            "errors": [],
+            "findings": [{"id": "RESERVED", "summary": "s", "evidence_refs": ["task"]}],
+            "limitations": [],
+            "warnings": [],
+        }
+        failure = {"status": "parse-failed", "errors": ["reserved_status"]}
+        with self.subTest("parse_result_json"):
+            self.assertEqual(parse_result_json(f"{start}\n{json.dumps(body)}\n{end}\n", nonce=nonce), failure)
+        with self.subTest("a participant that exits 0 with its final marker"), tempfile.TemporaryDirectory() as tmp:
+            result, run_dir = self.dispatch(Path(tmp), "reserved-status")
+            validation = result["validation"]
+            packet = json.loads((run_dir / "parsed" / "claude-external-1.result.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                {
+                    "status": validation["status"],
+                    "reserved_status": "reserved_status" in validation["errors"],
+                    "outcome": validation["outcome"],
+                    "result": "result" in result,
+                    "evidence_map_rows": [row["parsed_finding_id"] for row in evidence_map_rows(run_dir)],
+                    "packet_findings": [item["finding_id"] for item in packet["findings"]],
+                    "packet_evidence": len(packet["evidence"]),
+                },
+                {
+                    "status": "failed",
+                    "reserved_status": True,
+                    "outcome": "no_verdict",
+                    "result": False,
+                    "evidence_map_rows": [],
+                    "packet_findings": [],
+                    "packet_evidence": 0,
+                },
+            )
+            parsed = json.loads((run_dir / "parsed" / "claude-external-1.json").read_text(encoding="utf-8"))
+            self.assertEqual(parsed, failure)
+            self.assertEqual({key: validation[key] for key in ("exited", "completed")}, {"exited": True, "completed": True})
+            self.assert_no_verdict(result, run_dir, "RESERVED")
+        with self.subTest("regression check: an ok envelope still reports"), tempfile.TemporaryDirectory() as tmp:
+            result, run_dir = self.dispatch(Path(tmp), "echo-answer")
+            self.assertEqual(result["validation"]["outcome"], "reported", result["validation"])
+            self.assertEqual([row["parsed_finding_id"] for row in evidence_map_rows(run_dir)], ["REAL"])
+            packet = json.loads((run_dir / "parsed" / "claude-external-1.result.json").read_text(encoding="utf-8"))
+            self.assertEqual([item["finding_id"] for item in packet["findings"]], ["REAL"])
 
     def test_claimed_identity_keys_are_recorded_and_ignored(self) -> None:
         """The record lists identity keys a result claims; the participant keeps

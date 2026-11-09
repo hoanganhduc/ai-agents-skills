@@ -1194,9 +1194,16 @@ def run_external_participant(
         )
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout, nonce=task_nonce)
-    if completed.timed_out and parsed.get("status") != "parse-failed":
-        # What a timed-out command printed before it was killed is no verdict:
-        # it yields no findings and no evidence-map rows.
+    # The one no-verdict gate: the outcome is decided from the command and the
+    # parsed object before anything derived from them is written. A no_verdict
+    # task writes its parsed file, result packet, evidence map and participant
+    # entry from the parse-failed form, so it yields no findings, no
+    # evidence-map rows and no result. A parsed object other than that form is
+    # no_verdict only when the command timed out after printing it.
+    if (
+        outcome_facts(completed, parsed=parsed)["outcome"] == "no_verdict"
+        and parsed.get("status") != "parse-failed"
+    ):
         parsed = {"status": "parse-failed", "errors": ["timeout_no_final"]}
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)
     normalized = normalize_result_packet(plan, parsed, task_packet_id=task_ref_id(task_text))
@@ -1742,7 +1749,9 @@ def parse_result_json(stdout: str, *, nonce: str) -> dict[str, Any]:
     carries this call's nonce: marker text inside a sentence, a bare marker and
     another call's marker are ordinary output. One start line and one end line
     after it are required; a second start or end line is ambiguous, never a
-    choice between candidates.
+    choice between candidates. Status "parse-failed" marks this function's
+    own failure form, so an object that carries it is a failure too,
+    reserved_status, never a participant's answer.
     """
     start, end = result_markers(nonce)
     lines = stdout.split("\n")
@@ -1758,6 +1767,8 @@ def parse_result_json(stdout: str, *, nonce: str) -> dict[str, Any]:
         return {"status": "parse-failed", "errors": [f"invalid JSON: {exc}"]}
     if not isinstance(data, dict):
         return {"status": "parse-failed", "errors": ["result JSON must be an object"]}
+    if data.get("status") == "parse-failed":
+        return {"status": "parse-failed", "errors": ["reserved_status"]}
     return data
 
 
