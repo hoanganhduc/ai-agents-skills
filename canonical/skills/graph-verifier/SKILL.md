@@ -72,9 +72,11 @@ A run that read a graph prints `ok: true` and these fields:
   `degree_sequence` and `small_n_ok`: the properties, `null` when not computed.
 - `property_status`: `checked`, `skipped` or `error` for each property above.
   `planar` is skipped above 1000 vertices or 5000 edges, and `diameter` for a
-  disconnected graph or one with more than 300 vertices. `girth` is skipped for
-  a graph without edges and is `null` with status `checked` for an acyclic
-  graph; networkx releases without `nx.girth` (2.8.8 has none) report `error`.
+  disconnected graph or one with more than 300 vertices. `connected`, `tree`
+  and `diameter` are skipped for a graph with no vertices, where they are
+  undefined. `girth` is skipped for a graph without edges and is `null` with
+  status `checked` for an acyclic graph; networkx releases without `nx.girth`
+  (2.8.8 has none) report `error`.
 - `degree_sequence` lists the first 50 degrees in decreasing order;
   `degree_sequence_length` and `degree_sequence_truncated` give the full length
   and whether the list was cut. An expected `degree_sequence` is compared with

@@ -62,9 +62,17 @@ def planarity(graph):
     return nx.check_planarity(graph, counterexample=False)[0]
 
 
-def safe_diameter(graph):
+def require_vertices(graph):
+    """Return ``graph`` when it has a vertex; connectivity, treeness and diameter are undefined otherwise."""
+    # Decided here rather than left to networkx's exceptions for the null
+    # graph, so the status does not depend on the networkx release.
     if graph.number_of_nodes() == 0:
-        return 0
+        raise Skipped("undefined for a graph with no vertices")
+    return graph
+
+
+def safe_diameter(graph):
+    require_vertices(graph)
     if graph.number_of_nodes() > 300:
         raise Skipped("more than 300 vertices")
     if not nx.is_connected(graph):
@@ -180,9 +188,9 @@ def main():
     computations = {
         "n": undirected.number_of_nodes,
         "m": undirected.number_of_edges,
-        "connected": lambda: nx.is_connected(undirected) if n > 0 else True,
+        "connected": lambda: nx.is_connected(require_vertices(undirected)),
         "bipartite": lambda: nx.is_bipartite(undirected),
-        "tree": lambda: nx.is_tree(undirected) if n > 0 else True,
+        "tree": lambda: nx.is_tree(require_vertices(undirected)),
         "planar": lambda: planarity(undirected),
         "diameter": lambda: safe_diameter(undirected),
         "girth": lambda: safe_girth(undirected),

@@ -177,6 +177,32 @@ class GraphVerifierTests(unittest.TestCase):
                 block = payload["computation_evidence"]
                 self.assertEqual((block["result_status"], block["coverage_status"]), ("partial", "partial"))
 
+    def test_properties_undefined_without_vertices_are_unchecked(self):
+        """A graph with no vertices has no connectivity, treeness or diameter to compare.
+
+        The last assertion is a regression check: the other properties keep
+        their statuses, with girth skipped because the graph has no edges.
+        """
+        expected = {"tree": True, "connected": True, "diameter": 0}
+        undefined = sorted(expected)
+        defined = ("n", "m", "bipartite", "planar", "degree_sequence", "small_n_ok")
+        cases = {"an empty edge list": {"edges": []}, "an empty adjacency map": {"adjacency": {}}}
+        for label, graph in cases.items():
+            with self.subTest(case=label):
+                rc, out, err = self._verify({**graph, "expected": expected})
+                self.assertEqual(rc, 0, err)
+                payload = json.loads(out)
+                block = payload["computation_evidence"]
+                self.assertEqual((block["result_status"], block["coverage_status"]), ("partial", "partial"))
+                self.assertEqual(payload["unchecked_expected_keys"], undefined)
+                self.assertEqual(payload.get("mismatches", {}), {})
+                self.assertFalse(payload["matches_expected"])
+                status = payload["property_status"]
+                self.assertEqual({key: (payload[key], status[key]) for key in undefined},
+                                 dict.fromkeys(undefined, (None, "skipped")))
+                self.assertEqual({key: status[key] for key in status if key not in expected},
+                                 {**dict.fromkeys(defined, "checked"), "girth": "skipped"})
+
     def test_result_status_follows_checked_keys_only(self):
         triangle = {"edges": [[1, 2], [2, 3], [3, 1]]}
         cases = {
