@@ -1262,3 +1262,113 @@ class OpenGaussEvidenceTests(unittest.TestCase):
         errors2: list = []
         mod.validate_opengauss_run_evidence(bad, P("evidence.jsonl"), errors2, 1)
         self.assertTrue(any(e["code"] == "OPENGAUSS_RUN_TOOL_INVALID" for e in errors2))
+
+
+class DeliveryCheckVerbTests(unittest.TestCase):
+    """delivery-check runs validate, then checks the delivery decision, required formal targets and input stability."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("drw_delivery_check", DEEP_RESEARCH_RUNTIME)
+        assert spec is not None and spec.loader is not None
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def make_run(self, tmp: str, builder) -> Path:
+        root = Path(tmp) / "research"
+        root.mkdir(parents=True)
+        builder(root)
+        return root
+
+    def run_cli(self, root: Path) -> tuple[int, dict]:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        completed = subprocess.run(
+            [sys.executable, str(DEEP_RESEARCH_RUNTIME), "delivery-check", "--dir", str(root)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+        )
+        return completed.returncode, json.loads(completed.stdout)
+
+    def add_required_statement_only_target(self, root: Path) -> None:
+        target = self.mod.formal_target(verification_evidence_ids=[])
+        target.update({
+            "artifact_stage": "stub",
+            "placeholder_status": "placeholders_allowed_for_stub",
+            "trust_base_status": "not_scanned",
+            "statement_relation_status": "not_reviewed",
+            "review_status": "not_reviewed",
+            "claim_support_status": "supports_formal_statement_only",
+            "formal_check_requirement": "required_for_delivery",
+            "lean_statement_ref": "formal/stub/ft1.lean",
+            "statement_equivalence_review_ids": [],
+        })
+        self.mod.write_jsonl_rows(root / "formal" / "formal_targets.jsonl", [target])
+        self.mod.write_jsonl_rows(root / "formal" / "statement_equivalence_reviews.jsonl", [])
+
+    def test_ready_run_prints_ready_and_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.mod.build_v2_ready_success)
+            code, payload = self.run_cli(root)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["verdict"], "READY")
+        self.assertEqual(payload["codes"], [])
+        self.assertEqual(payload["input_digest_before"], payload["input_digest_after"])
+
+    def test_invalid_run_is_not_ready_with_validate_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.mod.build_v2_ready_failure)
+            expected = {error["code"] for error in self.mod.validate_directory(root)["errors"]}
+            code, payload = self.run_cli(root)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["verdict"], "NOT READY")
+        self.assertTrue(expected)
+        self.assertTrue(expected <= set(payload["codes"]), payload["codes"])
+
+    def test_valid_not_ready_run_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.mod.write_minimal_v2_not_ready)
+            validate = self.mod.validate_directory(root)
+            code, payload = self.run_cli(root)
+        self.assertEqual(validate["status"], "ok", validate["errors"])
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["verdict"], "NOT READY")
+        self.assertIn("DELIVERY_DECISION_NOT_FINALIZABLE", payload["codes"])
+
+    def test_required_statement_only_target_passes_validate_but_not_delivery_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, self.mod.build_v2_ready_success)
+            self.add_required_statement_only_target(root)
+            validate = self.mod.validate_directory(root)
+            code, payload = self.run_cli(root)
+        # Regression check: validate keeps accepting this run; only the verb refuses it.
+        self.assertEqual(validate["status"], "ok", validate["errors"])
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["verdict"], "NOT READY")
+        self.assertIn("DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED", payload["codes"])
+        self.assertEqual(payload["unpromoted_required_formal_targets"], ["FT1"])
+
+    def test_input_changed_during_check_is_not_ready(self) -> None:
+        mod = self.mod
+        original = mod.validate_directory
+
+        def validate_then_edit(root, *args, **kwargs):
+            result = original(root, *args, **kwargs)
+            (root / "report.md").write_text("Edited during the check.\n", encoding="utf-8")
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.make_run(tmp, mod.build_v2_ready_success)
+            mod.validate_directory = validate_then_edit
+            try:
+                result = mod.delivery_check(root)
+            finally:
+                mod.validate_directory = original
+        self.assertEqual(result["verdict"], "NOT READY")
+        self.assertIn("DELIVERY_INPUT_CHANGED", result["codes"])
+        self.assertNotEqual(result["input_digest_before"], result["input_digest_after"])

@@ -78,6 +78,25 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --schema-version 2 --dir /path/to/workspace/research
 ```
 
+Check delivery readiness of a structured run with:
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/deep-research-workflow/run_deep_research_workflow.sh delivery-check --dir /path/to/workspace/research
+```
+
+`delivery-check` runs `validate` and prints `READY` only when the run is valid,
+the delivery decision is `ready` or `ready-with-caveats`, every
+`required_for_delivery` formal target has promoted support
+(`supports_claim_after_equivalence_review`; formal-statement-only does not
+count), and the run's input files did not change during the check. Otherwise it
+prints `NOT READY` with the `validate` codes and its own codes
+(`DELIVERY_DECISION_NOT_FINALIZABLE`,
+`DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED`, `DELIVERY_INPUT_CHANGED`) and
+exits 1. The verdict and exit code are code-enforced; `validate` itself is
+unchanged. A Delivery Check quotes this output verbatim and never upgrades
+`NOT READY`.
+
 Verify the helper setup with:
 
 ```bash

@@ -1,0 +1,15 @@
+{
+  "fixture_id": "restated-goal-as-progress",
+  "defect_class": "restated_goal_as_progress",
+  "defect_label": "A lemma that only restates the target theorem is presented as progress.",
+  "target_gates": ["research-report-reviewer"],
+  "artifact": {
+    "kind": "proof_progress_report",
+    "lemmas": [
+      {"lemma_id": "L-1", "statement": "The target theorem holds for all n.", "restates_goal": true, "presented_as": "progress"}
+    ],
+    "report_text": "Lemma L-1 is established, which is major progress toward the theorem."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["reviewer FLAG: the lemma restates the goal and is not progress"]
+}

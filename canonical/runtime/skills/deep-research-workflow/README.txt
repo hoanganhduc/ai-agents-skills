@@ -22,6 +22,11 @@ validate:
   & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
     "skills/deep-research-workflow/run_deep_research_workflow.ps1" validate --dir C:\path\to\workspace\research
 
+delivery-check (validate, then READY only for a finalizable decision, promoted required formal targets and unchanged inputs):
+
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" delivery-check --dir C:\path\to\workspace\research
+
 selftest:
 
   & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `

@@ -1,0 +1,15 @@
+{
+  "fixture_id": "verdict-upgraded",
+  "defect_class": "verdict_upgraded",
+  "defect_label": "The report upgrades a delivery-check NOT READY to READY.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "structured_run": true,
+    "delivery_check_output": "NOT READY",
+    "final_status": "READY",
+    "report_text": "Minor validator noise aside, the run is ready."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["delivery-check output quoted verbatim; NOT READY never upgraded"]
+}

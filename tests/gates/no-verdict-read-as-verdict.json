@@ -1,0 +1,15 @@
+{
+  "fixture_id": "no-verdict-read-as-verdict",
+  "defect_class": "no_verdict_read_as_verdict",
+  "defect_label": "A Lean check that timed out is reported as refuting the claim.",
+  "target_gates": ["research-verification-gate", "research-report-reviewer"],
+  "artifact": {
+    "kind": "research_report",
+    "checks": [
+      {"check_id": "K-1", "tool": "lean-strict-verification-gate", "outcome": "timeout", "reported_as": "refuted"}
+    ],
+    "report_text": "The Lean check timed out, so the lemma is false."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["timeout is no verdict, listed under Checks not run"]
+}

@@ -24,6 +24,14 @@ Review the draft against this list:
   formalized claim C while citing only `opengauss_run`/job success, active
   `sorry`/`admit`, missing lead/human equivalence, or no local `formal_check`.
 - **Formal FLAG:** formal work incomplete but language is hedged as partial.
+- **No verdict read as a verdict (BLOCK):** does the draft report a timeout, an
+  output cap, a missing tool, `command_failed` or a resource veto as a
+  refutation or as support?
+- **Feedback presented as acceptance (BLOCK):** does the draft present a bare
+  scan, a typecheck without trust-base evidence, `exact?` output, or
+  LeanExplore, AXLE or OpenGauss results as an accepted formal result?
+- **Restated goal (FLAG):** does a lemma restate the goal, or does a step only
+  pad the argument, while the draft presents it as progress?
 
 Compact output shape:
 

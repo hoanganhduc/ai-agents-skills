@@ -50,6 +50,10 @@ proposed `study-design-and-power` skill if that lands.
 | `erased_disagreement_synthesis` | prior disputes erased without residual uncertainty labels |
 | `multi_llm_lgtm_not_bank` | multi-LLM LGTM used as banked support without different-family or machine check |
 | `halt_without_disclose` | review halt without residual uncertainty / negative-space disclosure |
+| `no_verdict_read_as_verdict` | a check that ended without a verdict (timeout, output cap, missing tool, resource veto) is reported as refutation or support |
+| `feedback_read_as_acceptance` | feedback (bare scan, typecheck without trust-base evidence, `exact?`, LeanExplore, AXLE, OpenGauss) presented as an accepted formal result |
+| `verdict_upgraded` | a structured run's `delivery-check` printed `NOT READY` and the report upgrades it to `READY` |
+| `restated_goal_as_progress` | a lemma that restates the goal is presented as progress (reviewer `FLAG`) |
 | `none` | clean control (expected verdict `READY`) |
 
 ## Fixture schema

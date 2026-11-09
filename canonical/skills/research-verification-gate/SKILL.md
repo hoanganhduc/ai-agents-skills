@@ -38,6 +38,18 @@ Use this as the last gate before claiming a research output is ready.
 - review rounds that only reword without an evidence delta do not count as
   progress; do not continue until all reviewers approve
 - open negative-space / blocked-route failures stay disclosed (halt and disclose)
+- a check that did not conclude is no verdict: a timeout, an output cap, a
+  missing tool, `command_failed`, `tool_unavailable`, a broker resource veto, or
+  computation coverage `timed_out` or `unavailable` neither refutes nor
+  supports the claim; list it under `Checks not run` (for Lean, see the Lean
+  formalization notes in `research-job-presets.md` when that template is
+  installed)
+- feedback, not acceptance: a bare scan, a typecheck without trust-base
+  evidence, `exact?` output, and LeanExplore, AXLE or OpenGauss results are
+  feedback; a formal result supports a claim only through the promotion that
+  deep-research `validate` checks
+- when a structured deep-research run exists, run its `delivery-check` verb and
+  quote the output verbatim; never upgrade its `NOT READY`
 
 ## Output contract
 
@@ -51,6 +63,9 @@ Include:
   interpretable as the gate evolves
 - `Confirmed` — the key checks that passed
 - `Gaps` — anything still blocking delivery
+- `Checks not run` — checks that ended without a verdict, each with its reason
+  (timeout, output cap, missing tool, resource veto); they neither refute nor
+  support a claim
 - `Residual uncertainty` — unfinished / disputed / negative-space items
 - `Next step` — deliver now or fix specific gaps first
 - `Style` — `style_profile_ref`, `policy_hash`, active overlays,
@@ -74,6 +89,10 @@ Use the checklist in `references/checklist.md`.
 - do not treat multi-LLM LGTM as proved or supported without different-family
   or machine-checkable support
 - keep the gate short and concrete
+- never read a no verdict as a refutation or as support. Known limit: the
+  strict Lean gate currently reports a Lean run killed by a signal as
+  `typecheck_failed`, so such a result may be a crash rather than a failed
+  proof
 - staged fail-visible rollout: while enforcement is warn-only, log every
   downgraded blocker or skipped check (in the run ledger when one exists) with
   its reason; a later fail-closed stage may make `NOT READY` a hard stop, and

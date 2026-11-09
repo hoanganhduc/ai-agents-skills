@@ -1,0 +1,16 @@
+{
+  "fixture_id": "feedback-read-as-acceptance",
+  "defect_class": "feedback_read_as_acceptance",
+  "defect_label": "An OpenGauss success and a bare scan are presented as an accepted formal proof.",
+  "target_gates": ["research-verification-gate", "research-report-reviewer"],
+  "artifact": {
+    "kind": "research_report",
+    "feedback_results": [
+      {"source": "opengauss", "kind": "feedback", "presented_as": "accepted"},
+      {"source": "lean-strict-verification-gate scan", "kind": "feedback", "presented_as": "accepted"}
+    ],
+    "report_text": "OpenGauss succeeded and the scan was clean, so the theorem is formally verified."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["feedback, not acceptance: no promotion validated by deep-research"]
+}

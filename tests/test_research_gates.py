@@ -70,6 +70,7 @@ CORE_GATES = {
             "Residual uncertainty",
             "multi-LLM LGTM",
             "evidence delta",
+            "Checks not run",
             "style_profile_ref",
             "active_overlays",
             "active_requirement_ids",
@@ -123,6 +124,32 @@ DEFECT_GATE_KEYWORDS = {
     "halt_without_disclose": {
         "research-verification-gate": ["halt and disclose", "negative-space"],
     },
+    "no_verdict_read_as_verdict": {
+        "research-verification-gate": ["no verdict", "Checks not run"],
+        "research-report-reviewer": ["no verdict"],
+    },
+    "feedback_read_as_acceptance": {
+        "research-verification-gate": ["feedback, not acceptance"],
+        "research-report-reviewer": ["feedback, not acceptance"],
+    },
+    "verdict_upgraded": {
+        "research-verification-gate": ["delivery-check", "never upgrade"],
+    },
+    "restated_goal_as_progress": {
+        "research-report-reviewer": ["restates the goal"],
+    },
+}
+
+# Checker outcomes that are no verdict: the check did not conclude, so it
+# neither refutes nor supports the claim.
+NO_VERDICT_OUTCOMES = {
+    "timeout",
+    "timed_out",
+    "output_limit",
+    "tool_unavailable",
+    "unavailable",
+    "command_failed",
+    "resource_vetoed",
 }
 
 REQUIRED_FIELDS = {
@@ -193,6 +220,24 @@ def _poison_predicates(artifact: dict) -> dict[str, bool]:
             artifact.get("review_halted") is True
             and not artifact.get("residual_uncertainty")
             and not artifact.get("negative_space_disclosed")
+        ),
+        "no_verdict_read_as_verdict": any(
+            check.get("outcome") in NO_VERDICT_OUTCOMES
+            and check.get("reported_as") not in {"no_verdict", "not_run"}
+            for check in artifact.get("checks", [])
+        ),
+        "feedback_read_as_acceptance": any(
+            result.get("kind") == "feedback"
+            and result.get("presented_as") in {"accepted", "verified", "proved"}
+            for result in artifact.get("feedback_results", [])
+        ),
+        "verdict_upgraded": (
+            artifact.get("delivery_check_output") == "NOT READY"
+            and artifact.get("final_status") == "READY"
+        ),
+        "restated_goal_as_progress": any(
+            lemma.get("restates_goal") is True and lemma.get("presented_as") == "progress"
+            for lemma in artifact.get("lemmas", [])
         ),
     }
 

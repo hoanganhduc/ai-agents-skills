@@ -36,6 +36,14 @@ Do not reconstruct it from memory.
 - scope drift relative to the original question
 - places where observation and inference are blended together
 - overconfident language that should be hedged or marked `incomplete analysis`
+- a check that ended without a verdict — a timeout, an output cap, a missing
+  tool, `command_failed`, or a resource veto — reported as refuting or
+  supporting a claim; no verdict is neither
+- feedback presented as acceptance (feedback, not acceptance): a bare scan, a
+  typecheck without trust-base evidence, `exact?` output, or LeanExplore, AXLE
+  or OpenGauss results presented as an accepted formal result
+- a lemma that restates the goal, or a step that only pads the argument,
+  presented as progress
 - whether prior posts, templates, style guides, or supplied examples were
   inspected before a format-matched draft
 - whether the draft or workflow records an active writing-style profile from
@@ -62,6 +70,10 @@ When a repair proposes literal replacement prose, follow the Writing
 Recommendation Contract in `writing-review.md`. Bind the recommendation to the
 affected frozen claim IDs, evidence refs, and active requirement IDs; flag any
 claim, caveat, citation, or support change. Review remains advisory.
+
+Use `BLOCK` when a no verdict is read as a refutation or as support, or when
+feedback is presented as acceptance. Use `FLAG` when a lemma restates the goal
+or a step only pads the argument; this flag is a model judgement.
 
 If there are no issues, say so explicitly and keep the pass short.
 

@@ -21,6 +21,14 @@ Mark the answer `READY` only if all of these are true:
   artifact for banking language
 - review rounds that only reword without new evidence do not count as progress
   toward READY; escalate unfinished rather than “approve until green”
+- checks that ended without a verdict (timeout, output cap, missing tool,
+  resource veto) are listed under `Checks not run` and never counted as
+  refutation or support
+- feedback (a bare scan, a typecheck without trust-base evidence, `exact?`,
+  LeanExplore, AXLE, OpenGauss) is not acceptance; formal support needs a
+  promotion that deep-research `validate` accepts
+- when a structured run exists, `delivery-check` output is quoted verbatim and
+  its `NOT READY` is never upgraded
 
 Compact output shape:
 
@@ -29,6 +37,7 @@ Delivery Check
 - Status: READY | NOT READY
 - Confirmed: ...
 - Gaps: ...
+- Checks not run: ...
 - Residual uncertainty: ...
 - Next step: ...
 ```

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,10 +47,21 @@ GUARDS = {"ScopeGuard", "EvidenceGuard", "VerifyGuard", "BudgetGuard", "Regressi
 GUARD_STATUSES = {"pass", "warn", "fail", "not-applicable"}
 DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
 FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
+# Files a delivery verdict rests on, besides formal/*.jsonl and the report_ref file.
+DELIVERY_CHECK_INPUT_FILES = (
+    "research_schema.json",
+    "sources.jsonl",
+    "claims.jsonl",
+    "guards.jsonl",
+    "delivery.json",
+    "evidence.jsonl",
+    "model_freshness.json",
+)
 SCHEMA_VERSION = "deep-research.run.v2"
 EVIDENCE_SCHEMA_VERSION = "deep-research.evidence.v2"
 FORMAL_TARGET_SCHEMA_VERSION = "deep-research.formal-target.v1"
 STATEMENT_REVIEW_SCHEMA_VERSION = "deep-research.statement-equivalence-review.v1"
+DELIVERY_CHECK_SCHEMA_VERSION = "deep-research.delivery-check.v1"
 EVIDENCE_TYPES = {
     "source_note",
     "formal_statement",
@@ -320,6 +332,10 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("--dir", default=".")
     validate_parser.add_argument("--schema-version", choices=["1", "2"], default=None)
 
+    delivery_check_parser = sub.add_parser("delivery-check")
+    delivery_check_parser.add_argument("--dir", default=".")
+    delivery_check_parser.add_argument("--schema-version", choices=["1", "2"], default=None)
+
     sub.add_parser("selftest")
 
     args = parser.parse_args(argv)
@@ -331,6 +347,10 @@ def main(argv: list[str] | None = None) -> int:
         result = validate_directory(Path(args.dir), schema_version=args.schema_version)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] == "ok" else 1
+    if args.command == "delivery-check":
+        result = delivery_check(Path(args.dir), schema_version=args.schema_version)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["verdict"] == "READY" else 1
     if args.command == "selftest":
         result = selftest()
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -642,6 +662,85 @@ def validate_directory(root: Path, schema_version: str | None = None, *, remote_
         "warnings": warnings,
         "checked": checked,
     }
+
+
+def delivery_check(root: Path, schema_version: str | None = None) -> dict[str, Any]:
+    """Run validate, then apply the delivery rules that validate leaves out.
+
+    READY needs a valid run, a finalizable delivery decision, no required formal
+    target short of promoted support (formal-statement-only included), and input
+    files that did not change during the check. validate itself is unchanged.
+    """
+    files_before = delivery_input_digests(root)
+    validation = validate_directory(root, schema_version=schema_version)
+    codes = {error.get("code") for error in validation["errors"] if error.get("code")}
+    read_errors: list[dict[str, Any]] = []
+    delivery = read_json(root / "delivery.json", "delivery", read_errors)
+    decision = delivery.get("decision") if isinstance(delivery, dict) else None
+    if decision not in FINALIZABLE_DELIVERY_DECISIONS:
+        codes.add("DELIVERY_DECISION_NOT_FINALIZABLE")
+    unpromoted: list[str] = []
+    targets_path = root / "formal" / "formal_targets.jsonl"
+    if targets_path.is_file():
+        for row in read_jsonl(targets_path, "formal targets", read_errors):
+            if row.get("formal_check_requirement") == "required_for_delivery" and row.get("claim_support_status") != PROMOTED_SUPPORT:
+                unpromoted.append(str(row.get("formal_target_id")))
+    if unpromoted:
+        codes.add("DELIVERY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED")
+    files_after = delivery_input_digests(root)
+    digest_before = delivery_input_digest(files_before)
+    digest_after = delivery_input_digest(files_after)
+    if digest_before != digest_after:
+        codes.add("DELIVERY_INPUT_CHANGED")
+    verdict = "READY" if validation["status"] == "ok" and not codes else "NOT READY"
+    return {
+        "schema_version": DELIVERY_CHECK_SCHEMA_VERSION,
+        "verdict": verdict,
+        "codes": sorted(codes),
+        "validate_status": validation["status"],
+        "delivery_decision": decision,
+        "unpromoted_required_formal_targets": sorted(unpromoted),
+        "warnings": [warning.get("code") for warning in validation.get("warnings", [])],
+        "checked": validation.get("checked", {}),
+        "input_files": files_before,
+        "input_digest_before": digest_before,
+        "input_digest_after": digest_after,
+    }
+
+
+def delivery_input_digests(root: Path) -> list[list[str]]:
+    """Sorted [relative path, sha256] pairs for the files a delivery verdict rests on."""
+    names = set(DELIVERY_CHECK_INPUT_FILES)
+    formal_dir = root / "formal"
+    if formal_dir.is_dir():
+        names.update(f"formal/{path.name}" for path in formal_dir.glob("*.jsonl"))
+    report_path: Path | None = None
+    read_errors: list[dict[str, Any]] = []
+    delivery = read_json(root / "delivery.json", "delivery", read_errors)
+    if isinstance(delivery, dict) and delivery.get("report_ref"):
+        report_path = validate_artifact_ref(delivery.get("report_ref"), root, root / "delivery.json", read_errors, None, "report_ref")
+    if report_path is not None:
+        names.add(report_path.relative_to(root).as_posix())
+    return [[name, file_sha256(root / name)] for name in sorted(names)]
+
+
+def delivery_input_digest(pairs: list[list[str]]) -> str:
+    return "sha256:" + hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    if not path.exists() and not path.is_symlink():
+        return "absent"
+    if not path.is_file():
+        return "not-a-regular-file"
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return "unreadable"
+    return "sha256:" + digest.hexdigest()
 
 
 def read_jsonl(path: Path, artifact: str, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
