@@ -194,7 +194,8 @@ jobs:
   python-compat:
     # Same containment requirement as the linux job.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Runs the whole suite like the linux job; 15 minutes no longer covered it.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
