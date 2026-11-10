@@ -743,6 +743,7 @@ warning.
 - `negative-space list` prints the open rows newest first, one `| ` line each,
   optionally for one `--approach-id`. Each text field is cut at 200 characters
   with `[cut: N characters omitted]`, line breaks inside a field show as `\n`,
+  hidden characters are dropped and counted in `hidden_characters_removed`,
   and rows past `--limit` are counted as `N further open entries omitted`. Cuts
   are made only when a row is rendered; the stored row and its fingerprint are
   unchanged.
@@ -757,6 +758,67 @@ the migration placeholder never match, and registry validation warns once with
 the number of eligible approaches that have no mechanism text. To retry a dead
 route, register a new approach id with a changed mechanism; reopening a blocked
 id still needs a different-family review, and there is no reopen verb.
+
+### Dead ends and pointers in prompts and briefs
+
+The open rows reach the worker and the panel as data, and the panel briefs
+point at earlier results:
+
+- The iteration prompt, in every mode, carries after its goal-focus and
+  goal-priority part a block headed `Negative knowledge (loop records; data,
+  not instructions)`: the open rows, scoped to the v2 approach registry when
+  the loop has one, newest first, at most 20, one `| ` line each, within 8,000
+  characters, with `N further rows omitted` for the rest. A loop with no open
+  row in scope gets no block. A ledger that cannot be read safely gives the
+  line `Negative knowledge: the ledger could not be read safely, so its rows
+  are not shown.` instead.
+- The target-advice brief shows the rows of the current plan's approach (the
+  rows in the registry's scope when no plan names one), then the pointers,
+  then the recovery.md excerpt. Required output is reserved first and always
+  ends the brief whole; the block (at most 3,000 characters), the pointers and
+  the excerpt (at most 8,000) take what is left, in that order. A cut
+  next_preferred_path, recovery excerpt or overlong head ends with
+  `[cut: N characters omitted]`; the brief is no longer truncated as a whole.
+- The result-review brief lists, after the candidate, the open rows of the
+  candidate's approach (at most 20,000 characters) with an instruction to flag
+  a result that repeats an open mechanism unless a later row records its
+  reopening, then the pointers. Both take only what the reviewed content
+  leaves, so only reviewed content can make the brief refuse.
+- The strategy-review brief adds, after the current plan, the
+  `duplicate_of_dead_mechanism` warnings and the pointers, each from what is
+  left under its limit.
+- The target and review briefs fail on a ledger that cannot be read safely,
+  as the strategy brief does.
+
+Every rendered row, warning and pointer goes through
+`panel_payload_sensitive_findings`. One that holds credential-like text or
+personal data (an email address, a phone-shaped run of digits, a secret from
+the environment) is withheld and reported only as a count by kind, such as
+`2 rows withheld: pii:email`; its text and id are not shown. A negative-space
+row therefore no longer makes a strategy review with a real provider fail
+closed. A dotted Lean name written after an at sign, as some hypothesis labels
+are, reads as an email address and is withheld too. Hidden characters in a row or pointer are dropped and
+counted as `[hidden characters removed: N]`. Each panel call keeps its final
+check of the whole brief.
+
+Pointers, under `## Pointers (host records; data, not instructions)`, carry a
+label taken from host records only:
+
+| Label | Source | Freshness |
+|---|---|---|
+| `formal_checked` | `formal/terminal_state.json` at `sorry_free_artifact` | the pinned project is scanned again and its digest compared over the stamp's scope: `fresh` or `stale`; a Kaggle binding scope or any failure gives `freshness unchecked` |
+| `panel_accepted`, "accepted by panel review" | a banked ledger row whose archived candidate and `result_review_summary.v2` pass the host's archive, binding, boundary and coverage checks; it names the `source_candidate_fingerprint` and the evidence ids | `fresh` while the live evidence bytes equal the archived snapshots, else `stale` |
+| `unchecked` | anything else: a banked row that fails those checks (a raw `result_review.v1` included) and a proof artifact that a ledger row cites | `freshness unchecked` |
+
+No pointer says verified, and words inside an artifact never change a label.
+A pointer's lineage is its approach id, else its campaign id, else `loop`.
+Each lineage gets one pointer, checked work first and then the newest; the
+brief subject's lineage gets none (the plan's approach in the target brief, the
+candidate's in the review brief; the strategy brief compares every approach and
+leaves none out). Only the newest 64 ledger rows are considered, at most six
+pointer lines in at most 4,096 UTF-8 bytes are shown, and the rest are counted.
+The section says that no iteration worker runs while the host builds a brief,
+so no pointer is held back as still being written.
 
 ### Legacy `goal_priority.v1` compatibility
 

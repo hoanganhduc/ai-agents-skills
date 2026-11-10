@@ -10,7 +10,8 @@ every row written before the field existed) make their approach ineligible. A
 worker's own dead-end record (``writer`` exactly "worker") is advisory: it is
 listed and rendered with its review status but never excludes an approach.
 Stored text keeps ``_clean``'s value, so comparisons and fingerprints never
-change; a cut is marked only where a row is rendered.
+change; a cut is marked only where a row is rendered, and so is the removal of
+hidden characters, which are counted.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +46,8 @@ NEGATIVE_SPACE_CHECKER_BASES = frozenset({"self_reported"})
 # Characters each text field keeps when a row is rendered; the rest is cut
 # with a visible marker.
 RENDER_FIELD_LIMIT = 200
+# The categories the digest sanitizers clean: controls, format characters, surrogates.
+HIDDEN_CHARACTER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
@@ -685,28 +689,93 @@ def clip_for_render(value: Any, limit: int = RENDER_FIELD_LIMIT) -> str:
     return f"{text[:limit]} [cut: {len(text) - limit} characters omitted]"
 
 
-def _one_line(text: str) -> str:
-    # Every line break str.splitlines() recognizes becomes the two characters
-    # \n, so a field can never start a line of its own in rendered output.
-    return "\\n".join(text.splitlines())
+def is_variation_selector(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x180B <= code <= 0x180D
+        or code == 0x180F
+        or 0xFE00 <= code <= 0xFE0F
+        or 0xE0100 <= code <= 0xE01EF
+    )
 
 
-def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> str:
-    """Render one row as a single line starting with "| ".
+def is_hidden_char(previous: str | None, char: str) -> bool:
+    """Whether ``char``, read right after ``previous`` (None at the start), carries text a reader cannot see.
+
+    A copy of the installer's predicate (delegation_packets.is_hidden_char);
+    tests/fixtures/hidden_text_vectors.json holds every copy to the same
+    answers. Hidden are controls, format characters and surrogates; every code
+    point from U+E0000 to U+E007F and from U+E0100 to U+E01EF, assigned or
+    not; and a variation selector right after another one. A lone selector
+    after an ordinary character stays.
+    """
+    if unicodedata.category(char) in HIDDEN_CHARACTER_CATEGORIES:
+        return True
+    code = ord(char)
+    if 0xE0000 <= code <= 0xE007F or 0xE0100 <= code <= 0xE01EF:
+        return True
+    return previous is not None and is_variation_selector(previous) and is_variation_selector(char)
+
+
+def frame_relayed_lines(text: str) -> tuple[list[str], int]:
+    """Split relayed text into lines, each starting with "| ", and drop its hidden characters.
+
+    A copy of the installer's delegate-agent framing: lines break wherever
+    str.splitlines() breaks them, tab stays, and every other hidden character,
+    judged after the character before it on the same line, is dropped and
+    counted. Returns the framed lines and the count.
+    """
+    framed: list[str] = []
+    removed = 0
+    for line in text.splitlines():
+        kept: list[str] = []
+        previous = None
+        for char in line:
+            if char != "\t" and is_hidden_char(previous, char):
+                removed += 1
+            else:
+                kept.append(char)
+            previous = char
+        framed.append("| " + "".join(kept))
+    return framed, removed
+
+
+def single_line_escape(text: str) -> tuple[str, int]:
+    """One field of a rendered row: hidden characters dropped and counted, line breaks shown as \\n.
+
+    The bodies of frame_relayed_lines joined by the two characters backslash
+    and n, so a field can never start a line of its own; returns them and the
+    count of dropped characters.
+    """
+    lines, removed = frame_relayed_lines(text)
+    return "\\n".join(line[len("| "):] for line in lines), removed
+
+
+def render_row(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> tuple[str, int]:
+    """Render one row as a single line starting with "| ", with its count of hidden characters.
 
     Each text field is cut to ``limit`` characters with a visible marker, then
-    its line breaks are shown as \\n. The writer, review status and checker
-    basis appear only when the row has them.
+    written by single_line_escape, which drops hidden characters and shows
+    line breaks as \\n. The writer, review status and checker basis appear
+    only when the row has them.
     """
 
+    removed = 0
+
     def field(value: Any) -> str:
-        return _one_line(clip_for_render(value, limit))
+        nonlocal removed
+        text, count = single_line_escape(clip_for_render(value, limit))
+        removed += count
+        return text
 
     parts = [f"entry {field(row.get('entry_id'))}", f"kind {field(row.get('kind'))}"]
-    if field(row.get("approach_id")):
-        parts.append(f"approach {field(row.get('approach_id'))}")
-    elif field(row.get("campaign_id")):
-        parts.append(f"campaign {field(row.get('campaign_id'))}")
+    approach = field(row.get("approach_id"))
+    if approach:
+        parts.append(f"approach {approach}")
+    else:
+        campaign = field(row.get("campaign_id"))
+        if campaign:
+            parts.append(f"campaign {campaign}")
     for name, label in (
         ("writer", "writer"),
         ("review_status", "review"),
@@ -728,7 +797,13 @@ def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) 
     else:
         absent = field(row.get("evidence_absent_reason"))
         parts.append("evidence: none" + (f" ({absent})" if absent else ""))
-    return "| " + "; ".join(parts)
+    return "| " + "; ".join(parts), removed
+
+
+def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> str:
+    """render_row's line alone: one "| " line per row, hidden characters dropped."""
+
+    return render_row(row, limit=limit)[0]
 
 
 def summarize_open(run_dir: str | Path, *, limit: int = 20) -> list[dict[str, str]]:

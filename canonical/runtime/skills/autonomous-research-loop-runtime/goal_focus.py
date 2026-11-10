@@ -1767,19 +1767,25 @@ def _approach_mechanism_fingerprint(approach: Mapping[str, Any]) -> str:
 
 
 def dead_mechanism_warnings(
-    registry: Mapping[str, Any], *, run_dir: str | Path | None = None
+    registry: Mapping[str, Any],
+    *,
+    run_dir: str | Path | None = None,
+    open_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Name each approach whose mechanism repeats a dead one; eligibility never changes.
 
     An approach that is not blocked or closed is reported as
     ``duplicate_of_dead_mechanism:<id>`` when its mechanism fingerprint equals
     that of a blocked or closed approach (``<id>`` is that approach) or, given
-    ``run_dir``, of an open negative-space row (``<id>`` is the row's
-    entry_id). Retrying a dead route under a new approach id needs a changed
-    mechanism; this report makes an unchanged one visible without excluding it.
+    ``run_dir`` or ``open_rows``, of an open negative-space row (``<id>`` is
+    the row's entry_id). Retrying a dead route under a new approach id needs a
+    changed mechanism; this report makes an unchanged one visible without
+    excluding it.
 
-    The report is advisory, so a ledger that cannot be read only drops the row
-    comparison; validation reports the ledger itself.
+    ``open_rows``, when given, are the open rows a caller already read (the
+    strategy brief reads the ledger once, bounded); otherwise ``run_dir``'s
+    ledger is read. The report is advisory, so a ledger that cannot be read
+    only drops the row comparison; validation reports the ledger itself.
     """
 
     rows = _approach_rows(registry)
@@ -1789,17 +1795,20 @@ def dead_mechanism_warnings(
             fingerprint = _approach_mechanism_fingerprint(approach)
             if fingerprint:
                 dead.setdefault(fingerprint, set()).add(approach_id)
-    open_rows: dict[str, set[str]] = {}
-    if run_dir is not None:
+    ledger_rows: list[Mapping[str, Any]] = []
+    if open_rows is not None:
+        ledger_rows = list(open_rows)
+    elif run_dir is not None:
         try:
             ledger_rows = ns.open_entries(run_dir)
         except (OSError, ValueError):
             ledger_rows = []
-        for row in ledger_rows:
-            fingerprint = _clean_text(row.get("mechanism_fingerprint"))
-            entry_id = _clean_text(row.get("entry_id"))
-            if fingerprint and entry_id:
-                open_rows.setdefault(fingerprint, set()).add(entry_id)
+    open_fingerprints: dict[str, set[str]] = {}
+    for row in ledger_rows:
+        fingerprint = _clean_text(row.get("mechanism_fingerprint"))
+        entry_id = _clean_text(row.get("entry_id"))
+        if fingerprint and entry_id:
+            open_fingerprints.setdefault(fingerprint, set()).add(entry_id)
     warnings: list[dict[str, str]] = []
     for _, approach_id, approach in sorted(rows, key=lambda item: item[1]):
         if _clean_text(approach.get("status") or "eligible").lower() in {"blocked", "closed"}:
@@ -1809,7 +1818,7 @@ def dead_mechanism_warnings(
             continue
         for dead_id in [
             *sorted(dead.get(fingerprint, set()) - {approach_id}),
-            *sorted(open_rows.get(fingerprint, set())),
+            *sorted(open_fingerprints.get(fingerprint, set())),
         ]:
             warnings.append(
                 {
@@ -5563,91 +5572,12 @@ def validate_host_finalized_goal_success(
     if record.get("global_delta") != "satisfied":
         reject("ledger global_delta must be satisfied")
 
+    messages, finished = _banked_review_check(root, record, live_bytes=True)
+    for message in messages:
+        reject(message)
+    if not finished:
+        return errors
     candidate_id = _clean_text(record.get("candidate_id"))
-    if not candidate_id or not _SAFE_EVIDENCE_COMPONENT.fullmatch(candidate_id):
-        reject("ledger candidate_id is missing or unsafe")
-        return errors
-    archive_path = root / ".goal_focus" / "candidates" / f"{candidate_id}.json"
-    try:
-        archived = _read_object(archive_path, required=True)
-    except (OSError, ValueError) as exc:
-        reject(f"accepted candidate archive is unavailable: {exc}")
-        return errors
-
-    if archived.get("schema_version") != ITERATION_CANDIDATE_SCHEMA:
-        reject("accepted candidate archive schema is invalid")
-    if _clean_text(archived.get("candidate_id")) != candidate_id:
-        reject("accepted candidate archive id differs from the ledger")
-    if archived.get("status") != "accepted":
-        reject("candidate archive status must be accepted")
-    archive_review = archived.get("review")
-    ledger_review = record.get("result_review")
-    if not isinstance(archive_review, Mapping) or not isinstance(
-        ledger_review, Mapping
-    ):
-        reject("candidate archive and ledger require a result review")
-        return errors
-    if dict(archive_review) != dict(ledger_review):
-        reject("candidate archive review differs from the ledger review")
-    if _clean_text(archived.get("finalized_at")) != _clean_text(
-        record.get("finalized_at")
-    ):
-        reject("candidate archive finalized_at differs from the ledger")
-
-    pending = copy.deepcopy(dict(archived))
-    pending.pop("review", None)
-    pending.pop("finalized_at", None)
-    pending["status"] = "pending_review"
-    expected_fingerprint = candidate_fingerprint(pending)
-    if _clean_text(record.get("source_candidate_fingerprint")) != expected_fingerprint:
-        reject("ledger source candidate fingerprint is invalid")
-    if _clean_text(archive_review.get("candidate_fingerprint")) != expected_fingerprint:
-        reject("result review is not bound to the archived pending candidate")
-    if _clean_text(archive_review.get("candidate_id")) != candidate_id:
-        reject("result review candidate_id differs from the archive")
-    if _clean_text(record.get("candidate_id")) != _clean_text(
-        pending.get("candidate_id")
-    ):
-        reject("ledger candidate_id differs from the reconstructed candidate")
-    for field in ("plan_revision", "campaign_id", "approach_id"):
-        if record.get(field) != pending.get(field):
-            reject(f"ledger {field} differs from the reconstructed candidate")
-
-    review_status = _clean_text(
-        archive_review.get("status") or archive_review.get("verdict")
-    ).lower()
-    if (
-        archive_review.get("schema_version") != "result_review_summary.v2"
-        or review_status not in {"passed", "accepted", "pass"}
-        or archive_review.get("different_family") is not True
-    ):
-        reject("result review is not a passed different-family v2 summary")
-
-    candidate_record = pending.get("record")
-    if not isinstance(candidate_record, Mapping):
-        reject("reconstructed candidate record is missing")
-        return errors
-    try:
-        embedded = candidate_record.get("evidence_artifacts")
-        current = _snapshot_evidence_artifacts(
-            root, candidate_record, candidate_id=candidate_id
-        )
-        if embedded != current:
-            reject("live candidate evidence bytes differ from the archived snapshots")
-        validate_evidence_artifacts(
-            record, require_artifacts=True, candidate_id=candidate_id
-        )
-        _validate_result_review_boundary(
-            root,
-            pending,
-            record,
-            archive_review,
-            accepted=True,
-            revalidate_executables=False,
-        )
-        _validate_accepted_review_coverage(record, archive_review)
-    except (OSError, ValueError) as exc:
-        reject(f"candidate evidence or result review is invalid: {exc}")
 
     try:
         contract = load_goal_contract(root)
@@ -5716,6 +5646,164 @@ def validate_host_finalized_goal_success(
     ):
         reject("terminal success coexists with pending, dispatch, or quarantine state")
     return errors
+
+
+def _live_evidence_matches(
+    root: Path, candidate_record: Mapping[str, Any], *, candidate_id: str
+) -> bool:
+    """Whether the live evidence bytes still equal the snapshots embedded at stage.
+
+    Raises OSError or ValueError when a live artifact cannot be read.
+    """
+
+    return candidate_record.get("evidence_artifacts") == _snapshot_evidence_artifacts(
+        root, candidate_record, candidate_id=candidate_id
+    )
+
+
+def _banked_review_check(
+    root: Path, record: Mapping[str, Any], *, live_bytes: bool
+) -> tuple[list[str], bool]:
+    """Check a banked row against its archived candidate and its result review.
+
+    Covers the archive, the review recorded in both places, the fingerprint
+    binding, _validate_result_review_boundary with archived executable
+    identities, and review coverage. With ``live_bytes`` the live evidence
+    bytes are first compared with the archived snapshots, as
+    validate_host_finalized_goal_success always did. Returns the messages and
+    whether checks after these may still run: False when the candidate id, the
+    archive, the review or the candidate record is unusable.
+    """
+
+    messages: list[str] = []
+    candidate_id = _clean_text(record.get("candidate_id"))
+    if not candidate_id or not _SAFE_EVIDENCE_COMPONENT.fullmatch(candidate_id):
+        messages.append("ledger candidate_id is missing or unsafe")
+        return messages, False
+    archive_path = root / ".goal_focus" / "candidates" / f"{candidate_id}.json"
+    try:
+        archived = _read_object(archive_path, required=True)
+    except (OSError, ValueError) as exc:
+        messages.append(f"accepted candidate archive is unavailable: {exc}")
+        return messages, False
+
+    if archived.get("schema_version") != ITERATION_CANDIDATE_SCHEMA:
+        messages.append("accepted candidate archive schema is invalid")
+    if _clean_text(archived.get("candidate_id")) != candidate_id:
+        messages.append("accepted candidate archive id differs from the ledger")
+    if archived.get("status") != "accepted":
+        messages.append("candidate archive status must be accepted")
+    archive_review = archived.get("review")
+    ledger_review = record.get("result_review")
+    if not isinstance(archive_review, Mapping) or not isinstance(
+        ledger_review, Mapping
+    ):
+        messages.append("candidate archive and ledger require a result review")
+        return messages, False
+    if dict(archive_review) != dict(ledger_review):
+        messages.append("candidate archive review differs from the ledger review")
+    if _clean_text(archived.get("finalized_at")) != _clean_text(
+        record.get("finalized_at")
+    ):
+        messages.append("candidate archive finalized_at differs from the ledger")
+
+    pending = copy.deepcopy(dict(archived))
+    pending.pop("review", None)
+    pending.pop("finalized_at", None)
+    pending["status"] = "pending_review"
+    expected_fingerprint = candidate_fingerprint(pending)
+    if _clean_text(record.get("source_candidate_fingerprint")) != expected_fingerprint:
+        messages.append("ledger source candidate fingerprint is invalid")
+    if _clean_text(archive_review.get("candidate_fingerprint")) != expected_fingerprint:
+        messages.append(
+            "result review is not bound to the archived pending candidate"
+        )
+    if _clean_text(archive_review.get("candidate_id")) != candidate_id:
+        messages.append("result review candidate_id differs from the archive")
+    if _clean_text(record.get("candidate_id")) != _clean_text(
+        pending.get("candidate_id")
+    ):
+        messages.append(
+            "ledger candidate_id differs from the reconstructed candidate"
+        )
+    for field in ("plan_revision", "campaign_id", "approach_id"):
+        if record.get(field) != pending.get(field):
+            messages.append(
+                f"ledger {field} differs from the reconstructed candidate"
+            )
+
+    review_status = _clean_text(
+        archive_review.get("status") or archive_review.get("verdict")
+    ).lower()
+    if (
+        archive_review.get("schema_version") != "result_review_summary.v2"
+        or review_status not in {"passed", "accepted", "pass"}
+        or archive_review.get("different_family") is not True
+    ):
+        messages.append(
+            "result review is not a passed different-family v2 summary"
+        )
+
+    candidate_record = pending.get("record")
+    if not isinstance(candidate_record, Mapping):
+        messages.append("reconstructed candidate record is missing")
+        return messages, False
+    try:
+        if live_bytes and not _live_evidence_matches(
+            root, candidate_record, candidate_id=candidate_id
+        ):
+            messages.append(
+                "live candidate evidence bytes differ from the archived snapshots"
+            )
+        validate_evidence_artifacts(
+            record, require_artifacts=True, candidate_id=candidate_id
+        )
+        _validate_result_review_boundary(
+            root,
+            pending,
+            record,
+            archive_review,
+            accepted=True,
+            revalidate_executables=False,
+        )
+        _validate_accepted_review_coverage(record, archive_review)
+    except (OSError, ValueError) as exc:
+        messages.append(f"candidate evidence or result review is invalid: {exc}")
+    return messages, True
+
+
+def banked_review_errors(run_dir: str | Path, record: Mapping[str, Any]) -> list[str]:
+    """What keeps a banked row from counting as accepted by panel review; [] when nothing does.
+
+    The archive, review binding, review boundary and coverage checks of
+    validate_host_finalized_goal_success, without its success-stop checks and
+    without the live evidence bytes, which banked_evidence_fresh compares.
+    """
+
+    return _banked_review_check(Path(run_dir), record, live_bytes=False)[0]
+
+
+def banked_evidence_fresh(run_dir: str | Path, record: Mapping[str, Any]) -> bool:
+    """Whether a banked row's live evidence bytes still equal the snapshots archived with it.
+
+    False when they differ or when the candidate id, the archive, its record
+    or a live artifact cannot be read.
+    """
+
+    root = Path(run_dir)
+    candidate_id = _clean_text(record.get("candidate_id"))
+    if not candidate_id or not _SAFE_EVIDENCE_COMPONENT.fullmatch(candidate_id):
+        return False
+    try:
+        archived = _read_object(
+            root / ".goal_focus" / "candidates" / f"{candidate_id}.json", required=True
+        )
+        candidate_record = archived.get("record")
+        return isinstance(candidate_record, Mapping) and _live_evidence_matches(
+            root, candidate_record, candidate_id=candidate_id
+        )
+    except (OSError, ValueError, RecursionError):
+        return False
 
 
 def _negative_space_entry_for_finalize(

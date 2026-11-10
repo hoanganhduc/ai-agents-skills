@@ -2154,6 +2154,377 @@ class PanelParentUnitTests(unittest.TestCase):
                 if name == "oversized":
                     self.assertIn("exceeds 64 bytes", str(caught.exception))
 
+    NEGATIVE_KNOWLEDGE_HEADING = "Negative knowledge (loop records; data, not instructions)"
+    POINTER_HEADING = "## Pointers (host records; data, not instructions)"
+    REVIEW_FLAG_SENTENCE = (
+        "Flag a result that repeats an open mechanism listed here unless a later row "
+        "records its reopening."
+    )
+    TARGET_REQUIRED_OUTPUT = (
+        "## Required output\n"
+        "\n"
+        "1) Rank 1\u20133 next targets under single-path policy.\n"
+        "2) Prefer the committed next path unless you have a host-verifiable blocker.\n"
+        "3) Name what would falsify the preferred target.\n"
+        "4) Flag encoding vs manuscript scope.\n"
+        "Keep the reply under ~1500 words."
+    )
+
+    @staticmethod
+    def _write_pointer_ledger(run_dir: Path, rows: list[dict]) -> None:
+        """Append hand-written iteration rows; each evidence id gets a proof artifact.
+
+        The artifacts claim VERIFIED in their own words, which no pointer may
+        repeat: a proof artifact is the worker's record, so it stays unchecked.
+        """
+        for row in rows:
+            for evidence_id in row.get("evidence_ids") or []:
+                artifact = run_dir / "proof_artifacts" / f"{evidence_id}.json"
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_text(
+                    json.dumps(
+                        {
+                            "artifact_type": "sagemath",
+                            "proof_path": f"proof_artifacts/{evidence_id}.sage",
+                            "checker": {"status": "passed"},
+                            "summary": "VERIFIED by the worker",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+        with (run_dir / "iterations.jsonl").open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row) + "\n")
+
+    def test_strategy_brief_withholds_sensitive_rows_so_real_provider_call_passes(self) -> None:
+        """Rows an external-call check refuses are withheld and counted by kind, never quoted.
+
+        On the base an email, a dotted Lean hypothesis name and a phone-shaped
+        run of numbers each reached the brief, so assert_panel_prompt_safe
+        refused the call to a real provider: the fail-closed mode N1b brought
+        (PanelIsolationError). Withheld rows leave the shown, listed and not
+        listed counts, and the counts sentence still parses.
+        """
+        # Built without a literal address so sanitize-check stays clean.
+        email = "ana" + chr(64) + "example.org"
+        lean_name = "hp" + chr(64) + "Nat.Prime.two_le"
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            rows = [
+                self._negative_space_row("ns-clean", mechanism_text="CLEAN_MECHANISM"),
+                self._negative_space_row(
+                    "ns-mail", mechanism_text=f"ask {email} about the bound"
+                ),
+                self._negative_space_row(
+                    "ns-lean", failure_summary=f"{lean_name} does not apply"
+                ),
+                self._negative_space_row(
+                    "ns-digits", reopen_condition="the orders 256 512 1024 all fail"
+                ),
+            ]
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+
+            brief = pp.build_strategy_review_brief(run_dir)
+
+            pp.assert_panel_prompt_safe(brief, environ={})
+            section, counts = self._negative_space_section(brief)
+            self.assertEqual(counts["scoped"], 4)
+            self.assertEqual(
+                (counts["shown"], counts["listed"], counts["unlisted"]), (1, 0, 0)
+            )
+            self.assertIn("\n2 rows withheld: pii:email\n", section)
+            self.assertIn("\n1 row withheld: pii:phone\n", section)
+            self.assertIn("CLEAN_MECHANISM", section)
+            for needle in (
+                email,
+                lean_name,
+                "256 512 1024",
+                "ns-mail",
+                "ns-lean",
+                "ns-digits",
+            ):
+                self.assertNotIn(needle, brief)
+
+        with self.subTest("an id line is checked too: past the cap, and for a full row's fingerprint"):
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp)
+                self._write_strategy_authority(run_dir)
+                cap = pp.STRATEGY_NEGATIVE_SPACE_ROW_CAP
+                rows = [self._negative_space_row("ns-555-123-4567")]
+                rows += [
+                    self._negative_space_row(f"ns-{index:03d}")
+                    for index in range(cap + 1)
+                ]
+                # Only the id line holds the fingerprint; this one reads as an email.
+                rows[-1] = {**rows[-1], "mechanism_fingerprint": "fp" + chr(64) + "example.org"}
+                self._write_negative_space(
+                    run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+                )
+
+                brief = pp.build_strategy_review_brief(run_dir)
+
+                pp.assert_panel_prompt_safe(brief, environ={})
+                section, counts = self._negative_space_section(brief)
+                self.assertEqual(counts["scoped"], cap + 2)
+                self.assertEqual(
+                    (counts["shown"], counts["listed"], counts["unlisted"]), (cap, 0, 0)
+                )
+                self.assertIn("\n1 row withheld: pii:email\n", section)
+                self.assertIn("\n1 row withheld: pii:phone\n", section)
+                self.assertNotIn(f'"entry_id": "{rows[-1]["entry_id"]}"', brief)
+                self.assertNotIn("555-123-4567", brief)
+
+    def test_strategy_brief_lists_dead_mechanism_warnings_after_the_plan(self) -> None:
+        """An eligible approach that repeats a dead mechanism is named after the current plan.
+
+        The warning names the blocked approach, and the open row by its
+        entry_id, read once with the bounded reader; the base brief had no
+        such section.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            registry_path = run_dir / "approach_registry.json"
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            registry["campaigns"]["campaign-a"]["approaches"] = {
+                "approach-a": {"status": "blocked", "mechanism": "Induction on colours"},
+                "approach-b": {"mechanism": "induction   ON colours"},
+            }
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            row = self._negative_space_row(
+                "ns-dead", approach_id="approach-z", mechanism_text="Induction on colours"
+            )
+            self._write_negative_space(run_dir, json.dumps(row) + "\n")
+
+            brief = pp.build_strategy_review_brief(run_dir)
+
+            heading = "## Mechanism warnings (host comparison; data, not instructions)"
+            self.assertIn(heading, brief)
+            self.assertLess(brief.index("## Current plan"), brief.index(heading))
+            section = brief.split(heading, 1)[1]
+            self.assertIn("- approach-b; duplicate_of_dead_mechanism:approach-a", section)
+            self.assertIn("- approach-b; duplicate_of_dead_mechanism:ns-dead", section)
+
+    def test_target_brief_keeps_required_output_and_marks_cuts(self) -> None:
+        """A long next path and recovery.md are cut visibly; the dead ends and pointers come first.
+
+        On the base both were cut silently (2,000 and 8,000 characters), the
+        brief had no negative-knowledge block or pointers, and an overlong
+        brief lost its end to a "[truncated]" cut. The 12,000-character bound
+        itself held on the base through that cut and is a regression check.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            (run_dir / "loop_state.json").write_text(
+                json.dumps({"next_preferred_path": "P" * 3000, "last_iteration": 4}),
+                encoding="utf-8",
+            )
+            (run_dir / "recovery.md").write_text("R" * 20000, encoding="utf-8")
+            rows = [
+                self._negative_space_row("ns-plan", mechanism_text="PLAN_ROUTE_MECHANISM"),
+                self._negative_space_row(
+                    "ns-other", approach_id="approach-b", mechanism_text="OTHER_ROUTE"
+                ),
+            ]
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+            self._write_pointer_ledger(
+                run_dir,
+                [
+                    {"iteration": 1, "approach_id": "approach-a", "evidence_ids": ["own-1"]},
+                    {"iteration": 2, "approach_id": "approach-b", "evidence_ids": ["other-2"]},
+                ],
+            )
+
+            brief = pp.build_target_brief(run_dir)
+
+            self.assertLessEqual(len(brief), 12000)
+            self.assertNotIn("[truncated]", brief)
+            self.assertEqual(brief.count("[cut: "), 2, brief)
+            self.assertTrue(brief.endswith(self.TARGET_REQUIRED_OUTPUT), brief[-400:])
+            excerpt_at = brief.index("## recovery.md (excerpt)")
+            self.assertLess(brief.index(self.NEGATIVE_KNOWLEDGE_HEADING), excerpt_at)
+            self.assertLess(brief.index(self.POINTER_HEADING), excerpt_at)
+            self.assertIn("PLAN_ROUTE_MECHANISM", brief)
+            # The block is for the plan's approach; the pointers skip its lineage.
+            self.assertNotIn("OTHER_ROUTE", brief)
+            self.assertIn("proof_artifacts/other-2.json", brief)
+            self.assertNotIn("own-1", brief)
+
+        with self.subTest("a registry json cannot decode only drops the scope"):
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp)
+                (run_dir / "approach_registry.json").write_text(
+                    "[" * 200000 + "]" * 200000, encoding="utf-8"
+                )
+                self._write_negative_space(
+                    run_dir,
+                    json.dumps(
+                        self._negative_space_row("ns-any", mechanism_text="UNSCOPED_ROUTE")
+                    )
+                    + "\n",
+                )
+                brief = pp.build_target_brief(run_dir)
+                self.assertIn("UNSCOPED_ROUTE", brief)
+                self.assertTrue(brief.endswith(self.TARGET_REQUIRED_OUTPUT))
+
+        with self.subTest("a head that alone overflows is cut, Required output stays whole"):
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp)
+                (run_dir / "loop_state.json").write_text(
+                    json.dumps({"next_preferred_path": "short"}), encoding="utf-8"
+                )
+                brief = pp.build_target_brief(run_dir, max_chars=600)
+                self.assertLessEqual(len(brief), 600)
+                self.assertIn("[cut: ", brief)
+                self.assertTrue(brief.endswith(self.TARGET_REQUIRED_OUTPUT), brief)
+
+    def test_review_brief_lists_rows_for_candidate_approach(self) -> None:
+        """Both review branches list the open rows of the candidate's approach after its excerpt.
+
+        That no section appears without rows is a regression check: the base
+        brief never had one.
+        """
+        candidate = {"candidate_id": "cand-a", "approach_id": "approach-a"}
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            iter_dir = run_dir / "iterations" / "iter001"
+            (iter_dir / "data").mkdir(parents=True)
+            (run_dir / "iteration_candidate.json").write_text(
+                json.dumps(candidate), encoding="utf-8"
+            )
+            with self.subTest("regression check: no rows, no section"):
+                brief = pp.build_review_brief(run_dir, iter_dir)
+                self.assertNotIn(self.NEGATIVE_KNOWLEDGE_HEADING, brief)
+                self.assertNotIn(self.REVIEW_FLAG_SENTENCE, brief)
+
+            rows = [
+                self._negative_space_row("ns-a", mechanism_text="MECHANISM_FOR_A"),
+                self._negative_space_row(
+                    "ns-b", approach_id="approach-b", mechanism_text="MECHANISM_FOR_B"
+                ),
+            ]
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+            self._write_pointer_ledger(
+                run_dir,
+                [
+                    {"iteration": 1, "approach_id": "approach-a", "evidence_ids": ["route-a"]},
+                    {"iteration": 2, "approach_id": "approach-b", "evidence_ids": ["route-b"]},
+                ],
+            )
+            authoritative = pp.build_review_brief(run_dir, iter_dir)
+            (run_dir / "iteration_candidate.json").unlink()
+            (iter_dir / "data" / "iteration_candidate.json").write_text(
+                json.dumps(candidate), encoding="utf-8"
+            )
+            legacy = pp.build_review_brief(run_dir, iter_dir)
+            for name, brief in (("authoritative", authoritative), ("legacy", legacy)):
+                with self.subTest(branch=name):
+                    self.assertIn("MECHANISM_FOR_A", brief)
+                    self.assertNotIn("MECHANISM_FOR_B", brief)
+                    self.assertEqual(brief.count(self.REVIEW_FLAG_SENTENCE), 1)
+                    heading_at = brief.index(self.NEGATIVE_KNOWLEDGE_HEADING)
+                    self.assertLess(brief.index('"candidate_id": "cand-a"'), heading_at)
+                    self.assertLess(heading_at, brief.index("MECHANISM_FOR_A"))
+                    # Pointers follow the rows and leave out the candidate's lineage.
+                    self.assertLess(heading_at, brief.index(self.POINTER_HEADING))
+                    self.assertIn("proof_artifacts/route-b.json", brief)
+                    self.assertNotIn("route-a", brief)
+
+    def test_new_sections_use_only_remaining_budget(self) -> None:
+        """With 600 characters left after reviewed content, every brief still builds within max_chars.
+
+        The rows and the pointers take only what the reviewed content leaves,
+        so a long ledger never makes a brief refuse. On the base the review
+        brief had no such section to place. The strategy and target bounds are
+        regression checks: they held on the base, through N1b's section budget
+        and through truncation.
+        """
+        candidate = {"candidate_id": "cand-budget", "approach_id": "approach-a"}
+        rows = [
+            self._negative_space_row(f"ns-{index:04d}", mechanism_text=f"mechanism {index}")
+            for index in range(1000)
+        ]
+        pointer_rows = [
+            {"iteration": index, "approach_id": f"route-{index}", "evidence_ids": [f"art-{index}"]}
+            for index in range(1, 9)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            iter_dir = run_dir / "iterations" / "iter001"
+            iter_dir.mkdir(parents=True)
+            (run_dir / "iteration_candidate.json").write_text(
+                json.dumps(candidate), encoding="utf-8"
+            )
+            reviewed_review = len(pp.build_review_brief(run_dir, iter_dir))
+            reviewed_strategy = len(pp.build_strategy_review_brief(run_dir))
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+            self._write_pointer_ledger(run_dir, pointer_rows)
+
+            review = pp.build_review_brief(
+                run_dir, iter_dir, max_chars=reviewed_review + 600
+            )
+            self.assertLessEqual(len(review), reviewed_review + 600)
+            self.assertIn(self.NEGATIVE_KNOWLEDGE_HEADING, review)
+            self.assertIn("further rows omitted", review)
+
+            strategy = pp.build_strategy_review_brief(
+                run_dir, max_chars=reviewed_strategy + 600
+            )
+            self.assertLessEqual(len(strategy), reviewed_strategy + 600)
+
+            target = pp.build_target_brief(run_dir)
+            self.assertLessEqual(len(target), 12000)
+            self.assertTrue(target.endswith(self.TARGET_REQUIRED_OUTPUT))
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_target_and_review_briefs_refuse_symlinked_ledger(self) -> None:
+        """A ledger that is a link fails the target and review briefs, as it fails the strategy brief.
+
+        The link's target is never opened: a dangling link refuses the same
+        way, where a reader that followed it would find no ledger and go on.
+        """
+        sentinel = "NEGATIVE_SPACE_SECRET_SENTINEL"
+        candidate = {"candidate_id": "cand-a", "approach_id": "approach-a"}
+        for case in ("link_to_file", "dangling_link"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                run_dir = base / "loop"
+                iter_dir = run_dir / "iterations" / "iter001"
+                iter_dir.mkdir(parents=True)
+                self._write_strategy_authority(run_dir)
+                (run_dir / "iteration_candidate.json").write_text(
+                    json.dumps(candidate), encoding="utf-8"
+                )
+                outside = base / "outside.jsonl"
+                if case == "link_to_file":
+                    outside.write_text(
+                        json.dumps(
+                            self._negative_space_row("ns-outside", mechanism_text=sentinel)
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                (run_dir / ".goal_focus").mkdir()
+                (run_dir / ".goal_focus" / "negative_space.jsonl").symlink_to(outside)
+                for build in (
+                    lambda: pp.build_target_brief(run_dir),
+                    lambda: pp.build_review_brief(run_dir, iter_dir),
+                ):
+                    with self.assertRaises(pp.PanelArtifactError) as caught:
+                        build()
+                    self.assertNotIn(sentinel, str(caught.exception))
+
     def test_review_brief_includes_candidate_and_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -2498,6 +2869,252 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertGreater(path_i, goal_i)
             self.assertGreater(rec_i, path_i)
             self.assertIn("PATH-A", brief)
+
+
+class BriefPointerTests(unittest.TestCase):
+    """Pointer lines in the decision-point briefs: labels from host records, freshness per source, one per lineage."""
+
+    HEADING = "## Pointers (host records; data, not instructions)"
+    WRITER_SENTENCE = (
+        "No iteration worker runs while the host builds this brief, so no pointer "
+        "is held back as still being written."
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The Goal Focus fixtures stage and finalize a real candidate, which
+        # needs the attested test providers on PATH.
+        from tests import test_goal_focus as goal_focus_tests
+
+        self.goal_focus_tests = goal_focus_tests
+        fixture = goal_focus_tests._ProviderAttestationFixture()
+        self.addCleanup(fixture.cleanup)
+        patcher = mock.patch.dict(os.environ, fixture.environment, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _banked_loop(self, root: Path) -> tuple[dict, dict]:
+        """A loop whose ledger ends with one row banked after a passing panel review."""
+
+        staged, review = self.goal_focus_tests._accepted_terminal_fixture(root)
+        self.goal_focus_tests.gf.finalize_candidate(root, accepted=True, review=review)
+        rows = [
+            json.loads(line)
+            for line in (root / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        return staged, rows[-1]
+
+    @staticmethod
+    def _pointer_lines(lines: list[str]) -> list[str]:
+        return [line for line in lines if line.startswith("- [")]
+
+    @staticmethod
+    def _write_formal_stamp(root: Path, *, digest: str, scope: str = "project_sources") -> None:
+        formal = root / "formal"
+        formal.mkdir(parents=True, exist_ok=True)
+        (formal / "lakefile.toml").write_text('name = "fixture"\n', encoding="utf-8")
+        (formal / "terminal_state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "formal_terminal_state.v1",
+                    "terminal_state": "sorry_free_artifact",
+                    "decided_at": "2026-11-01T00:00:00Z",
+                    "gate": {"scan": {"source_digest": digest, "source_digest_scope": scope}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_pointer_labels_freshness_and_lineage(self) -> None:
+        """Labels come only from host records, freshness is per source, and each lineage gets one pointer."""
+
+        import formal_policy as fp  # noqa: E402
+
+        coverage = {"files": [{"file": "Main.lean", "sha256": "a" * 64}]}
+        staged_digest = fp._coverage_digest(coverage)[0]
+
+        def scan(report: object) -> object:
+            def runner(name: str, payload: dict) -> dict:
+                self.assertEqual(name, "lean_strict_verification_gate.scan")
+                if isinstance(report, Exception):
+                    raise report
+                return {"ok": True, "report": report}
+
+            return runner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            staged, banked = self._banked_loop(root)
+            candidate_id = staged["candidate"]["candidate_id"]
+
+            with self.subTest("a banked row is accepted by panel review and fresh"):
+                lines = pp.brief_pointer_lines(
+                    root, exclude_lineage=None, max_chars=10_000, environ={}
+                )
+                self.assertEqual(lines[:2], [self.HEADING, self.WRITER_SENTENCE])
+                (pointer,) = self._pointer_lines(lines)
+                self.assertTrue(pointer.startswith("- [panel_accepted] accepted by panel review"))
+                self.assertIn(banked["source_candidate_fingerprint"], pointer)
+                self.assertIn("proof.json", pointer)
+                self.assertIn("lineage A1", pointer)
+                self.assertTrue(pointer.endswith("; fresh"), pointer)
+
+            with self.subTest("the brief subject's own lineage is left out"):
+                self.assertEqual(
+                    pp.brief_pointer_lines(
+                        root, exclude_lineage="A1", max_chars=10_000, environ={}
+                    ),
+                    [],
+                )
+
+            evidence = root / ".goal_focus" / "evidence" / candidate_id / "proof.json"
+            original = evidence.read_bytes()
+            evidence.write_bytes(original + b"edited after the bank\n")
+            with self.subTest("evidence changed after the bank makes the pointer stale"):
+                (pointer,) = self._pointer_lines(
+                    pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=10_000, environ={})
+                )
+                self.assertTrue(pointer.startswith("- [panel_accepted] "))
+                self.assertTrue(pointer.endswith("; stale"), pointer)
+            evidence.write_bytes(original)
+
+            ledger = root / "iterations.jsonl"
+            ledger_bytes = ledger.read_bytes()
+            raw_review = banked["result_review"]["provider_reviews"]["claude"]
+            ledger.write_text(
+                json.dumps({**banked, "result_review": raw_review}) + "\n", encoding="utf-8"
+            )
+            with self.subTest("a raw result_review.v1 on the banked row is unchecked"):
+                (pointer,) = self._pointer_lines(
+                    pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=10_000, environ={})
+                )
+                self.assertTrue(pointer.startswith("- [unchecked] "), pointer)
+                self.assertTrue(pointer.endswith("; freshness unchecked"), pointer)
+            ledger.write_bytes(ledger_bytes)
+
+            PanelParentUnitTests._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": 2, "approach_id": "A2", "evidence_ids": ["older-claim"]},
+                    {"iteration": 3, "approach_id": "A2", "evidence_ids": ["newer-claim"]},
+                ],
+            )
+            with self.subTest("a proof artifact that says VERIFIED stays unchecked, one per lineage"):
+                lines = pp.brief_pointer_lines(
+                    root, exclude_lineage=None, max_chars=10_000, environ={}
+                )
+                pointers = self._pointer_lines(lines)
+                self.assertEqual(len(pointers), 2, lines)
+                self.assertTrue(pointers[0].startswith("- [panel_accepted] "))
+                self.assertTrue(pointers[1].startswith("- [unchecked] "))
+                self.assertIn("proof_artifacts/newer-claim.json", pointers[1])
+                self.assertNotIn("older-claim", "\n".join(lines))
+                self.assertNotIn("verified", "\n".join(lines).lower())
+
+            self._write_formal_stamp(root, digest=staged_digest)
+            for name, report, expected in (
+                ("an equal scan", {"ok": True, "coverage": coverage}, "fresh"),
+                (
+                    "a changed scan",
+                    {"ok": True, "coverage": {"files": [{"file": "Main.lean", "sha256": "b" * 64}]}},
+                    "stale",
+                ),
+                ("a scan that raises", RuntimeError("scanner crashed"), "freshness unchecked"),
+            ):
+                with self.subTest(f"the formal stamp with {name} is {expected}"):
+                    lines = pp.brief_pointer_lines(
+                        root,
+                        exclude_lineage=None,
+                        max_chars=10_000,
+                        environ={},
+                        formal_scan_runner=scan(report),
+                    )
+                    pointers = self._pointer_lines(lines)
+                    self.assertTrue(pointers[0].startswith("- [formal_checked] "), pointers)
+                    self.assertTrue(pointers[0].endswith(f"; {expected}"), pointers[0])
+                    self.assertNotIn("verified", "\n".join(lines).lower())
+            self._write_formal_stamp(root, digest="sha256:bound-to-the-build-context")
+            stamp_path = root / "formal" / "terminal_state.json"
+            stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+            stamp["gate"]["scan"]["scanned_source_digest"] = staged_digest
+            stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
+            with self.subTest("a build-bound stamp is compared on the digest its scan recorded"):
+                (formal,) = [
+                    line
+                    for line in pp.brief_pointer_lines(
+                        root,
+                        exclude_lineage=None,
+                        max_chars=10_000,
+                        environ={},
+                        formal_scan_runner=scan({"ok": True, "coverage": coverage}),
+                    )
+                    if line.startswith("- [formal_checked] ")
+                ]
+                self.assertTrue(formal.endswith("; fresh"), formal)
+            self._write_formal_stamp(
+                root, digest=staged_digest, scope="host_request_and_complete_source_snapshot"
+            )
+            with self.subTest("a Kaggle binding scope is never recomputed"):
+                calls: list[str] = []
+
+                def equal_scan(name: str, payload: dict) -> dict:
+                    calls.append(name)
+                    return {"ok": True, "report": {"ok": True, "coverage": coverage}}
+
+                (formal,) = [
+                    line
+                    for line in pp.brief_pointer_lines(
+                        root,
+                        exclude_lineage=None,
+                        max_chars=10_000,
+                        environ={},
+                        formal_scan_runner=equal_scan,
+                    )
+                    if line.startswith("- [formal_checked] ")
+                ]
+                self.assertTrue(formal.endswith("; freshness unchecked"), formal)
+                self.assertEqual(calls, [])
+
+    def test_pointer_section_caps_lines_bytes_and_withholds_sensitive_lines(self) -> None:
+        """At most six pointer lines in at most 4,096 UTF-8 bytes; a sensitive line is withheld by kind."""
+
+        email = "ana" + chr(64) + "example.org"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            PanelParentUnitTests._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": index, "approach_id": f"route-{index}", "evidence_ids": [f"art-{index}"]}
+                    for index in range(1, 10)
+                ]
+                + [{"iteration": 10, "approach_id": email, "evidence_ids": ["art-10"]}],
+            )
+            lines = pp.brief_pointer_lines(root, exclude_lineage="route-9", max_chars=10_000, environ={})
+            pointers = self._pointer_lines(lines)
+            self.assertEqual(len(pointers), 6, lines)
+            self.assertIn("1 pointer withheld: pii:email", lines)
+            self.assertIn("2 further pointers omitted", lines)
+            self.assertNotIn("route-9", "\n".join(lines))
+            self.assertNotIn(email, "\n".join(lines))
+            # Newest first after the withheld one.
+            self.assertIn("lineage route-8", pointers[0])
+            pp.assert_panel_prompt_safe("\n".join(lines), environ={})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wide = "\u20ac" * 190
+            PanelParentUnitTests._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": index, "approach_id": f"{wide}{index}", "evidence_ids": [f"art-{index}"]}
+                    for index in range(1, 8)
+                ],
+            )
+            lines = pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=10_000, environ={})
+            self.assertLessEqual(len("\n".join(lines).encode("utf-8")), 4096)
+            self.assertLess(len(self._pointer_lines(lines)), 6)
+            self.assertTrue(lines[-1].endswith("further pointers omitted"), lines)
 
 
 class PanelRosterWithdrawalTests(unittest.TestCase):

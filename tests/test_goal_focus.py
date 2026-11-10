@@ -5138,5 +5138,53 @@ class GoalFocusNegativeSpaceWriterTests(_AttestedGoalFocusTestCase):
                     self.assertEqual(reason, "")
 
 
+
+class BankedReviewErrorsTests(_AttestedGoalFocusTestCase):
+    """The banked-row review checks a brief pointer reuses, split from the live-bytes check."""
+
+    def test_banked_review_errors_leave_live_bytes_to_the_caller(self) -> None:
+        """banked_review_errors checks the archive and review binding, never the live evidence bytes.
+
+        banked_evidence_fresh compares those bytes, and
+        validate_host_finalized_goal_success still reports a change to them:
+        that last assertion is a regression check that held on the base.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            staged, review = _accepted_terminal_fixture(root)
+            gf.finalize_candidate(root, accepted=True, review=review)
+            row = json.loads((root / "iterations.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(gf.banked_review_errors(root, row), [])
+            self.assertTrue(gf.banked_evidence_fresh(root, row))
+
+            evidence = (
+                root
+                / ".goal_focus"
+                / "evidence"
+                / staged["candidate"]["candidate_id"]
+                / "proof.json"
+            )
+            evidence.write_text("edited after the bank\n", encoding="utf-8")
+            self.assertEqual(gf.banked_review_errors(root, row), [])
+            self.assertFalse(gf.banked_evidence_fresh(root, row))
+            self.assertIn(
+                "host-reviewed goal success: live candidate evidence bytes differ "
+                "from the archived snapshots",
+                gf.validate_host_finalized_goal_success(root, row),
+            )
+
+            tampered = {**row, "source_candidate_fingerprint": "sha256:" + "0" * 64}
+            self.assertIn(
+                "ledger source candidate fingerprint is invalid",
+                gf.banked_review_errors(root, tampered),
+            )
+            for unusable in ({**row, "candidate_id": ["list"]}, {**row, "candidate_id": "../x"}):
+                self.assertEqual(
+                    gf.banked_review_errors(root, unusable),
+                    ["ledger candidate_id is missing or unsafe"],
+                )
+                self.assertFalse(gf.banked_evidence_fresh(root, unusable))
+
+
 if __name__ == "__main__":
     unittest.main()

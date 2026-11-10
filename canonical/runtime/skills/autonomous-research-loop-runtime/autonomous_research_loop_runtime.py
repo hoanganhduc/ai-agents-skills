@@ -56,6 +56,8 @@ try:
         interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
+        NEGATIVE_KNOWLEDGE_UNREADABLE,
+        negative_knowledge_lines,
         panel_prompt_addon,
         panel_payload_sensitive_findings,
         panel_prompt_secret_findings,
@@ -135,6 +137,8 @@ except ImportError:  # pragma: no cover - package-style import during tests
         interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
+        NEGATIVE_KNOWLEDGE_UNREADABLE,
+        negative_knowledge_lines,
         panel_prompt_addon,
         panel_payload_sensitive_findings,
         panel_prompt_secret_findings,
@@ -6308,6 +6312,34 @@ def finalize_remote_inbox_claim(
         return
 
 
+# Characters the iteration prompt gives the open negative-space rows.
+ITERATION_NEGATIVE_KNOWLEDGE_MAX_CHARS = 8_000
+
+
+def _negative_knowledge_addon(run_dir: Path) -> str:
+    """The open dead ends for the worker, or a line saying the ledger was not read.
+
+    Rows are scoped to the v2 approach registry when one can be read (a
+    registry that cannot be read leaves every open row in scope) and are
+    filtered and bounded by negative_knowledge_lines. Any failure to read the
+    ledger safely gives NEGATIVE_KNOWLEDGE_UNREADABLE instead of the rows, so
+    prompt construction never fails here; no open row in scope adds nothing.
+    """
+    registry = None
+    try:
+        if (run_dir / goal_focus_v2.APPROACH_REGISTRY_FILE).is_file():
+            registry = goal_focus_v2.load_approach_registry(run_dir)
+    except Exception:  # noqa: BLE001 - scoping is advisory
+        registry = None
+    try:
+        lines = negative_knowledge_lines(
+            run_dir, registry=registry, max_chars=ITERATION_NEGATIVE_KNOWLEDGE_MAX_CHARS
+        )
+    except Exception:  # noqa: BLE001 - prompt construction must never fail
+        lines = [NEGATIVE_KNOWLEDGE_UNREADABLE]
+    return "\n\n" + "\n".join(lines) if lines else ""
+
+
 def iteration_prompt(
     run_dir: Path,
     *,
@@ -6391,6 +6423,7 @@ def iteration_prompt(
             base = base + goal_priority_prompt_addon(run_dir)
     elif is_goal_priority_active(run_dir):
         base = base + goal_priority_prompt_addon(run_dir)
+    base = base + _negative_knowledge_addon(run_dir)
     # Formal after goal_priority (subordinate to single-path + hard replan); empty when off.
     try:
         base = base + formal_policy_prompt_addon(run_dir)
@@ -13610,16 +13643,21 @@ def negative_space_list_command(args: argparse.Namespace) -> dict[str, Any]:
     open_rows = negative_space.filter_open(rows, approach_id=approach_id or None)
     shown = open_rows[::-1][: max(0, int(args.limit))]
     omitted = len(open_rows) - len(shown)
+    rendered = [negative_space.render_row(row) for row in shown]
     result: dict[str, Any] = {
         "status": "ok",
         "action": "negative-space-list",
         "dir": str(run_dir),
         "open_count": len(open_rows),
-        "entries": [negative_space.render_row_line(row) for row in shown],
+        "entries": [line for line, _removed in rendered],
         "omitted_open_entries": omitted,
     }
     if omitted:
         result["omitted"] = f"{omitted} further open entries omitted"
+    removed = sum(count for _line, count in rendered)
+    if removed:
+        # Rendering drops hidden characters; the count says how many.
+        result["hidden_characters_removed"] = removed
     return result
 
 

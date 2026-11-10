@@ -43,6 +43,7 @@ EXAMPLES = REPO_ROOT / "canonical" / "skills" / "cross-agent-delegation" / "refe
 RUNTIME_SKILLS = REPO_ROOT / "canonical" / "runtime" / "skills"
 DEEP_RESEARCH_RUNTIME = RUNTIME_SKILLS / "deep-research-workflow" / "deep_research_workflow.py"
 REMOTE_BRIDGE_RUNTIME = RUNTIME_SKILLS / "remote-bridge" / "remote_bridge.py"
+NEGATIVE_SPACE_RUNTIME = RUNTIME_SKILLS / "autonomous-research-loop-runtime" / "negative_space.py"
 # The installer's authority keys, which the deep-research validator mirrors.
 AUTHORITY_KEYS = {
     "confirmed_by_parent",
@@ -283,24 +284,34 @@ class HiddenTextVectorTests(unittest.TestCase):
 
     The packet validators of the installer and of deep research refuse what it
     marks, tab, line feed and carriage return aside. The delegate-agent task
-    framing and the remote-bridge inbox split relayed text into lines, drop
-    what it marks and count it.
+    framing, the remote-bridge inbox and the autonomous-research-loop
+    negative-space renderer split relayed text into lines, drop what it marks
+    and count it.
     """
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.deep_research = load_runtime_module("drw_hidden_text_vectors", DEEP_RESEARCH_RUNTIME)
         cls.remote_bridge = load_runtime_module("rb_hidden_text_vectors", REMOTE_BRIDGE_RUNTIME)
+        cls.negative_space = load_runtime_module("ns_hidden_text_vectors", NEGATIVE_SPACE_RUNTIME)
         cls.cases = json.loads(HIDDEN_TEXT_VECTORS.read_text(encoding="utf-8"))["cases"]
 
     def packet_copies(self) -> dict[str, types.ModuleType]:
         return {"delegation_packets": packet_module, "deep_research_workflow": self.deep_research}
 
     def framing_copies(self) -> dict[str, types.ModuleType]:
-        return {"delegation_dispatch": dispatch_module, "remote_bridge": self.remote_bridge}
+        return {
+            "delegation_dispatch": dispatch_module,
+            "remote_bridge": self.remote_bridge,
+            "negative_space": self.negative_space,
+        }
 
     def predicate_copies(self) -> dict[str, types.ModuleType]:
-        return {**self.packet_copies(), "remote_bridge": self.remote_bridge}
+        return {
+            **self.packet_copies(),
+            "remote_bridge": self.remote_bridge,
+            "negative_space": self.negative_space,
+        }
 
     def test_shared_vectors_hold_for_every_copy(self) -> None:
         """Every copy gives each vector's packet_hidden, framed lines and removed count.
@@ -343,6 +354,20 @@ class HiddenTextVectorTests(unittest.TestCase):
             with self.subTest(predicate=name):
                 missed = [f"U+{ord(char):04X}" for char in sanitized + blocks if not module.is_hidden_char(None, char)]
                 self.assertEqual(missed, [])
+
+    def test_negative_space_single_line_escape_matches_framed_vectors(self) -> None:
+        """The negative-space copy keeps a ledger field on one line of a rendered row.
+
+        Its escaped form of each vector is the vector's framed lines without
+        their "| " prefix, joined by the two characters backslash and n, and it
+        removes the same number of hidden characters. No line break survives.
+        """
+        for case in self.cases:
+            with self.subTest(case=case["name"]):
+                escaped, removed = self.negative_space.single_line_escape(case["text"])
+                bodies = [line[len("| "):] for line in case["framed"]]
+                self.assertEqual((escaped, removed), ("\\n".join(bodies), case["removed"]))
+                self.assertLessEqual(len(escaped.splitlines()), 1)
 
 
 class HiddenTextPacketTests(unittest.TestCase):
