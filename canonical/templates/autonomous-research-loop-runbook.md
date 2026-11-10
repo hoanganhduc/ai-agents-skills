@@ -66,8 +66,8 @@ budget and credit state stay in this runbook.
 |---|---|---|
 | `max_iterations` (= user `N`) |  | Set via the ASK gate above. |
 | `max_wall_minutes` |  |  |
-| `max_usd` |  | `0.0` or null is the **uncapped sentinel**: condition (c) cannot fire on it even when `spent_usd` is positive. Set a positive value for a real cap. |
-| `max_tokens` |  | Same sentinel rule: `0` or null means uncapped. |
+| `max_usd` |  | `0.0` or null is the **uncapped sentinel**: condition (c) cannot fire on it even when `spent_usd` is positive. Set a positive value for a cap that can fire. The cap is accounting over self-reported usage between iterations, not a spending limit: `spent_usd` adds the `--usd` amounts iterations report, and an iteration that reports none is recorded as `unreported` and adds nothing. |
+| `max_tokens` |  | Same sentinel rule: `0` or null means uncapped. Same accounting rule over the `--tokens` amounts iterations report. |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
 | `compute_guard_status` |  | Record each attempted lane and its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle live execution is one-unit CPU only; GPU and multi-run are planning-only. A failed lane falls through to the next permitted lane. |
 | `spent_iterations` |  |  |

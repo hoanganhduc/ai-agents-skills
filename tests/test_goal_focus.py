@@ -5321,3 +5321,237 @@ class SuccessBasisAtFinalizeTests(_AttestedGoalFocusTestCase):
                 f"archive and boundary checks; candidate {candidate_id}",
                 guessed,
             )
+
+
+class SpendRecordingTests(_AttestedGoalFocusTestCase):
+    """An amount the worker does not report stays out of the staged and banked rows, and nothing is added for it."""
+
+    UNREPORTED = {"tokens_recording_status": "unreported", "usd_recording_status": "unreported"}
+
+    def test_spend_recording_status_reads_stored_values_and_derives_legacy_rows(self) -> None:
+        """A stored explicit or unreported status is read as stored; a row written before the statuses existed is derived.
+
+        Such a row counts as explicit when its amount is a valid nonzero
+        number and as unknown when it is zero, absent or not a valid amount,
+        since its zero may be the old default. A stored value outside the two
+        statuses, including a stored unknown, reads unknown.
+        """
+        table = (
+            ({"tokens": 5}, "tokens", "explicit"),
+            ({"usd": 0.5}, "usd", "explicit"),
+            ({"tokens": 0}, "tokens", "unknown"),
+            ({"usd": 0.0}, "usd", "unknown"),
+            ({}, "tokens", "unknown"),
+            ({"tokens": True}, "tokens", "unknown"),
+            ({"tokens": "5"}, "tokens", "unknown"),
+            ({"usd": float("nan")}, "usd", "unknown"),
+            ({"usd": float("inf")}, "usd", "unknown"),
+            ({"usd": 10**400}, "usd", "unknown"),
+            ({"usd": -1.0}, "usd", "unknown"),
+            ({"tokens": 0, "tokens_recording_status": "explicit"}, "tokens", "explicit"),
+            ({"usd_recording_status": "unreported"}, "usd", "unreported"),
+            ({"tokens_recording_status": "unknown"}, "tokens", "unknown"),
+            ({"tokens_recording_status": ["explicit"], "tokens": 5}, "tokens", "unknown"),
+            ({"usd_recording_status": {"s": 1}, "usd": 1.0}, "usd", "unknown"),
+            (None, "tokens", "unknown"),
+            (["tokens"], "usd", "unknown"),
+        )
+        for delta, resource, expected in table:
+            with self.subTest(delta=delta, resource=resource):
+                self.assertEqual(gf.spend_recording_status(delta, resource), expected)
+
+    def test_staging_refuses_a_spend_status_that_disagrees_with_its_amount(self) -> None:
+        """Staging refuses a budget_delta whose status and amount disagree, a null amount or a stored unknown status.
+
+        Nothing is staged then. Matching statuses, and rows without statuses,
+        still stage.
+        """
+        refused = {
+            "explicit without amount": {"tokens_recording_status": "explicit"},
+            "unreported with amount": {"usd_recording_status": "unreported", "usd": 0.5},
+            "null usd": {"usd": None},
+            "null tokens": {"tokens": None},
+            "stored unknown": {"usd_recording_status": "unknown"},
+            "list status": {"tokens_recording_status": ["unreported"]},
+        }
+        accepted = {
+            "unreported": dict(self.UNREPORTED),
+            "explicit": {
+                "tokens": 3,
+                "tokens_recording_status": "explicit",
+                "usd": 0.0,
+                "usd_recording_status": "explicit",
+            },
+            "legacy": {"tokens": 50, "usd": 1.25},
+        }
+        for label, spend in {**refused, **accepted}.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                record = {
+                    "output": "a bounded partial result",
+                    "evidence_ids": ["proof.json"],
+                    "budget_delta": {"iterations": 1, **spend},
+                }
+                if label in refused:
+                    with self.assertRaises(ValueError) as caught:
+                        _stage_enforced_candidate(root, plan, record)
+                    self.assertIn("budget_delta.", str(caught.exception))
+                    self.assertIsNone(gf.load_pending_candidate(root))
+                else:
+                    staged = _stage_enforced_candidate(root, plan, record)
+                    self.assertEqual(staged["status"], "staged")
+
+    def test_finalize_banks_only_reported_amounts(self) -> None:
+        """finalize adds nothing to budget.json for an amount the row leaves out, in both the accepted and the rejected lane.
+
+        Regression check: the absent amount already added 0 on the base.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            init_args = rt.selftest_init_args(root, max_iterations=5)
+            init_args.goal_focus_mode = "enforce"
+            rt.init_loop(init_args)
+            plan = _activate(root)
+            budget_path = root / "budget.json"
+            before = json.loads(budget_path.read_text(encoding="utf-8"))
+            staged = _stage_enforced_candidate(
+                root,
+                plan,
+                {
+                    "output": "a bounded partial result",
+                    "evidence_ids": ["proof.json"],
+                    "budget_delta": {"iterations": 1, **self.UNREPORTED},
+                },
+            )
+            accepted = gf.finalize_candidate(root, accepted=True, review=_bound_review(staged))
+            self.assertEqual(accepted["record"]["bank_status"], "accepted")
+            self.assertEqual(
+                accepted["record"]["budget_delta"], {"iterations": 1, **self.UNREPORTED}
+            )
+            budget = json.loads(budget_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                (repr(budget["spent_tokens"]), repr(budget["spent_usd"])),
+                (repr(before["spent_tokens"]), repr(before["spent_usd"])),
+            )
+
+            plan = gf.load_current_plan(root)
+            staged = _stage_enforced_candidate(
+                root,
+                plan,
+                {
+                    "output": "a claimed proof",
+                    "decision": "stop",
+                    "stop_reason": "proof_found",
+                    "evidence_ids": ["proof.json"],
+                    "budget_delta": {
+                        "iterations": 1,
+                        "tokens": 7,
+                        "tokens_recording_status": "explicit",
+                        "usd_recording_status": "unreported",
+                    },
+                },
+            )
+            rejected = gf.finalize_candidate(
+                root,
+                accepted=False,
+                review=_bound_review(staged, status="failed", reason="gap"),
+            )
+            self.assertEqual(rejected["record"]["bank_status"], "rejected")
+            budget = json.loads(budget_path.read_text(encoding="utf-8"))
+            self.assertEqual(budget["spent_tokens"], before["spent_tokens"] + 7)
+            self.assertEqual(repr(budget["spent_usd"]), repr(before["spent_usd"]))
+            errors = rt.validate_loop_dir(root)["errors"]
+            self.assertEqual([error for error in errors if "budget_delta" in error], [], errors)
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "a host-mediated submission is written and claimed through POSIX directory descriptors",
+    )
+    def test_host_mediated_submission_without_spend_flags(self) -> None:
+        """A worker that reports no spend submits; the host stages it and finalize banks it with both amounts unreported.
+
+        The worker's request carries null for each amount, the staged and the
+        banked row leave the amounts out with status unreported, budget.json's
+        totals do not move, and the loop still validates.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            init_args = rt.selftest_init_args(root, max_iterations=5)
+            init_args.goal_focus_mode = "enforce"
+            rt.init_loop(init_args)
+            _activate(root)
+            dispatch = gf.prepare_iteration_dispatch(
+                root,
+                executor_provider="codex",
+                executor_family="openai",
+                executor_attestation=_provider_attestation("codex", root),
+                started_at="2026-07-29T00:00:00Z",
+            )["dispatch"]
+            evidence_dir = Path(os.path.abspath(root / str(dispatch["evidence_root"])))
+            (evidence_dir / "E1").write_text("host-visible evidence for E1\n", encoding="utf-8")
+            worker_args = rt.build_parser().parse_args(
+                [
+                    "append-iteration",
+                    "--dir",
+                    str(root),
+                    "--mode",
+                    "bounded-research",
+                    "--objective",
+                    "report a bounded result without spend",
+                    "--decision",
+                    "revise",
+                    "--claim-id",
+                    "CLAIM-1",
+                    "--evidence-id",
+                    "E1",
+                    "--compute-none",
+                ]
+            )
+            worker_environment = {
+                "AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION": "1",
+                "AAS_AUTOLOOP_EVIDENCE_DIR": str(evidence_dir),
+                "AAS_AUTOLOOP_EVIDENCE_ROOT": str(evidence_dir),
+                "AAS_AUTOLOOP_RUN_ID": "run-spend",
+                "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                "AAS_AUTOLOOP_PRIMARY_PROVIDER": "codex",
+            }
+            with mock.patch.dict(os.environ, worker_environment):
+                written = rt.append_iteration(worker_args)
+            self.assertEqual(written["action"], "submit-iteration", written)
+            submission = json.loads(
+                (evidence_dir / rt.ITERATION_SUBMISSION_FILENAME).read_text(encoding="utf-8")
+            )
+            self.assertIsNone(submission["request"]["tokens"])
+            self.assertIsNone(submission["request"]["usd"])
+
+            budget_path = root / "budget.json"
+            before = json.loads(budget_path.read_text(encoding="utf-8"))
+            consumed = rt.consume_iteration_submission(
+                root,
+                evidence_dir,
+                expected_run_id="run-spend",
+                expected_dispatch_id=dispatch["dispatch_id"],
+                expected_candidate_id=dispatch["candidate_id"],
+                expected_provider="codex",
+                iteration_started_at="2026-07-29T00:00:00Z",
+                resource_attestation=_provider_resource_attestation(),
+            )
+            self.assertEqual(consumed["staging_status"], "staged", consumed)
+            staged = consumed["candidate"]
+            unreported = {"iterations": 1, "wall_time_seconds": 0, **self.UNREPORTED}
+            self.assertEqual(staged["candidate"]["record"]["budget_delta"], unreported)
+
+            result = gf.finalize_candidate(root, accepted=True, review=_bound_review(staged))
+            self.assertEqual(result["status"], "accepted", result)
+            row = json.loads((root / "iterations.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(row["budget_delta"], unreported)
+            budget = json.loads(budget_path.read_text(encoding="utf-8"))
+            self.assertEqual(budget["spent_iterations"], before["spent_iterations"] + 1)
+            self.assertEqual(
+                (repr(budget["spent_tokens"]), repr(budget["spent_usd"])),
+                (repr(before["spent_tokens"]), repr(before["spent_usd"])),
+            )
+            self.assertEqual(rt.validate_loop_dir(root)["errors"], [])

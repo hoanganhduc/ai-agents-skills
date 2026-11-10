@@ -297,6 +297,9 @@ ITERATION_SUBMISSION_BOOL_FIELDS = frozenset(
 ITERATION_SUBMISSION_INT_FIELDS = frozenset(
     {"tokens", "wall_time_seconds"}
 )
+# Spend amounts a request carries as null when the worker reported none: the
+# key stays required, and the host records that amount as unreported.
+ITERATION_SUBMISSION_NULLABLE_FIELDS = frozenset({"tokens", "usd"})
 # String fields a request carries only when set. Leaving them out when unset
 # keeps a request written before they existed valid and equal to its replay.
 ITERATION_SUBMISSION_OPTIONAL_FIELDS = (
@@ -363,6 +366,59 @@ def _read_regular_text(
     if len(payload) > max_bytes:
         raise OSError(f"runtime input exceeds {max_bytes} bytes: {absolute}")
     return payload.decode("utf-8", errors=errors)
+
+
+def _read_regular_tail(path: Path, max_bytes: int) -> bytes:
+    """The last ``max_bytes`` bytes of one regular file, read without following a link.
+
+    On POSIX every directory above the file is opened without following a
+    link too, and the open never waits on a FIFO. When the file is longer
+    than the window, the line the window starts inside is dropped; a line
+    that starts on the window's first byte is kept.
+    """
+
+    absolute = Path(os.path.abspath(path))
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    if os.name == "nt":
+        info = os.lstat(absolute)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise OSError(f"runtime input is not a regular file: {absolute}")
+        fd = os.open(absolute, flags)
+    else:
+        dir_fd = _open_directory_nofollow(absolute.parent)
+        try:
+            fd = os.open(absolute.name, flags, dir_fd=dir_fd)
+        finally:
+            os.close(dir_fd)
+    chunks: list[bytes] = []
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"runtime input is not a regular file: {absolute}")
+        start = max(0, info.st_size - max_bytes)
+        # Reading from one byte before the window, everything up to the first
+        # line break is either that break alone or the end of a cut line.
+        offset = max(0, start - 1)
+        os.lseek(fd, offset, os.SEEK_SET)
+        wanted = info.st_size - offset
+        while wanted > 0:
+            chunk = os.read(fd, min(wanted, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            wanted -= len(chunk)
+    finally:
+        os.close(fd)
+    payload = b"".join(chunks)
+    if start > 0:
+        cut = payload.find(b"\n")
+        payload = payload[cut + 1 :] if cut >= 0 else b""
+    return payload
 
 
 def _read_contained_regular_text(
@@ -1573,7 +1629,8 @@ def _validated_iteration_submission_request(
 
     Every field of ITERATION_SUBMISSION_ARG_FIELDS is required; a field of
     ITERATION_SUBMISSION_OPTIONAL_FIELDS may be absent and is a string when
-    present. Any other field is refused.
+    present. tokens and usd are null when the worker reported no amount. Any
+    other field is refused.
     """
 
     if not isinstance(request, dict):
@@ -1586,6 +1643,9 @@ def _validated_iteration_submission_request(
     validated: dict[str, Any] = {}
     for name in ITERATION_SUBMISSION_ARG_FIELDS:
         value = request[name]
+        if value is None and name in ITERATION_SUBMISSION_NULLABLE_FIELDS:
+            validated[name] = None
+            continue
         if name in ITERATION_SUBMISSION_LIST_FIELDS:
             if value is not None and (
                 not isinstance(value, list)
@@ -2298,6 +2358,24 @@ def _refuse_duplicate_open_row(
         )
 
 
+def _reported_spend(args: argparse.Namespace) -> dict[str, Any]:
+    """The spend fields of a new row's budget_delta: each amount the worker reported, and one status per resource.
+
+    An amount left unset is recorded as unreported and kept out of the row,
+    never stored as null; zero is a reported amount.
+    """
+
+    spend: dict[str, Any] = {}
+    for resource in goal_focus_v2.SPEND_RESOURCES:
+        amount = getattr(args, resource, None)
+        if amount is not None:
+            spend[resource] = amount
+        spend[f"{resource}_recording_status"] = (
+            "unreported" if amount is None else "explicit"
+        )
+    return spend
+
+
 def append_iteration(
     args: argparse.Namespace,
     *,
@@ -2319,7 +2397,7 @@ def append_iteration(
         return _write_worker_iteration_submission(args)
     control = os.environ if _host_control is None else _host_control
     run_dir = Path(args.dir).expanduser().resolve()
-    if not math.isfinite(float(args.usd)) or float(args.usd) < 0:
+    if args.usd is not None and (not math.isfinite(float(args.usd)) or float(args.usd) < 0):
         raise ValueError("usd must be a finite non-negative number")
     paths = loop_paths(run_dir)
     # Finish any commit a previous append was interrupted mid-way through
@@ -2522,8 +2600,7 @@ def append_iteration(
         "remaining_gaps": parse_many(args.remaining_gap),
         "budget_delta": {
             "iterations": 1,
-            "tokens": args.tokens,
-            "usd": args.usd,
+            **_reported_spend(args),
             "wall_time_seconds": args.wall_time_seconds,
         },
         "decision": args.decision,
@@ -2752,8 +2829,12 @@ def append_iteration(
     state["updated_at"] = now
     state["status"] = "blocked" if args.decision == "blocked" else "stopped" if args.decision == "stop" else "running"
     budget["spent_iterations"] = number
-    budget["spent_tokens"] = int(budget.get("spent_tokens", 0)) + args.tokens
-    budget["spent_usd"] = float(budget.get("spent_usd", 0.0)) + args.usd
+    # Only reported amounts are added; budget.json's totals are never rebuilt
+    # from the rows.
+    if args.tokens is not None:
+        budget["spent_tokens"] = int(budget.get("spent_tokens", 0)) + args.tokens
+    if args.usd is not None:
+        budget["spent_usd"] = float(budget.get("spent_usd", 0.0)) + args.usd
     budget["updated_at"] = now
 
     remaining_iterations = max(0, int(budget["max_iterations"]) - int(budget["spent_iterations"]))
@@ -2934,15 +3015,13 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
             errors.append(f"iteration {expected} missing objective")
         delta = record.get("budget_delta")
         if isinstance(delta, dict):
-            raw_usd = delta.get("usd", 0.0)
-            try:
-                usd = float(raw_usd)
-            except (TypeError, ValueError):
-                usd = float("nan")
-            if isinstance(raw_usd, bool) or not math.isfinite(usd) or usd < 0:
-                errors.append(
-                    f"iteration {expected} budget_delta.usd must be a finite non-negative number"
-                )
+            # The rule append-iteration, staging and finalize share: a valid
+            # amount when present, never null, and a stored status that is
+            # explicit with its amount or unreported without it.
+            errors.extend(
+                f"iteration {expected} {error}"
+                for error in goal_focus_v2.spend_recording_errors(delta)
+            )
         expected += 1
     if budget and iterations:
         max_iterations = budget.get("max_iterations")
@@ -3422,6 +3501,311 @@ def retract_iteration_command(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+SPEND_ACCOUNTING_SENTENCE = (
+    "Caps are accounting over self-reported usage between iterations, not a "
+    "spending limit."
+)
+
+
+def spend_accounting(
+    budget: Mapping[str, Any], rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Per resource, the cap and recorded total from budget.json beside what the ledger rows report.
+
+    recorded_total is budget.json's own total, never rebuilt from the rows.
+    A row counts as explicit when its status, stored or derived, is
+    explicit; an unreported row and a row from before the statuses with a
+    zero amount count as unreported.
+    """
+
+    accounting: dict[str, Any] = {"sentence": SPEND_ACCOUNTING_SENTENCE}
+    for resource in goal_focus_v2.SPEND_RESOURCES:
+        explicit = sum(
+            1
+            for row in rows
+            if goal_focus_v2.spend_recording_status(row.get("budget_delta"), resource)
+            == "explicit"
+        )
+        accounting[resource] = {
+            "cap": budget.get(f"max_{resource}"),
+            "recorded_total": budget.get(f"spent_{resource}"),
+            "explicit_iterations": explicit,
+            "unreported_iterations": len(rows) - explicit,
+        }
+    return accounting
+
+
+# Failure groups: status and notify advise the operator, and the next prompt
+# carries an information-only note. The inputs are the tail of
+# driver_logs/progress.jsonl and the blocked rows of iterations.jsonl; the
+# worker can write the log, so nothing here stops a loop.
+FAILURE_GROUP_WINDOW_BYTES = 262_144
+FAILURE_GROUP_RECENT_ATTEMPTS = 10
+FAILURE_GROUP_SHOWN = 8
+FAILURE_GROUP_ADVICE_MIN_ATTEMPTS = 3
+FAILURE_GROUP_ADVICE = "stop the loop, fix the cause, and restart"
+# iteration_failed classes for an iteration whose own work failed, and those
+# for a provider that was not available.
+WORKER_FAILURE_CLASSES = frozenset(
+    {
+        "failure",
+        "timeout",
+        "no_ledger_progress",
+        "ledger_integrity_violation",
+        "ledger_desync",
+        "build_config_change",
+    }
+)
+OUTAGE_FAILURE_CLASSES = frozenset({"quota", "hard_quota", "auth"})
+# Only these kinds advise; outages, rejections and blocked rows are listed.
+_ADVISING_FAILURE_KINDS = frozenset({"worker_failure", "host_review_error"})
+_NOT_COUNTED_IN_RECENT = frozenset({"rejected", "blocked"})
+_FAILURE_CLASS_TOKEN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}")
+# The variable tail of a host event id: a drive cycle, a plan revision such as
+# r12, a candidate uuid, or the None of a missing candidate.
+_EVENT_ID_VARIABLE_TAIL = re.compile(
+    r"(?:-(?:r?[0-9]+|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|none))+$"
+)
+_EVENT_ID_MAX_CHARS = 200
+
+
+def _failure_class_token(value: str) -> str:
+    """``value`` as one short lowercase class token, else unclassified."""
+
+    token = value.strip().lower()
+    return token if _FAILURE_CLASS_TOKEN.fullmatch(token) else "unclassified"
+
+
+def _review_error_class(event: Mapping[str, Any]) -> str:
+    """A result_review_error's class: error_class, else failure_class, else its event id without the variable tail."""
+
+    for key in ("error_class", "failure_class"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return _failure_class_token(value)
+    event_id = event.get("event_id")
+    if (
+        not isinstance(event_id, str)
+        or not event_id.strip()
+        or len(event_id) > _EVENT_ID_MAX_CHARS
+    ):
+        return "unclassified"
+    stem = event_id.strip().lower()
+    candidate_id = event.get("candidate_id")
+    if isinstance(candidate_id, str) and candidate_id.strip():
+        suffix = "-" + candidate_id.strip().lower()
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    return _failure_class_token(_EVENT_ID_VARIABLE_TAIL.sub("", stem))
+
+
+def _failure_attempt_group(event: Mapping[str, Any]) -> tuple[str, str] | None:
+    """(kind, class) of a progress event that records a failed or refused attempt, else None."""
+
+    name = event.get("event")
+    raw_class = event.get("failure_class")
+    failure_class = raw_class.strip().lower() if isinstance(raw_class, str) else ""
+    if name == "iteration_failed":
+        if failure_class in OUTAGE_FAILURE_CLASSES:
+            return "outage", failure_class
+        if failure_class in WORKER_FAILURE_CLASSES:
+            return "worker_failure", failure_class
+        return "worker_failure", "unclassified"
+    if name == "quota_wait":
+        return "outage", "hard_quota" if failure_class == "hard_quota" else "quota"
+    if name == "auth_failure":
+        return "outage", "auth"
+    if name == "result_review_error":
+        return "host_review_error", _review_error_class(event)
+    if name == "iteration_rejected":
+        return "rejected", "result_rejected"
+    return None
+
+
+def _failure_attempt_identity(event: Mapping[str, Any]) -> tuple[str, Any] | None:
+    """What tells one attempt from another: event_id, else candidate_id, else drive_cycle."""
+
+    for key in ("event_id", "candidate_id"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return key, value.strip()
+    cycle = event.get("drive_cycle")
+    if isinstance(cycle, int) and not isinstance(cycle, bool):
+        return "drive_cycle", cycle
+    return None
+
+
+def failure_groups(
+    run_dir: Path, *, pending: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Recorded failures grouped by (kind, class), and advice for the operator when one research failure dominates.
+
+    The inputs are the last FAILURE_GROUP_WINDOW_BYTES bytes of
+    <dir>/driver_logs/progress.jsonl, read without following a link (lines
+    that do not decode to a JSON object are skipped), the blocked rows of
+    iterations.jsonl, and ``pending``, an event about to be recorded. Each
+    attempt counts once: progress events are deduplicated on the preceding
+    drive_start timestamp, the event and its event_id, else candidate_id,
+    else drive_cycle, and each blocked row is one attempt. N is the
+    FAILURE_GROUP_RECENT_ATTEMPTS most recent attempts other than rejected and
+    blocked ones; the advice holds when one worker_failure or
+    host_review_error group has at least FAILURE_GROUP_ADVICE_MIN_ATTEMPTS of
+    them and at least half of N. ``groups`` lists the FAILURE_GROUP_SHOWN
+    largest groups, and ``other_count`` the attempts in the rest.
+    """
+
+    progress_log = "read"
+    try:
+        tail = _read_regular_tail(
+            progress_paths(run_dir)["progress_jsonl"], FAILURE_GROUP_WINDOW_BYTES
+        )
+    except FileNotFoundError:
+        tail, progress_log = b"", "absent"
+    except OSError:
+        tail, progress_log = b"", "unreadable"
+    events: list[Mapping[str, Any]] = []
+    for raw_line in tail.split(b"\n"):
+        if not raw_line.strip():
+            continue
+        try:
+            event = json.loads(raw_line.decode("utf-8"))
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    if pending is not None:
+        events.append(pending)
+
+    attempts: list[tuple[str, str]] = []
+    seen: set[tuple[Any, ...]] = set()
+    drive_start: str | None = None
+    for event in events:
+        if event.get("event") == "drive_start":
+            stamp = event.get("timestamp")
+            drive_start = stamp if isinstance(stamp, str) else None
+            continue
+        group = _failure_attempt_group(event)
+        if group is None:
+            continue
+        key = (drive_start, event["event"], _failure_attempt_identity(event))
+        if key in seen:
+            continue
+        seen.add(key)
+        attempts.append(group)
+    recent = [
+        group for group in attempts if group[0] not in _NOT_COUNTED_IN_RECENT
+    ][-FAILURE_GROUP_RECENT_ATTEMPTS:]
+
+    try:
+        rows = read_iterations(loop_paths(run_dir)["iterations"])
+    except (OSError, ValueError, RecursionError):
+        rows = []
+    for row in rows:
+        if row.get("decision") != "blocked":
+            continue
+        reason = row.get("stop_reason")
+        attempts.append(
+            (
+                "blocked",
+                _failure_class_token(normalized_stop_reason(reason))
+                if isinstance(reason, str) and reason.strip()
+                else "unclassified",
+            )
+        )
+
+    counts: dict[tuple[str, str], int] = {}
+    for group in attempts:
+        counts[group] = counts.get(group, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    recent_counts: dict[tuple[str, str], int] = {}
+    last_seen: dict[tuple[str, str], int] = {}
+    for index, group in enumerate(recent):
+        recent_counts[group] = recent_counts.get(group, 0) + 1
+        last_seen[group] = index
+    dominant = [
+        group
+        for group, count in recent_counts.items()
+        if group[0] in _ADVISING_FAILURE_KINDS
+        and count >= FAILURE_GROUP_ADVICE_MIN_ATTEMPTS
+        and 2 * count >= len(recent)
+    ]
+    advice: dict[str, Any] | None = None
+    if dominant:
+        kind, failure_class = max(
+            dominant, key=lambda group: (recent_counts[group], last_seen[group])
+        )
+        advice = {
+            "kind": kind,
+            "class": failure_class,
+            "count": recent_counts[(kind, failure_class)],
+            "n": len(recent),
+            "text": FAILURE_GROUP_ADVICE,
+        }
+    return {
+        "window_bytes": FAILURE_GROUP_WINDOW_BYTES,
+        "progress_log": progress_log,
+        "n": len(recent),
+        "groups": [
+            {"kind": kind, "class": failure_class, "count": count}
+            for (kind, failure_class), count in ranked[:FAILURE_GROUP_SHOWN]
+        ],
+        "other_count": sum(count for _, count in ranked[FAILURE_GROUP_SHOWN:]),
+        "advice": advice,
+    }
+
+
+def _failure_group_summary(advice: Mapping[str, Any]) -> str:
+    return (
+        f"{advice['kind']}/{advice['class']} holds {advice['count']} of the last "
+        f"{advice['n']} recorded failures"
+    )
+
+
+def _failure_note_addon(run_dir: Path) -> str:
+    """One information-only line naming the dominant failure group while the advice holds, else "".
+
+    The operator acts on the advice through status and notify; the worker
+    is only told. The worker can write the progress log the line comes from,
+    so a line the sensitive-content check flags is left out, and prompt
+    construction never fails here.
+    """
+
+    try:
+        advice = failure_groups(run_dir)["advice"]
+        if not advice:
+            return ""
+        line = (
+            "| Host note (information only): "
+            + _failure_group_summary(advice)
+            + "."
+        )
+        if panel_payload_sensitive_findings(line):
+            return ""
+    except Exception:  # noqa: BLE001 - prompt construction must never fail
+        return ""
+    return "\n\n" + line
+
+
+def _failure_group_issue(
+    run_dir: Path, event: str, extra: Mapping[str, Any], timestamp: str
+) -> dict[str, str] | None:
+    """The failure_group_dominant issue while the advice holds, counting the event being built; else None."""
+
+    try:
+        advice = failure_groups(
+            run_dir, pending={**extra, "event": event, "timestamp": timestamp}
+        )["advice"]
+    except Exception:  # noqa: BLE001 - the advice never costs a notification
+        return None
+    if not advice:
+        return None
+    return {
+        "code": "failure_group_dominant",
+        "message": f"{_failure_group_summary(advice)}; {FAILURE_GROUP_ADVICE}.",
+        "stage": "drive",
+    }
+
+
 def status_command(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.dir).expanduser().resolve()
     validation = validate_loop_dir(run_dir)
@@ -3450,6 +3834,8 @@ def status_command(args: argparse.Namespace) -> dict[str, Any]:
             if basis is not None
             else None
         ),
+        "accounting": spend_accounting(budget, iterations),
+        "failure_groups": failure_groups(run_dir),
         "validation": validation,
     }
 
@@ -6539,7 +6925,8 @@ def iteration_prompt(
     Drive sets AAS_DRIVE_INBOX_BLOCK (or pass inbox_block) after exclusive claim.
     When host panel is enabled, appends the hybrid-model ban on nested panel CLIs.
     On the last iteration the budget allows, the collection contract follows
-    the base.
+    the base. While one research failure group dominates the recorded
+    failures, an information-only note follows the negative knowledge block.
     """
     if goal_focus_is_enforced(run_dir):
         base = (
@@ -6622,6 +7009,7 @@ def iteration_prompt(
     elif is_goal_priority_active(run_dir):
         base = base + goal_priority_prompt_addon(run_dir)
     base = base + _negative_knowledge_addon(run_dir)
+    base = base + _failure_note_addon(run_dir)
     # Formal after goal_priority (subordinate to single-path + hard replan); empty when off.
     try:
         base = base + formal_policy_prompt_addon(run_dir)
@@ -8898,6 +9286,11 @@ def _build_notify_v2_envelope(
             raw_err = str(extra.get("error") or progress_note or "").strip()
             msg = raw_err[:240] if raw_err else f"Iteration error ({code})."
         issue_errors.append({"code": code[:64], "message": msg, "stage": "drive"})
+        # While one research failure group dominates, the operator is told to
+        # stop, fix and restart; nothing here stops the loop.
+        dominant = _failure_group_issue(run_dir, event, extra, timestamp)
+        if dominant is not None:
+            issue_errors.append(dominant)
     if reject_event or review_status == "failed":
         issues_reported = True
         claim_reviews = (
@@ -15206,10 +15599,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--remaining-gap", action="append", help="known open gap after this iteration (repeatable)"
     )
     append.add_argument(
-        "--tokens", type=positive_int, default=0, help="tokens spent this iteration"
+        "--tokens",
+        type=positive_int,
+        default=None,
+        help="tokens spent this iteration, as reported; left out, it is recorded as unreported",
     )
     append.add_argument(
-        "--usd", type=nonnegative_float, default=0.0, help="USD spent this iteration"
+        "--usd",
+        type=nonnegative_float,
+        default=None,
+        help="USD spent this iteration, as reported; left out, it is recorded as unreported",
     )
     append.add_argument(
         "--wall-time-seconds",

@@ -223,7 +223,8 @@ Driver behavior:
   to 10.
 - Stop conditions are re-checked every cycle by the `done` arbiter: iteration
   cap, wall/token/USD budgets, terminal ledger status, `STOP_REQUESTED` and
-  `PAUSE` sentinels, and `require_user_stop_only`.
+  `PAUSE` sentinels, and `require_user_stop_only`. The token and USD budgets
+  compare self-reported totals (see [Loop accounting](#loop-accounting)).
 - Exit codes: 0 stopped cleanly (`done`), 2 bad arguments, 3 max failures,
   4 runtime error, 5 quota waits exhausted, 6 provider binary unavailable,
   7 auth/session dead.
@@ -666,11 +667,11 @@ blindness, and endpoint-constrained egress; because that complete boundary is
 not yet implemented, strict-isolated/default real panels fail closed before
 spawn. Injected runners remain available only for offline contract tests.
 
-Rejected candidates are finalized as `bank_status: rejected`: their real
-iteration/token/USD deltas count against budget and their compute/time/executor
-provenance is retained, but claim ids, claims, obligation transitions,
-`campaign_delta`, and `global_delta` are cleared. The default next plan state is
-`needs_replan`.
+Rejected candidates are finalized as `bank_status: rejected`: their iteration
+delta and reported token/USD amounts count against budget and their
+compute/time/executor provenance is retained, but claim ids, claims,
+obligation transitions, `campaign_delta`, and `global_delta` are cleared. The
+default next plan state is `needs_replan`.
 
 Use the `goal-focus` command family for status, validation, reconciliation,
 replan, and migration. Migration is non-mutating by default:
@@ -877,6 +878,77 @@ row starts its decision reason with the label. Each derives the basis from the
 row again, and `validate` warns when a stored `success_basis` differs from it.
 Only `host_formal_verdict` is shown as verified; nothing else says verified or
 proved.
+
+### Loop accounting
+
+Spend is recorded per resource and only as the worker reports it, and the
+failures a drive records are grouped so the operator can see when one cause
+keeps recurring.
+
+**Spend recording.** `append-iteration --tokens N --usd X` records the amounts
+the worker reports. Each new row's `budget_delta` carries
+`tokens_recording_status` and `usd_recording_status`: `explicit` with the
+amount, or `unreported` with the amount left out of the row, never stored as
+null. Leaving a flag out records `unreported`, and `--usd 0` records an
+explicit zero. `budget.json` adds only reported amounts, and its totals are
+never rebuilt from the rows. A row written before these fields existed counts
+as explicit when its amount is nonzero and as unknown when it is zero, since
+that zero may be the old default; unknown is only derived. `validate` refuses
+a row that stores `unknown`, a null amount, a tokens amount that is not a
+non-negative integer, a usd amount that is not a finite non-negative number, a
+status other than `explicit` or `unreported`, an `explicit` status without its
+amount and an `unreported` status with one. A host-mediated request carries
+`null` for an unreported amount, staging refuses the same disagreements
+before anything is staged, finalize adds nothing for an absent amount whether
+it accepts or rejects the candidate, and `retract-iteration` subtracts only
+what the row added.
+
+**Caps.** "Caps are accounting over self-reported usage between iterations,
+not a spending limit." `done` compares the recorded `spent_tokens` and
+`spent_usd` in `budget.json` with `max_tokens` and `max_usd` between
+iterations, so an iteration can overshoot a cap and unreported usage never
+counts toward one. `status` adds `accounting`: that sentence and, for `tokens`
+and `usd`, the `cap`, the `recorded_total` from `budget.json`,
+`explicit_iterations` and `unreported_iterations`; a row from before the
+statuses with a zero amount counts as unreported.
+
+**Failure groups.** `status` adds `failure_groups` with `window_bytes`,
+`progress_log` (`read`, `absent` or `unreadable`), `n`, `groups`,
+`other_count` and `advice`. The inputs are the last 262,144 bytes of
+`<loop>/driver_logs/progress.jsonl`, read without following a link (lines
+that do not decode to a JSON object are skipped), and the blocked rows of
+`iterations.jsonl`. Each attempt is grouped by kind and class:
+
+| Kind | Attempts | Class |
+|---|---|---|
+| `worker_failure` | `iteration_failed` with class `failure`, `timeout`, `no_ledger_progress`, `ledger_integrity_violation`, `ledger_desync` or `build_config_change` | that class; any other reads `unclassified` |
+| `host_review_error` | `result_review_error` | `error_class`, else `failure_class`, else the `event_id` without its variable tail, else `unclassified` |
+| `outage` | `quota_wait`, `auth_failure`, and `iteration_failed` with class `quota`, `hard_quota` or `auth` | `quota`, `hard_quota` or `auth` |
+| `rejected` | `iteration_rejected` | `result_rejected` |
+| `blocked` | ledger rows with decision `blocked` | the normalized stop reason |
+
+A class is one short lowercase token; anything else reads `unclassified`.
+Each attempt counts once: progress lines are deduplicated on the preceding
+`drive_start` timestamp, the event and its `event_id`, else `candidate_id`,
+else `drive_cycle`, and a blocked row is one attempt however many progress
+lines repeat its state. `n` counts the most recent attempts, at most 10,
+leaving out `rejected` and `blocked` ones. When one `worker_failure` or
+`host_review_error` group holds at least 3 of them and at least half of `n`,
+`advice` names that group with the text "stop the loop, fix the cause, and
+restart". `groups` lists the 8 largest groups and `other_count` the attempts
+in the rest. Outages, rejections and blocked rows are listed but never
+advise.
+
+The advice is for the operator: `status` shows it, and the notification of a
+failure event carries the issue `failure_group_dominant`, counting that event
+itself. The worker is only told: the next iteration prompt carries the line
+`| Host note (information only): <kind>/<class> holds <k> of the last <n>
+recorded failures.` after the negative knowledge block, unless the
+sensitive-content check flags that line. The worker can write
+`progress.jsonl`, so the groups never stop a loop: `done` and the Stop hook
+do not read them. A drive started with `--log-dir` elsewhere writes its
+progress log outside `<loop>/driver_logs`, and the groups then show only the
+blocked rows.
 
 ### Legacy `goal_priority.v1` compatibility
 

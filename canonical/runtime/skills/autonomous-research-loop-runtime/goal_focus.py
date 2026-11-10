@@ -184,6 +184,99 @@ def _finite_nonnegative_amount(value: Any, field: str) -> float:
     return amount
 
 
+# Spend on a ledger row's budget_delta is recorded per resource. A reported
+# amount is stored with status explicit; an unreported one is left out of the
+# row, never stored as null, with status unreported. A row written before the
+# statuses existed has neither: its amount reads explicit when nonzero and
+# unknown when zero, because that zero may be the old default. "unknown" is
+# only ever derived; a row that stores it is refused.
+SPEND_RESOURCES = ("tokens", "usd")
+SPEND_RECORDING_STATUSES = frozenset({"explicit", "unreported"})
+SPEND_RECORDING_UNKNOWN = "unknown"
+
+
+def _spend_amount(resource: str, value: Any) -> int | float | None:
+    """``value`` as a valid amount of ``resource``, else None.
+
+    tokens is a non-negative integer and usd a finite non-negative number; a
+    boolean is neither.
+    """
+    if isinstance(value, bool):
+        return None
+    if resource == "tokens":
+        return value if isinstance(value, int) and value >= 0 else None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return amount if math.isfinite(amount) and amount >= 0 else None
+
+
+def spend_recording_status(delta: Any, resource: str) -> str:
+    """explicit, unreported or unknown for one resource of a row's budget_delta.
+
+    A stored explicit or unreported status is read as stored; validation
+    checks that it matches the amount. Without a stored status the row
+    predates per-resource recording: a valid nonzero amount reads explicit
+    and anything else, zero included, reads unknown. A stored value outside
+    the two statuses also reads unknown.
+    """
+    if not isinstance(delta, Mapping):
+        return SPEND_RECORDING_UNKNOWN
+    key = f"{resource}_recording_status"
+    if key in delta:
+        stored = delta[key]
+        if isinstance(stored, str) and stored in SPEND_RECORDING_STATUSES:
+            return stored
+        return SPEND_RECORDING_UNKNOWN
+    return "explicit" if _spend_amount(resource, delta.get(resource)) else SPEND_RECORDING_UNKNOWN
+
+
+def spend_recording_errors(delta: Mapping[str, Any]) -> list[str]:
+    """What is wrong with the spend fields of one row's budget_delta; empty when nothing is.
+
+    Each resource is checked on its own: an amount that is present is valid
+    and never null, a stored status is explicit or unreported (unknown is
+    refused, being derived only), explicit comes with its amount and
+    unreported without it. A row that stores no status is not refused for
+    that: it predates the statuses.
+    """
+    errors: list[str] = []
+    for resource in SPEND_RESOURCES:
+        key = f"{resource}_recording_status"
+        present = resource in delta
+        if present and delta[resource] is None:
+            errors.append(
+                f"budget_delta.{resource} is null; an unreported amount is left out of the row"
+            )
+        elif present and _spend_amount(resource, delta[resource]) is None:
+            errors.append(
+                f"budget_delta.{resource} must be "
+                + (
+                    "a non-negative integer"
+                    if resource == "tokens"
+                    else "a finite non-negative number"
+                )
+            )
+        if key not in delta:
+            continue
+        status = delta[key]
+        if not isinstance(status, str) or status not in SPEND_RECORDING_STATUSES:
+            errors.append(
+                f"budget_delta.{key} must be explicit or unreported"
+                + (
+                    "; unknown is only derived, for a row written before the statuses existed"
+                    if status == SPEND_RECORDING_UNKNOWN
+                    else ""
+                )
+            )
+        elif status == "explicit" and not present:
+            errors.append(f"budget_delta.{key} is explicit but budget_delta.{resource} is missing")
+        elif status == "unreported" and present:
+            errors.append(f"budget_delta.{key} is unreported but budget_delta.{resource} is present")
+    return errors
+
+
 def _stable_id(prefix: str, *parts: Any) -> str:
     raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8")
     return f"{prefix}-{hashlib.sha256(raw).hexdigest()[:20]}"
@@ -4393,6 +4486,11 @@ def stage_iteration_candidate(
         else {}
     )
     _finite_nonnegative_amount(delta.get("usd", 0.0), "budget_delta.usd")
+    # Finalize banks the staged row as it is, so a spend status that disagrees
+    # with its amount, or a null amount, is refused before it is staged.
+    spend_errors = spend_recording_errors(delta)
+    if spend_errors:
+        raise ValueError("; ".join(spend_errors))
     if plan.get("enforcement_mode") == "enforce":
         staged_claims = _proposed_claim_ids(staged_record)
         if not staged_claims:

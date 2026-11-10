@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -11651,3 +11652,938 @@ class LoopEndingsTests(unittest.TestCase):
         recovery = " ".join(_markdown_section(loop_skill, "## Recovery").split())
         self.assertIn(self.HOST_POINTER, recovery)
         self.assertIn("with no model call", recovery)
+
+
+class LoopAccountingTests(unittest.TestCase):
+    """Spend is recorded per resource: an amount the worker does not report stays out of the row."""
+
+    SENTENCE = (
+        "Caps are accounting over self-reported usage between iterations, not a "
+        "spending limit."
+    )
+    UNREPORTED = {"tokens_recording_status": "unreported", "usd_recording_status": "unreported"}
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @staticmethod
+    def _rows(loop: Path) -> list[dict[str, Any]]:
+        return [
+            json.loads(line)
+            for line in (loop / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def _append(arl: Any, loop: Path, *flags: str) -> dict[str, Any]:
+        args = arl.build_parser().parse_args(
+            [
+                "append-iteration",
+                "--dir",
+                str(loop),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "record what this iteration spent",
+                "--decision",
+                "continue",
+                *flags,
+            ]
+        )
+        return arl.append_iteration(args)
+
+    def test_append_without_spend_flags_omits_amounts_and_marks_unreported(self) -> None:
+        """An amount the worker does not report is left out of the row and recorded as unreported.
+
+        Tokens and USD are recorded separately: neither flag, tokens only, USD
+        only, both, and explicit zeros. budget.json adds only the reported
+        amounts, and an unreported one leaves its total exactly as it was. A
+        dry run shows the same budget_delta and writes nothing.
+        """
+        arl = self._runtime()
+        cases = (
+            ("neither", (), dict(self.UNREPORTED)),
+            (
+                "tokens only",
+                ("--tokens", "120"),
+                {"tokens": 120, "tokens_recording_status": "explicit", "usd_recording_status": "unreported"},
+            ),
+            (
+                "usd only",
+                ("--usd", "0.5"),
+                {"tokens_recording_status": "unreported", "usd": 0.5, "usd_recording_status": "explicit"},
+            ),
+            (
+                "both",
+                ("--tokens", "7", "--usd", "1.25"),
+                {
+                    "tokens": 7,
+                    "tokens_recording_status": "explicit",
+                    "usd": 1.25,
+                    "usd_recording_status": "explicit",
+                },
+            ),
+            (
+                "explicit zeros",
+                ("--tokens", "0", "--usd", "0"),
+                {
+                    "tokens": 0,
+                    "tokens_recording_status": "explicit",
+                    "usd": 0.0,
+                    "usd_recording_status": "explicit",
+                },
+            ),
+        )
+        for label, flags, spend in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                arl.init_loop(arl.selftest_init_args(loop, max_iterations=3))
+                expected = {"iterations": 1, "wall_time_seconds": 0, **spend}
+                before = read_loop_json(loop, "budget.json")
+
+                preview = self._append(arl, loop, *flags, "--dry-run")
+                self.assertEqual(preview["would_append"]["budget_delta"], expected)
+                self.assertEqual(self._rows(loop), [])
+
+                result = self._append(arl, loop, *flags)
+                self.assertEqual(result["status"], "ok", result)
+                (row,) = self._rows(loop)
+                self.assertEqual(row["budget_delta"], expected)
+                after = read_loop_json(loop, "budget.json")
+                for resource in ("tokens", "usd"):
+                    total = f"spent_{resource}"
+                    if resource in spend:
+                        self.assertEqual(after[total], before[total] + spend[resource])
+                    else:
+                        self.assertEqual(repr(after[total]), repr(before[total]))
+                self.assertEqual(arl.validate_loop_dir(loop)["errors"], [])
+
+    def test_host_mediated_request_carries_unreported_spend_as_null(self) -> None:
+        """A worker's request keeps tokens and usd as required keys, null when not reported.
+
+        The host's validator accepts null for both and still refuses a list,
+        a string, a boolean, a negative or a non-finite amount. A request
+        saved with numeric zeros still validates (regression check).
+        """
+        arl = self._runtime()
+        args = arl.build_parser().parse_args(
+            [
+                "append-iteration",
+                "--dir",
+                "loop",
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "report no spend",
+                "--decision",
+                "continue",
+            ]
+        )
+        request = arl._submission_request_fields(args)
+        unreported = {**request, "tokens": None, "usd": None}
+        self.assertEqual(arl._validated_iteration_submission_request(unreported), unreported)
+        self.assertEqual(set(request), set(arl.ITERATION_SUBMISSION_ARG_FIELDS))
+        self.assertIsNone(request["tokens"])
+        self.assertIsNone(request["usd"])
+        self.assertEqual(arl._validated_iteration_submission_request(request), request)
+        for field, bad in (
+            ("tokens", [1]),
+            ("tokens", "12"),
+            ("tokens", True),
+            ("tokens", -1),
+            ("usd", [0.5]),
+            ("usd", "0.5"),
+            ("usd", False),
+            ("usd", float("nan")),
+        ):
+            with self.subTest(field=field, bad=bad):
+                with self.assertRaises(ValueError):
+                    arl._validated_iteration_submission_request({**request, field: bad})
+        saved = {**request, "tokens": 0, "usd": 0.0}
+        self.assertEqual(arl._validated_iteration_submission_request(saved), saved)
+
+    def test_validate_refuses_null_amount_and_stored_unknown_status(self) -> None:
+        """validate_loop_dir refuses a null amount, a stored unknown status and a status that disagrees with its amount.
+
+        Lists and objects in these fields give an error, never a TypeError,
+        and a usd integer too large for a float gives an error instead of an
+        OverflowError. A null, object or infinite usd was refused before
+        (regression part), a null one with the general usd message where it
+        now gets its own. Rows written before the statuses existed, with or
+        without amounts, and rows whose statuses match their amounts still
+        validate (regression part).
+        """
+        arl = self._runtime()
+        refused = {
+            "null usd": {"usd": None},
+            "object usd": {"usd": {"amount": 1}},
+            "infinite usd": {"usd": float("inf")},
+            "huge usd": {"usd": 10**400},
+            "null tokens": {"tokens": None},
+            "list tokens": {"tokens": [1]},
+            "string tokens": {"tokens": "12"},
+            "negative tokens": {"tokens": -1},
+            "bool tokens": {"tokens": True},
+            "stored unknown tokens": {"tokens_recording_status": "unknown"},
+            "stored unknown usd": {"usd_recording_status": "unknown"},
+            "list status": {"usd_recording_status": ["explicit"], "usd": 0.5},
+            "object status": {"tokens_recording_status": {"status": "explicit"}, "tokens": 3},
+            "other status": {"tokens_recording_status": "estimated", "tokens": 3},
+            "explicit without amount": {"tokens_recording_status": "explicit"},
+            "unreported with amount": {"usd_recording_status": "unreported", "usd": 0.5},
+            "explicit null": {"usd_recording_status": "explicit", "usd": None},
+        }
+        accepted = {
+            "legacy zeros": {"tokens": 0, "usd": 0.0},
+            "legacy amounts": {"tokens": 10, "usd": 0.5},
+            "legacy without amounts": {},
+            "unreported": dict(self.UNREPORTED),
+            "explicit": {
+                "tokens": 0,
+                "tokens_recording_status": "explicit",
+                "usd": 1.5,
+                "usd_recording_status": "explicit",
+            },
+        }
+        for label, spend in {**refused, **accepted}.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                arl.init_loop(arl.selftest_init_args(loop, max_iterations=3))
+                row = iteration_record(1, "continue")
+                row["budget_delta"] = {"iterations": 1, "wall_time_seconds": 0, **spend}
+                write_iterations(loop, [row])
+                budget = read_loop_json(loop, "budget.json")
+                budget["spent_iterations"] = 1
+                write_loop_json(loop, "budget.json", budget)
+                errors = arl.validate_loop_dir(loop)["errors"]
+                if label in refused:
+                    spend_errors = [error for error in errors if "budget_delta" in error]
+                    self.assertTrue(spend_errors, errors)
+                    self.assertEqual(len(spend_errors), len(errors), errors)
+                    for error in spend_errors:
+                        self.assertTrue(error.startswith("iteration 1 budget_delta."), error)
+                else:
+                    self.assertEqual(errors, [])
+                if label in ("null tokens", "null usd"):
+                    resource = label.split()[1]
+                    self.assertEqual(
+                        errors,
+                        [
+                            f"iteration 1 budget_delta.{resource} is null; an unreported "
+                            "amount is left out of the row"
+                        ],
+                    )
+
+    def test_status_mixed_ledger_accounting(self) -> None:
+        """status counts explicit and unreported iterations per resource over old and new rows.
+
+        A row written before the statuses existed counts as explicit when its
+        amount is nonzero and as unreported (unknown) when it is zero. The
+        recorded totals are budget.json's, here larger than the rows' sum, and
+        are never rebuilt from the rows; the cap sentence is fixed. Retracting
+        the new unreported row lowers the counts and leaves the totals; that
+        the totals stay held on the base too, where the row stored zeros
+        (regression part).
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=5)
+            init_args.max_tokens = 1000
+            init_args.max_usd = 2.0
+            arl.init_loop(init_args)
+            nonzero = iteration_record(1, "continue")
+            nonzero["budget_delta"] = {
+                "iterations": 1,
+                "tokens": 100,
+                "usd": 0.25,
+                "wall_time_seconds": 0,
+            }
+            zero = iteration_record(2, "continue")
+            write_iterations(loop, [nonzero, zero])
+            budget = read_loop_json(loop, "budget.json")
+            budget.update(spent_iterations=2, spent_tokens=150, spent_usd=0.75)
+            write_loop_json(loop, "budget.json", budget)
+            state = read_loop_json(loop, "loop_state.json")
+            state.update(last_iteration=2, status="running")
+            write_loop_json(loop, "loop_state.json", state)
+            self.assertEqual(arl.validate_loop_dir(loop)["errors"], [])
+
+            self.assertEqual(self._append(arl, loop)["status"], "ok")
+            status = arl.status_command(argparse.Namespace(dir=str(loop)))
+            self.assertEqual(status["validation"]["errors"], [])
+            accounting = status["accounting"]
+            self.assertEqual(accounting["sentence"], self.SENTENCE)
+            self.assertEqual(
+                accounting["tokens"],
+                {"cap": 1000, "recorded_total": 150, "explicit_iterations": 1, "unreported_iterations": 2},
+            )
+            self.assertEqual(
+                accounting["usd"],
+                {"cap": 2.0, "recorded_total": 0.75, "explicit_iterations": 1, "unreported_iterations": 2},
+            )
+
+            retracted = arl.retract_iteration_command(
+                argparse.Namespace(
+                    dir=str(loop),
+                    reason="the iteration recorded the wrong objective",
+                    registry_dir=str(Path(tmp) / "registry"),
+                )
+            )
+            self.assertEqual(retracted["status"], "ok", retracted)
+            budget = read_loop_json(loop, "budget.json")
+            self.assertEqual((budget["spent_tokens"], budget["spent_usd"]), (150, 0.75))
+            after = arl.status_command(argparse.Namespace(dir=str(loop)))["accounting"]
+            for resource in ("tokens", "usd"):
+                self.assertEqual(after[resource]["unreported_iterations"], 1)
+                self.assertEqual(after[resource]["explicit_iterations"], 1)
+            self.assertEqual(after["tokens"]["recorded_total"], 150)
+            self.assertEqual(after["usd"]["recorded_total"], 0.75)
+
+    def test_docs_describe_loop_accounting(self) -> None:
+        """The runtime skill documents spend recording, the cap sentence and the failure groups; both runbooks describe the caps as accounting."""
+        runtime_skill = (
+            REPO_ROOT / "canonical" / "skills" / "autonomous-research-loop-runtime" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        section = " ".join(_markdown_section(runtime_skill, "### Loop accounting").split())
+        for phrase in (
+            self.SENTENCE,
+            "`tokens_recording_status`",
+            "`usd_recording_status`",
+            "`unreported`",
+            "`accounting`",
+            "`failure_groups`",
+            "`failure_group_dominant`",
+            FailureGroupTests.ADVICE,
+            "262,144 bytes",
+            "| Host note (information only):",
+        ):
+            self.assertIn(phrase, section)
+        for name in (
+            "autonomous-research-loop-runbook.md",
+            "autonomous-research-loop-portfolio-runbook.md",
+        ):
+            runbook = (REPO_ROOT / "canonical" / "templates" / name).read_text(encoding="utf-8")
+            (usd_row,) = [line for line in runbook.splitlines() if line.startswith("| `max_usd` |")]
+            self.assertIn("accounting over self-reported usage", usd_row)
+
+
+class FailureGroupTests(unittest.TestCase):
+    """status groups recorded failures by kind and class, and advises the operator when one research failure dominates."""
+
+    ADVICE = "stop the loop, fix the cause, and restart"
+    NOTE_PREFIX = "| Host note (information only):"
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @staticmethod
+    def _loop(arl: Any, tmp: str, *, max_iterations: int = 5) -> Path:
+        loop = Path(tmp) / "loop"
+        arl.init_loop(arl.selftest_init_args(loop, max_iterations=max_iterations))
+        return loop
+
+    @staticmethod
+    def _log(loop: Path, lines: list[Any]) -> Path:
+        """Write driver_logs/progress.jsonl: dicts as JSON lines, str and bytes as given."""
+        path = loop / "driver_logs" / "progress.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = b"".join(
+            (
+                line
+                if isinstance(line, bytes)
+                else (line if isinstance(line, str) else json.dumps(line)).encode("utf-8")
+            )
+            + b"\n"
+            for line in lines
+        )
+        path.write_bytes(payload)
+        return path
+
+    @staticmethod
+    def _event(name: str, **fields: Any) -> dict[str, Any]:
+        return {"event": name, "timestamp": "2026-11-10T01:00:00Z", **fields}
+
+    def _start(self, timestamp: str = "2026-11-10T00:00:00Z") -> dict[str, Any]:
+        return self._event("drive_start", timestamp=timestamp)
+
+    @staticmethod
+    def _groups(arl: Any, loop: Path) -> dict[str, Any]:
+        return arl.status_command(argparse.Namespace(dir=str(loop)))["failure_groups"]
+
+    @staticmethod
+    def _dominant(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            issue
+            for issue in payload["notification"]["issues"]["errors"]
+            if issue["code"] == "failure_group_dominant"
+        ]
+
+    def test_three_failures_of_one_class_give_the_advice_note_and_notify_issue(self) -> None:
+        """Three iteration_failed events of one class form a group of 3 and give the advice everywhere it goes.
+
+        status carries the group and the advice for the operator, the next
+        prompt carries one information-only note between the negative
+        knowledge block and the formal block, and a failure event's
+        notification carries the failure_group_dominant issue. The event
+        being built counts, so the third failure's own notification already
+        carries it; a non-failure event never does. Two failures give none of
+        these.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            failures = [
+                self._event("iteration_failed", failure_class="failure", drive_cycle=n, rc=1)
+                for n in (1, 2, 3)
+            ]
+            self._log(loop, [self._start(), *failures[:2]])
+            self.assertIsNone(self._groups(arl, loop)["advice"])
+            self.assertNotIn(self.NOTE_PREFIX, arl.iteration_prompt(loop))
+            third = arl.build_progress_event(
+                loop,
+                "iteration_failed",
+                extra={"failure_class": "failure", "drive_cycle": 3, "rc": 1},
+            )
+            (issue,) = self._dominant(third)
+            self.assertEqual(
+                issue["message"],
+                "worker_failure/failure holds 3 of the last 3 recorded failures; "
+                f"{self.ADVICE}.",
+            )
+            self.assertEqual(issue["stage"], "drive")
+
+            self._log(loop, [self._start(), *failures])
+            groups = self._groups(arl, loop)
+            self.assertEqual(groups["window_bytes"], 262_144)
+            self.assertEqual(groups["progress_log"], "read")
+            self.assertEqual(groups["n"], 3)
+            self.assertEqual(
+                groups["groups"], [{"kind": "worker_failure", "class": "failure", "count": 3}]
+            )
+            self.assertEqual(groups["other_count"], 0)
+            self.assertEqual(
+                groups["advice"],
+                {"kind": "worker_failure", "class": "failure", "count": 3, "n": 3, "text": self.ADVICE},
+            )
+            note = (
+                "| Host note (information only): worker_failure/failure holds 3 of the "
+                "last 3 recorded failures."
+            )
+            with mock.patch.object(
+                arl, "_negative_knowledge_addon", return_value="\n\nNEGATIVE-KNOWLEDGE-BLOCK"
+            ), mock.patch.object(
+                arl, "formal_policy_prompt_addon", return_value="\n\nFORMAL-BLOCK"
+            ):
+                prompt = arl.iteration_prompt(loop)
+            self.assertEqual(prompt.count(note), 1)
+            self.assertIn("NEGATIVE-KNOWLEDGE-BLOCK\n\n" + note + "\n\nFORMAL-BLOCK", prompt)
+            plain = arl.iteration_prompt(loop)
+            self.assertEqual(plain.count(note), 1)
+            self.assertEqual(plain, arl.iteration_prompt(loop))
+            arl.assert_panel_prompt_safe(plain, environ={})
+            self.assertEqual(
+                self._dominant(
+                    arl.build_progress_event(
+                        loop, "iteration_failed", extra={"failure_class": "failure", "drive_cycle": 4}
+                    )
+                )[0]["code"],
+                "failure_group_dominant",
+            )
+            ok_event = arl.build_progress_event(loop, "iteration_ok")
+            self.assertEqual(self._dominant(ok_event), [])
+
+    def test_failures_the_progress_writer_records_are_grouped(self) -> None:
+        """Lines written by the real progress path, scrubbed and enveloped, group as the drive's events do.
+
+        The third failure's own payload already carries the issue, and
+        status reads the same three attempts back from the log.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+
+            def emit(event: str, **extra: Any) -> dict[str, Any]:
+                return arl.emit_loop_progress(
+                    loop, event, notify_channel="off", to_stderr=False, extra=extra
+                )
+
+            emit("drive_start", source="drive", provider="claude")
+            payloads = [
+                emit(
+                    "iteration_failed",
+                    source="drive",
+                    drive_cycle=cycle,
+                    rc=1,
+                    failures=cycle,
+                    max_failures=3,
+                    failure_class="timeout",
+                    timed_out=True,
+                )
+                for cycle in (1, 2, 3)
+            ]
+            self.assertEqual([len(self._dominant(p)) for p in payloads], [0, 0, 1])
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                summary["groups"], [{"kind": "worker_failure", "class": "timeout", "count": 3}]
+            )
+            self.assertEqual(summary["advice"]["class"], "timeout")
+
+    def test_outages_and_reviewed_rejections_never_advise(self) -> None:
+        """Outages alone, and reviewed rejections alone, never give the advice, the note or the issue.
+
+        Outages are quota_wait, auth_failure and iteration_failed with the
+        quota, hard_quota or auth class; they count toward N. Rejections form
+        their own group and never count toward N.
+        """
+        arl = self._runtime()
+        outages = [
+            self._start(),
+            *(self._event("quota_wait", drive_cycle=n, rc=1) for n in (1, 2, 3, 4)),
+            self._event("quota_wait", failure_class="hard_quota"),
+            self._event("auth_failure", failure_class="auth", drive_cycle=6),
+            self._event("iteration_failed", failure_class="quota", drive_cycle=7),
+            self._event("iteration_failed", failure_class="hard_quota", drive_cycle=8),
+            self._event("iteration_failed", failure_class="auth", drive_cycle=9),
+        ]
+        rejections = [
+            self._start(),
+            *(
+                self._event(
+                    "iteration_rejected",
+                    event_id=f"arl-iteration_rejected-cand-{n}",
+                    candidate_id=f"cand-{n}",
+                )
+                for n in range(1, 6)
+            ),
+        ]
+        expected = {
+            "outages": (
+                9,
+                [
+                    {"kind": "outage", "class": "quota", "count": 5},
+                    {"kind": "outage", "class": "auth", "count": 2},
+                    {"kind": "outage", "class": "hard_quota", "count": 2},
+                ],
+                outages,
+            ),
+            "rejections": (
+                0,
+                [{"kind": "rejected", "class": "result_rejected", "count": 5}],
+                rejections,
+            ),
+        }
+        for label, (n, groups, lines) in expected.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = self._loop(arl, tmp)
+                self._log(loop, lines)
+                summary = self._groups(arl, loop)
+                self.assertEqual(summary["n"], n)
+                self.assertEqual(summary["groups"], groups)
+                self.assertIsNone(summary["advice"])
+                self.assertNotIn(self.NOTE_PREFIX, arl.iteration_prompt(loop))
+                event = arl.build_progress_event(
+                    loop, "quota_wait", extra={"failure_class": "quota", "drive_cycle": 10}
+                )
+                self.assertEqual(self._dominant(event), [])
+
+    def test_each_attempt_counts_once(self) -> None:
+        """Repeated lines about one attempt count once, and a blocked row counts once however often progress reports it.
+
+        Progress lines are deduplicated on the preceding drive_start, the
+        event and its event_id, else candidate_id, else drive_cycle; a later
+        drive_start starts the count again. One event_id across two drive
+        cycles is one attempt, two event_ids for one candidate are two, and
+        one candidate without an event_id across two cycles is one. Blocked
+        attempts come from iterations.jsonl alone, so snapshots of the
+        blocked state add nothing.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp, max_iterations=1)
+            append_iteration(loop, "blocked", stop_reason="no route left")
+            finalize_error = self._event(
+                "result_review_error",
+                event_id="result-review-finalize-error-cand-1",
+                candidate_id="cand-1",
+            )
+            snapshot = self._event("iteration", decision="blocked", status="blocked")
+            terminal = self._event("terminal", decision="blocked", status="blocked")
+            failed = self._event("iteration_failed", failure_class="timeout", drive_cycle=1)
+
+            def review_error(cycle: int, candidate: str, event_id: str = "", **fields: Any) -> dict[str, Any]:
+                if event_id:
+                    fields["event_id"] = event_id
+                return self._event(
+                    "result_review_error", candidate_id=candidate, drive_cycle=cycle, **fields
+                )
+
+            self._log(
+                loop,
+                [
+                    self._start("2026-11-10T00:00:00Z"),
+                    snapshot,
+                    snapshot,
+                    terminal,
+                    finalize_error,
+                    finalize_error,
+                    finalize_error,
+                    self._start("2026-11-10T02:00:00Z"),
+                    snapshot,
+                    finalize_error,
+                    failed,
+                    failed,
+                    terminal,
+                    review_error(5, "cand-2", "result-review-finalize-error-cand-2"),
+                    review_error(6, "cand-2", "result-review-finalize-error-cand-2"),
+                    review_error(5, "cand-2", "dispatch-attestation-error-cand-2"),
+                    review_error(7, "cand-3", error_class="review_timeout"),
+                    review_error(8, "cand-3", error_class="review_timeout"),
+                    self._event("quota_wait", drive_cycle=9),
+                ],
+            )
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                summary["groups"],
+                [
+                    {"kind": "host_review_error", "class": "result-review-finalize-error", "count": 3},
+                    {"kind": "blocked", "class": "no_route_left", "count": 1},
+                    {"kind": "host_review_error", "class": "dispatch-attestation-error", "count": 1},
+                    {"kind": "host_review_error", "class": "review_timeout", "count": 1},
+                    {"kind": "outage", "class": "quota", "count": 1},
+                    {"kind": "worker_failure", "class": "timeout", "count": 1},
+                ],
+            )
+            self.assertEqual(summary["n"], 7)
+            self.assertIsNone(summary["advice"])
+
+    def test_missing_staged_candidate_errors_group_by_event_id_stem(self) -> None:
+        """Three missing-staged-candidate errors form one host_review_error group and give the advice.
+
+        The class is error_class, else failure_class, else the event_id
+        without its variable tail; a class that is not one short lowercase
+        token, and an event_id longer than 200 characters, read unclassified.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            self._log(
+                loop,
+                [
+                    self._start(),
+                    *(
+                        self._event(
+                            "result_review_error",
+                            event_id=f"missing-staged-candidate-{n}",
+                            drive_cycle=n,
+                        )
+                        for n in (1, 2, 3)
+                    ),
+                ],
+            )
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                summary["groups"],
+                [{"kind": "host_review_error", "class": "missing-staged-candidate", "count": 3}],
+            )
+            self.assertEqual(
+                summary["advice"],
+                {
+                    "kind": "host_review_error",
+                    "class": "missing-staged-candidate",
+                    "count": 3,
+                    "n": 3,
+                    "text": self.ADVICE,
+                },
+            )
+            self.assertIn(
+                "| Host note (information only): host_review_error/missing-staged-candidate "
+                "holds 3 of the last 3 recorded failures.",
+                arl.iteration_prompt(loop),
+            )
+
+            self._log(
+                loop,
+                [
+                    self._start(),
+                    self._event(
+                        "result_review_error",
+                        error_class="Finalize_Conflict",
+                        failure_class="ignored",
+                        event_id="result-review-finalize-error-x",
+                        drive_cycle=1,
+                    ),
+                    self._event("result_review_error", failure_class="review_timeout", drive_cycle=2),
+                    self._event(
+                        "result_review_error",
+                        event_id="dispatch-attestation-error-0a1b2c3d-1111-4222-8333-444455556666",
+                        drive_cycle=3,
+                    ),
+                    self._event("result_review_error", event_id="goal-focus-missing-pending-r12", drive_cycle=4),
+                    self._event("result_review_error", error_class="Not a token!", drive_cycle=5),
+                    self._event("result_review_error", error_class="x" * 65, drive_cycle=6),
+                    self._event("result_review_error", event_id="7", drive_cycle=7),
+                    self._event("result_review_error", drive_cycle=8),
+                    # An event id past 200 characters is not read for a stem.
+                    self._event(
+                        "result_review_error",
+                        event_id="missing-staged-candidate" + "-1" * 100,
+                        drive_cycle=9,
+                    ),
+                ],
+            )
+            classes = {group["class"]: group["count"] for group in self._groups(arl, loop)["groups"]}
+            self.assertEqual(
+                classes,
+                {
+                    "finalize_conflict": 1,
+                    "review_timeout": 1,
+                    "dispatch-attestation-error": 1,
+                    "goal-focus-missing-pending": 1,
+                    "unclassified": 5,
+                },
+            )
+
+    def test_lines_that_cannot_be_read_are_skipped(self) -> None:
+        """A line that is not JSON, not an object, nested past the recursion limit or holding an over-long integer is skipped.
+
+        Fields of the wrong type never raise: a list-valued class or event id
+        reads unclassified, and a list-valued drive_cycle gives no identity.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            self._log(
+                loop,
+                [
+                    self._start(),
+                    "{not json",
+                    "[1, 2]",
+                    "[" * 10_000 + "]" * 10_000,
+                    '{"event": "iteration_failed", "failure_class": "failure", "drive_cycle": '
+                    + "9" * 5000
+                    + "}",
+                    b"\xff\xfe" + b'{"event": "iteration_failed", "failure_class": "failure"}',
+                    {"event": ["iteration_failed"], "failure_class": "failure", "drive_cycle": 50},
+                    {"event": "iteration_failed", "failure_class": ["timeout"], "drive_cycle": [1]},
+                    {"event": "result_review_error", "event_id": {"x": 1}, "error_class": ["a"], "candidate_id": [2]},
+                    {"event": "iteration_rejected", "event_id": 7, "candidate_id": {"c": 1}, "drive_cycle": True},
+                    *(
+                        self._event("iteration_failed", failure_class="failure", drive_cycle=n)
+                        for n in (1, 2, 3)
+                    ),
+                ],
+            )
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                summary["groups"],
+                [
+                    {"kind": "worker_failure", "class": "failure", "count": 3},
+                    {"kind": "host_review_error", "class": "unclassified", "count": 1},
+                    {"kind": "rejected", "class": "result_rejected", "count": 1},
+                    {"kind": "worker_failure", "class": "unclassified", "count": 1},
+                ],
+            )
+            self.assertEqual(summary["n"], 5)
+            self.assertEqual(summary["advice"]["class"], "failure")
+
+    def test_only_the_last_window_of_the_log_is_read(self) -> None:
+        """Only the last 262,144 bytes of progress.jsonl count, and a line the window starts inside is dropped.
+
+        A line that starts exactly at the window's first byte is kept.
+        """
+        arl = self._runtime()
+        window = arl.FAILURE_GROUP_WINDOW_BYTES
+        self.assertEqual(window, 262_144)
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            old = [
+                self._start("2026-11-10T00:00:00Z"),
+                *(self._event("iteration_failed", failure_class="timeout", drive_cycle=n) for n in (1, 2, 3)),
+            ]
+            padding = [self._event("iteration_ok", drive_cycle=n, text="x" * 1000) for n in range(300)]
+            recent = [
+                self._start("2026-11-10T05:00:00Z"),
+                self._event("iteration_failed", failure_class="failure", drive_cycle=1),
+            ]
+            self._log(loop, [*old, *padding, *recent])
+            self.assertGreater((loop / "driver_logs" / "progress.jsonl").stat().st_size, window)
+            self.assertEqual(
+                self._groups(arl, loop)["groups"],
+                [{"kind": "worker_failure", "class": "failure", "count": 1}],
+            )
+
+            # A line with leading spaces parses whole, and from its second byte on.
+            edge = "  " + json.dumps(self._event("iteration_failed", failure_class="timeout", drive_cycle=9))
+            prefix = json.dumps(self._event("iteration_ok", text="p" * 50))
+            empty_filler = json.dumps({"event": "iteration_ok", "text": ""})
+            for offset, count in ((0, 1), (1, 0)):
+                with self.subTest(offset=offset):
+                    room = window - len(edge) - 1 - len(empty_filler) - 1 + offset
+                    filler = json.dumps({"event": "iteration_ok", "text": "y" * room})
+                    path = self._log(loop, [prefix, edge, filler])
+                    self.assertEqual(
+                        path.stat().st_size - window, len(prefix) + 1 + offset
+                    )
+                    groups = self._groups(arl, loop)["groups"]
+                    self.assertEqual(
+                        [g["count"] for g in groups if g["class"] == "timeout"],
+                        [count] if count else [],
+                    )
+
+    def test_advice_needs_half_of_the_ten_most_recent_attempts(self) -> None:
+        """The advice needs at least 3 attempts and at least half of the 10 most recent; older attempts never count toward N.
+
+        Four timeouts among ten attempts do not advise. Five timeouts after
+        ten outages do: the ten most recent hold five of each.
+        """
+        arl = self._runtime()
+        cases = (
+            ("four of ten", 6, 4, None),
+            ("five of the last ten", 10, 5, ("timeout", 5, 10)),
+        )
+        for label, outages, timeouts, expected in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = self._loop(arl, tmp)
+                lines: list[Any] = [self._start()]
+                lines += [self._event("quota_wait", drive_cycle=n) for n in range(1, outages + 1)]
+                lines += [
+                    self._event("iteration_failed", failure_class="timeout", drive_cycle=n)
+                    for n in range(outages + 1, outages + timeouts + 1)
+                ]
+                self._log(loop, lines)
+                summary = self._groups(arl, loop)
+                self.assertEqual(summary["n"], 10)
+                advice = summary["advice"]
+                if expected is None:
+                    self.assertIsNone(advice)
+                else:
+                    self.assertEqual(
+                        (advice["class"], advice["count"], advice["n"]), expected
+                    )
+
+    def test_top_eight_groups_and_other_count(self) -> None:
+        """status lists the eight largest groups and counts the attempts in the rest as other_count."""
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            lines: list[Any] = [self._start()]
+            cycle = 0
+            for index in range(10):
+                for _ in range(index + 1):
+                    cycle += 1
+                    lines.append(
+                        self._event("result_review_error", error_class=f"e{index}", drive_cycle=cycle)
+                    )
+            self._log(loop, lines)
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                [(group["class"], group["count"]) for group in summary["groups"]],
+                [(f"e{index}", index + 1) for index in range(9, 1, -1)],
+            )
+            self.assertEqual(summary["other_count"], 1 + 2)
+            self.assertEqual(summary["n"], 10)
+            self.assertEqual(
+                (summary["advice"]["class"], summary["advice"]["count"]), ("e9", 10)
+            )
+
+    def test_a_sensitive_class_withholds_the_note(self) -> None:
+        """A class that the sensitive-content check flags keeps the note out of the prompt; status still shows the advice.
+
+        progress.jsonl is writable by the worker, so its text never reaches
+        the prompt unchecked: the prompt still passes the dispatch check.
+        """
+        arl = self._runtime()
+        flagged = "to" + "ken:" + "a" * 12
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            self._log(
+                loop,
+                [
+                    self._start(),
+                    *(
+                        self._event("result_review_error", error_class=flagged, drive_cycle=n)
+                        for n in (1, 2, 3)
+                    ),
+                ],
+            )
+            self.assertEqual(self._groups(arl, loop)["advice"]["class"], flagged)
+            prompt = arl.iteration_prompt(loop)
+            self.assertNotIn(self.NOTE_PREFIX, prompt)
+            arl.assert_panel_prompt_safe(prompt, environ={})
+
+    @unittest.skipUnless(os.name == "posix", "symbolic links and FIFOs need POSIX")
+    def test_a_linked_or_special_progress_log_is_not_read(self) -> None:
+        """A progress log that is a link, sits under a linked directory or is a FIFO is never read, and a FIFO never blocks."""
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            elsewhere = self._log(
+                outside,
+                [
+                    self._start(),
+                    *(self._event("iteration_failed", failure_class="failure", drive_cycle=n) for n in (1, 2, 3)),
+                ],
+            )
+            logs = loop / "driver_logs"
+            logs.mkdir()
+            (logs / "progress.jsonl").symlink_to(elsewhere)
+            summary = self._groups(arl, loop)
+            self.assertEqual(
+                (summary["progress_log"], summary["groups"], summary["advice"]),
+                ("unreadable", [], None),
+            )
+            self.assertNotIn(self.NOTE_PREFIX, arl.iteration_prompt(loop))
+            (logs / "progress.jsonl").unlink()
+            logs.rmdir()
+            logs.symlink_to(elsewhere.parent)
+            self.assertEqual(self._groups(arl, loop)["progress_log"], "unreadable")
+            logs.unlink()
+
+            logs.mkdir()
+            fifo = logs / "progress.jsonl"
+            os.mkfifo(fifo)
+            outcome: dict[str, Any] = {}
+            reader = threading.Thread(
+                target=lambda: outcome.update(groups=arl.failure_groups(loop)), daemon=True
+            )
+            reader.start()
+            reader.join(timeout=20)
+            if reader.is_alive():
+                release = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.close(release)
+                reader.join(timeout=5)
+                self.fail("a FIFO at driver_logs/progress.jsonl blocked the reader")
+            self.assertEqual(outcome["groups"]["progress_log"], "unreadable")
+            fifo.unlink()
+            self.assertEqual(self._groups(arl, loop)["progress_log"], "absent")
+
+    def test_compute_done_ignores_failure_groups(self) -> None:
+        """compute_done gives the same verdict with or without a log whose groups advise stopping (regression check)."""
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = self._loop(arl, tmp)
+            before = arl.compute_done(loop)
+            self._log(
+                loop,
+                [
+                    self._start(),
+                    *(self._event("iteration_failed", failure_class="failure", drive_cycle=n) for n in (1, 2, 3)),
+                ],
+            )
+            self.assertIsNotNone(self._groups(arl, loop)["advice"])
+            self.assertEqual(arl.compute_done(loop), before)

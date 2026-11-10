@@ -422,12 +422,12 @@ blindness, and endpoint-constrained egress; because that complete boundary is
 not yet implemented, strict-isolated/default real panels fail closed before
 spawn. Injected runners remain available only for offline contract tests.
 
-Rejected work remains auditable: its real iteration, token, and USD deltas count
-against budget, while its duration, executor, and compute provenance remain on
-the rejected ledger row. It banks no claim, clears obligation transitions,
-records `campaign_delta: none` and `global_delta: none`, and moves the default
-plan to `needs_replan`. Never describe a rejected candidate as a completed
-research result.
+Rejected work remains auditable: its iteration delta and reported token and USD
+amounts count against budget, while its duration, executor, and compute
+provenance remain on the rejected ledger row. It banks no claim, clears
+obligation transitions, records `campaign_delta: none` and `global_delta: none`,
+and moves the default plan to `needs_replan`. Never describe a rejected
+candidate as a completed research result.
 
 For accepted work, record two separate deltas:
 

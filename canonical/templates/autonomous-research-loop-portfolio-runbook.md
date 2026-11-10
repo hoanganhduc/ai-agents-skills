@@ -136,8 +136,8 @@ budget and credit state stay in this runbook.
 | `max_portfolio_approaches` |  | Max distinct live approaches held at once in portfolio mode. |
 | `max_child_workers` |  | Max concurrent subagents per loop (portfolio fan-out cap; from `budget.json`). |
 | `max_wall_minutes` |  |  |
-| `max_usd` |  | Hard spend cap; hitting it is terminal condition (c). `0.0` or null is the uncapped sentinel: (c) cannot fire on it even when `spent_usd` is positive. |
-| `max_tokens` |  | Hard token cap; hitting it is terminal condition (c). Same sentinel rule: `0` or null means uncapped. |
+| `max_usd` |  | User-set spend cap; hitting it is terminal condition (c). `0.0` or null is the uncapped sentinel: (c) cannot fire on it even when `spent_usd` is positive. The cap is accounting over self-reported usage between iterations, not a spending limit: `spent_usd` adds the `--usd` amounts iterations report, and an iteration that reports none is recorded as `unreported` and adds nothing. |
+| `max_tokens` |  | User-set token cap; hitting it is terminal condition (c). Same sentinel rule: `0` or null means uncapped. Same accounting rule over the `--tokens` amounts iterations report. |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
 | `compute_guard_status` |  | Record each attempted lane and its applicable guard: Kaggle owner/bundle/intent checks, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle live execution is one-unit CPU only; GPU and multi-run are planning-only. A failed lane falls through to the next permitted lane. |
 | `credit_checked_at` |  | Timestamp of the last applicable budget, quota, or teardown-guard check. |
