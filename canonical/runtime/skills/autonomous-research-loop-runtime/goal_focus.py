@@ -1873,13 +1873,17 @@ def _approach_mechanism_fingerprint(approach: Mapping[str, Any]) -> str:
     """The fingerprint of an approach's mechanism text, or "" when it has none to compare.
 
     Empty text and the migration placeholder are not mechanisms, so they never
-    match each other.
+    match each other. Text that cannot be encoded as UTF-8, such as a lone
+    surrogate, has no fingerprint and is compared with nothing either.
     """
 
     text = approach.get("mechanism")
     if not isinstance(text, str):
         return ""
-    fingerprint = ns.mechanism_fingerprint(text)
+    try:
+        fingerprint = ns.mechanism_fingerprint(text)
+    except UnicodeEncodeError:
+        return ""
     if fingerprint in {
         ns.mechanism_fingerprint(""),
         ns.mechanism_fingerprint(LEGACY_MECHANISM_PLACEHOLDER),

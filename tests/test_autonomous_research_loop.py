@@ -10130,6 +10130,82 @@ class NegativeSpaceCommandTests(unittest.TestCase):
             )
             self.assertEqual(ledger.read_bytes(), before)
 
+    def test_a_mechanism_holding_a_lone_surrogate_is_refused_before_anything_is_written(self) -> None:
+        """negative-space add and the dead-end flags refuse a mechanism that cannot be encoded as UTF-8.
+
+        A lone surrogate, as a command line with bytes that are not UTF-8
+        gives on POSIX, leaves no fingerprint to compare, so the row is
+        refused with negative_space_mechanism_not_utf8 and nothing is
+        written; main reports the code in its structured failure. The calls
+        run in-process, since not every platform's command line carries a
+        lone surrogate.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        mechanism = "Induction on the number of colours \udcff"
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+            add_argv = [
+                "negative-space",
+                "add",
+                "--dir",
+                str(run_dir),
+                "--kind",
+                "dead_end",
+                "--mechanism",
+                mechanism,
+                "--failure",
+                "the inductive step loses a colour",
+                "--reopen-condition",
+                "a different invariant",
+                "--evidence-id",
+                "E1",
+            ]
+            with self.subTest("negative-space add"):
+                with self.assertRaises(arl.GuardError) as caught:
+                    arl.negative_space_add_command(arl.build_parser().parse_args(add_argv))
+                self.assertEqual(caught.exception.payload["code"], "negative_space_mechanism_not_utf8")
+                self.assertIn("lone surrogate", str(caught.exception))
+                shown = io.StringIO()
+                with contextlib.redirect_stdout(shown):
+                    returncode = arl.main(add_argv)
+                self.assertEqual(returncode, 1)
+                failure = json.loads(shown.getvalue())
+                self.assertEqual(
+                    (failure["status"], failure["code"]),
+                    ("failed", "negative_space_mechanism_not_utf8"),
+                )
+                self.assertFalse(self._ledger(run_dir).exists())
+            with self.subTest("append-iteration --dead-end-mechanism"):
+                before = (run_dir / "iterations.jsonl").read_bytes()
+                flags = list(self.DEAD_END_FLAGS)
+                flags[3] = mechanism
+                args = arl.build_parser().parse_args(
+                    [
+                        "append-iteration",
+                        "--dir",
+                        str(run_dir),
+                        "--mode",
+                        "bounded-research",
+                        "--objective",
+                        "try the inductive route",
+                        "--decision",
+                        "continue",
+                        "--evidence-id",
+                        "E1",
+                        *flags,
+                    ]
+                )
+                with self.assertRaises(arl.GuardError) as caught:
+                    arl.append_iteration(args)
+                self.assertEqual(caught.exception.payload["code"], "negative_space_mechanism_not_utf8")
+                self.assertEqual((run_dir / "iterations.jsonl").read_bytes(), before)
+                self.assertFalse(self._ledger(run_dir).exists())
+
     def test_dead_end_flags_on_append_iteration(self) -> None:
         """The four dead-end flags come together and record a worker row with the iteration.
 
@@ -10398,10 +10474,11 @@ class NegativeSpaceCommandTests(unittest.TestCase):
     def test_mediated_worker_checks_the_dead_end_row_before_its_one_submission(self) -> None:
         """Under host mediation the worker runs the host's row checks before it writes its one submission.
 
-        A blank or whitespace-only field and a falsified_hypothesis citing
-        plain evidence are refused with the host's errors and codes while no
-        submission exists, so the corrected resubmission is written and the
-        host stages it. The --dead-end-kind help states the artifact rule.
+        A blank or whitespace-only field, a falsified_hypothesis citing plain
+        evidence and a mechanism holding a lone surrogate are refused with the
+        host's errors and codes while no submission exists, so the corrected
+        resubmission is written and the host stages it. The --dead-end-kind
+        help states the artifact rule.
         """
         runtime = HELPER.parent
         if str(runtime) not in sys.path:
@@ -10421,6 +10498,11 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                 flags_with(1, "falsified_hypothesis"),
                 "proof artifact",
                 "negative_space_falsified_hypothesis_needs_artifact",
+            ),
+            "mechanism holding a lone surrogate": (
+                flags_with(3, "Induction on the number of colours \udcff"),
+                "lone surrogate",
+                "negative_space_mechanism_not_utf8",
             ),
         }
         for label, (flags, message, code) in refusals.items():

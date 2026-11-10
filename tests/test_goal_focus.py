@@ -4968,6 +4968,102 @@ class GoalFocusNegativeSpaceWriterTests(_AttestedGoalFocusTestCase):
             ],
         )
 
+    def test_mechanism_text_with_a_lone_surrogate_reads_as_no_mechanism(self) -> None:
+        """An approach mechanism that cannot be encoded as UTF-8 is compared with nothing, like a missing one, and nothing raises.
+
+        The registry holds an eligible approach whose mechanism has a lone
+        surrogate (JSON \\ud800), a blocked approach with another, and an
+        eligible approach repeating the blocked one's text. In monitor and
+        enforce mode, validate_goal_focus, pre_dispatch_gate and
+        validate_loop_dir give the results the same registry without
+        mechanism text gives, with the warning that counts eligible
+        approaches without mechanism text, and select_direction and
+        dead_mechanism_warnings report no duplicate. In monitor mode
+        validate_loop_dir passes and the next append succeeds; in enforce mode
+        both registries carry the same unrelated error, since the fixture
+        installs them without a new direction decision.
+        """
+        estimates = {
+            "goal_resolution": "high",
+            "information_gain": "medium",
+            "execution_cost": "low",
+            "verification_cost": "low",
+        }
+        common = {
+            "campaign_id": "C1",
+            "objective": "Discharge the terminal obligation",
+            "target_obligation_ids": ["GOAL-SC-1"],
+            "next_action": "Prove the bounded bridge lemma.",
+            "scope_lock": "full_goal",
+            "estimates": estimates,
+        }
+        for mode in ("monitor", "enforce"):
+            results: dict[bool, tuple] = {}
+            for with_text in (True, False):
+                with self.subTest(mode=mode, with_text=with_text), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp) / "loop"
+                    init_args = rt.selftest_init_args(root, max_iterations=4)
+                    init_args.goal_focus_mode = mode
+
+                    def text(mechanism: str) -> dict:
+                        return {"mechanism": mechanism} if with_text else {}
+
+                    rt.init_loop(init_args)
+                    _install_approaches(
+                        root,
+                        {
+                            "A1": {**common, **text("induction on the \ud800 colours")},
+                            "A2": {
+                                **common,
+                                "status": "blocked",
+                                "reopen_condition": "a different invariant",
+                                **text("pigeonhole \udcff count"),
+                            },
+                            "A3": {**common, **text("pigeonhole \udcff count")},
+                        },
+                    )
+                    validation = gf.validate_goal_focus(root, require_enabled=True)
+                    self.assertIn(
+                        "eligible approaches without mechanism text: 2 "
+                        "(duplicate_of_dead_mechanism cannot compare them)",
+                        validation["warnings"],
+                    )
+                    gate = gf.pre_dispatch_gate(root)
+                    registry = gf.load_approach_registry(root)
+                    results[with_text] = (
+                        validation["status"],
+                        validation["errors"],
+                        validation["warnings"],
+                        gate["ok"],
+                        gate["action"],
+                        gate["errors"],
+                        gate["authority_errors"],
+                        gate["warnings"],
+                        gf.select_direction(registry, run_dir=root)["mechanism_warnings"],
+                        gf.dead_mechanism_warnings(registry, run_dir=root),
+                        rt.validate_loop_dir(root)["errors"],
+                    )
+                    if mode == "monitor":
+                        self.assertEqual(results[with_text][10], [])
+                        args = rt.build_parser().parse_args(
+                            [
+                                "append-iteration",
+                                "--dir",
+                                str(root),
+                                "--mode",
+                                "bounded-research",
+                                "--objective",
+                                "a bounded step",
+                                "--decision",
+                                "continue",
+                            ]
+                        )
+                        self.assertEqual(rt.append_iteration(args)["status"], "ok")
+            with self.subTest(mode=mode, compared="with and without mechanism text"):
+                self.assertEqual(set(results), {True, False})
+                self.assertEqual(results[True], results[False])
+                self.assertEqual(results[True][8:10], ([], []))
+
     def test_worker_rows_then_enforce_still_dispatch(self) -> None:
         """Two duplicate worker rows recorded under monitor neither fail enforce validation nor block dispatch."""
         with tempfile.TemporaryDirectory() as tmp:

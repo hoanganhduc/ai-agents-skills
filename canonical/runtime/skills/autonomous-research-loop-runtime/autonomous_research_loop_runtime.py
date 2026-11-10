@@ -2300,8 +2300,18 @@ def _worker_negative_space_row(
     an evidence id naming a sagemath or python-verifier proof artifact that
     validate_proof_artifact accepts, with no evidence_absent_reason. The worker
     declared that artifact, so the row records checker_basis self_reported.
+    Mechanism text that cannot be encoded as UTF-8, such as a lone surrogate,
+    has no fingerprint to compare and is refused.
     """
 
+    try:
+        negative_space.mechanism_fingerprint(mechanism)
+    except UnicodeEncodeError:
+        raise GuardError(
+            "the dead-end mechanism holds a lone surrogate, which cannot be encoded "
+            "as UTF-8, so it has no fingerprint to compare; nothing was written",
+            code="negative_space_mechanism_not_utf8",
+        ) from None
     checker_basis = None
     if str(kind or "").strip().lower() == "falsified_hypothesis":
         if str(evidence_absent_reason or "").strip():

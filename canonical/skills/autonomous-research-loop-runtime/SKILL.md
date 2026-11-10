@@ -746,8 +746,13 @@ warning.
   list of strings, whose kind or `checker_basis` the ledger does not accept, or
   that is a `falsified_hypothesis` without `checker_basis: self_reported`. A
   worker under host mediation is refused an invalid row (incomplete flags, a
-  blank field, no evidence, or a `falsified_hypothesis` without its artifact)
-  before it writes its one submission, and the host checks the row again.
+  blank field, no evidence, a mechanism that cannot be encoded as UTF-8, or a
+  `falsified_hypothesis` without its artifact) before it writes its one
+  submission, and the host checks the row again.
+- `negative-space add` and the dead-end flags refuse a mechanism that cannot be
+  encoded as UTF-8, such as one holding a lone surrogate, since it has no
+  fingerprint to compare; nothing is written
+  (`negative_space_mechanism_not_utf8`).
 - A dead end that repeats an open row (same approach and mechanism
   fingerprint) is still recorded, or staged, as the advisory worker row it is:
   the command's `warnings` carry `negative_space_duplicate_open_row` with the
@@ -776,9 +781,10 @@ and spacing normalized) equals that of a blocked or closed approach, or of an
 open row, is reported as `duplicate_of_dead_mechanism:<id>` (the approach id or
 the row's entry_id) in the selection's `mechanism_warnings`, in `goal-focus
 replan --dry-run` and in `goal-focus status`, which also counts
-`omitted_open_entries`; the approach stays eligible. Empty mechanism text and
-the migration placeholder never match, and registry validation warns once with
-the number of eligible approaches that have no mechanism text. To retry a dead
+`omitted_open_entries`; the approach stays eligible. Empty mechanism text, the
+migration placeholder and text that cannot be encoded as UTF-8 (a lone
+surrogate) never match, and registry validation warns once with the number of
+eligible approaches that have no mechanism text to compare. To retry a dead
 route, register a new approach id with a changed mechanism; reopening a blocked
 id still needs a different-family review, and there is no reopen verb.
 
