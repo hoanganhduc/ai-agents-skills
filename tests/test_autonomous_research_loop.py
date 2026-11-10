@@ -11229,6 +11229,138 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                     ("falsified_hypothesis", "self_reported", ["sage-search"]),
                 )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "a host-mediated submission is written and claimed through POSIX directory "
+        "descriptors, and a directory name ending in a space is a POSIX name",
+    )
+    def test_mediated_worker_takes_a_nonblank_autoloop_dir_exactly_as_given(self) -> None:
+        """A mediated worker trims AUTOLOOP_DIR only to tell whether it is blank, and looks in a nonblank one as given.
+
+        A POSIX directory name may end in a space, and the drive names the run
+        directory it dispatched in AUTOLOOP_DIR. With the sagemath artifact in
+        a dispatched loop named "loop " and --dir naming another directory, the
+        worker writes its one submission and the host stages it; a trimmed
+        value would send the lookup to "loop", which does not exist, and the
+        row would be refused. A whitespace-only AUTOLOOP_DIR counts as absent,
+        so the worker looks in its --dir: that case is a regression check.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+
+        flags = list(self.DEAD_END_FLAGS)
+        flags[1] = "falsified_hypothesis"
+        # Per case: the name of the dispatched loop, which holds the artifact,
+        # the value of AUTOLOOP_DIR (None: that loop's path), and the
+        # directory the worker's --dir names.
+        cases = {
+            "dispatched loop name ending in a space": ("loop ", None, "elsewhere"),
+            "AUTOLOOP_DIR whitespace only (regression check)": ("loop", " \t ", "loop"),
+        }
+        for label, (loop_name, autoloop_dir, worker_dir) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                directories = {
+                    "loop": Path(tmp) / loop_name,
+                    "elsewhere": Path(tmp) / "elsewhere",
+                }
+                loop = directories["loop"]
+                init_args = arl.selftest_init_args(loop, max_iterations=3)
+                init_args.goal_focus_mode = "enforce"
+                arl.init_loop(init_args)
+                RuntimeGoalFocusIntegrationTests._activate_single_direction(arl, gf, loop)
+                directories["elsewhere"].mkdir()
+                source = Path(tmp) / "search.sage"
+                # The file holds no counterexample: the artifact only declares one.
+                source.write_text("# searched graphs up to 8 vertices\n", encoding="utf-8")
+                staged_proof = arl.stage_proof_command(
+                    arl.build_parser().parse_args(
+                        [
+                            "stage-proof",
+                            "--dir",
+                            str(loop),
+                            "--id",
+                            "sage-search",
+                            "--file",
+                            str(source),
+                            "--artifact-type",
+                            "sagemath",
+                            "--target",
+                            "every planar graph on at most 8 vertices is 3-colourable",
+                            "--checker-name",
+                            "sage",
+                            "--checker-status",
+                            "passed",
+                        ]
+                    )
+                )
+                self.assertEqual(staged_proof["status"], "ok", staged_proof)
+                dispatch = gf.prepare_iteration_dispatch(
+                    loop,
+                    executor_provider="claude",
+                    executor_family="anthropic",
+                    executor_attestation=_provider_attestation("claude", loop),
+                    started_at="2026-07-29T12:00:00Z",
+                )["dispatch"]
+                write_text_evidence(loop, dispatch, "sage-search")
+                evidence_dir = Path(os.path.abspath(loop / str(dispatch["evidence_root"])))
+                submission = evidence_dir / arl.ITERATION_SUBMISSION_FILENAME
+                worker_environment = {
+                    "AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION": "1",
+                    "AAS_AUTOLOOP_EVIDENCE_DIR": str(evidence_dir),
+                    "AAS_AUTOLOOP_EVIDENCE_ROOT": str(evidence_dir),
+                    "AAS_AUTOLOOP_RUN_ID": "run-refutation",
+                    "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                    "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                    "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                    "AUTOLOOP_DIR": str(loop) if autoloop_dir is None else autoloop_dir,
+                }
+                args = arl.build_parser().parse_args(
+                    [
+                        "append-iteration",
+                        "--dir",
+                        str(directories[worker_dir]),
+                        "--mode",
+                        "bounded-research",
+                        "--objective",
+                        "test the 3-colouring hypothesis",
+                        "--decision",
+                        "revise",
+                        "--claim-id",
+                        "refutation-claim",
+                        "--evidence-id",
+                        "sage-search",
+                        "--compute-none",
+                        *flags,
+                    ]
+                )
+                with mock.patch.dict(os.environ, worker_environment):
+                    written = arl.append_iteration(args)
+                self.assertEqual(written["action"], "submit-iteration", written)
+                self.assertTrue(submission.is_file())
+                consumed = arl.consume_iteration_submission(
+                    loop,
+                    evidence_dir,
+                    expected_run_id="run-refutation",
+                    expected_dispatch_id=dispatch["dispatch_id"],
+                    expected_candidate_id=dispatch["candidate_id"],
+                    expected_provider="claude",
+                    iteration_started_at="2026-07-29T12:00:00Z",
+                    resource_attestation=_primary_resource_attestation(),
+                )
+                self.assertEqual(consumed["staging_status"], "staged", consumed)
+                staged_row = consumed["candidate"]["candidate"]["record"]["negative_space"]
+                self.assertEqual(
+                    (
+                        staged_row["kind"],
+                        staged_row["checker_basis"],
+                        staged_row["evidence_ids"],
+                    ),
+                    ("falsified_hypothesis", "self_reported", ["sage-search"]),
+                )
+
     def test_falsified_hypothesis_is_artifact_declared_and_self_reported(self) -> None:
         """A refutation row cites a sagemath or python-verifier artifact, is self-reported, and re-runs nothing."""
         runtime = HELPER.parent

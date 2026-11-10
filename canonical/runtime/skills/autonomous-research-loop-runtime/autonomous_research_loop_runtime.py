@@ -2439,12 +2439,15 @@ def append_iteration(
         # writing it; the host checks the row again. The request carries no
         # directory: the host checks a refutation artifact in the run
         # directory it dispatched, which the drive names in AUTOLOOP_DIR, so
-        # the worker looks there too, and in its --dir only without one.
+        # the worker looks there too, and in its --dir only without one. A
+        # blank AUTOLOOP_DIR counts as absent; any other value is used as
+        # given, since a directory name may end in whitespace.
         dead_end_flags = _dead_end_flags(args)
         if dead_end_flags is not None:
-            dispatched_dir = str(os.environ.get("AUTOLOOP_DIR") or "").strip()
+            dispatched_dir = str(os.environ.get("AUTOLOOP_DIR") or "")
+            artifact_dir = dispatched_dir if dispatched_dir.strip() else args.dir
             _worker_negative_space_row(
-                Path(dispatched_dir or args.dir).expanduser().resolve(),
+                Path(artifact_dir).expanduser().resolve(),
                 kind=dead_end_flags["dead_end_kind"],
                 mechanism=dead_end_flags["dead_end_mechanism"],
                 failure=dead_end_flags["dead_end_failure"],
