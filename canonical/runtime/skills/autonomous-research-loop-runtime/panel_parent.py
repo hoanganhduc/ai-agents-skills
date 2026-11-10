@@ -4569,6 +4569,37 @@ def negative_knowledge_lines(
     return assemble(shown, len(rows) - len(shown) - withheld_rows, hidden)
 
 
+def _negative_knowledge_or_notice(
+    run_dir: Path,
+    *,
+    registry: Any = None,
+    approach_id: str | None = None,
+    max_chars: int,
+    environ: Mapping[str, str] | None = None,
+    note: str = "",
+) -> list[str]:
+    """negative_knowledge_lines for a brief that goes on when the ledger cannot be read safely.
+
+    Such a ledger gives the heading and NEGATIVE_KNOWLEDGE_UNREADABLE instead
+    of raising, or [] when the two lines do not fit ``max_chars``. The target
+    and review briefs use it, as the iteration prompt shows its own notice;
+    only the strategy brief still refuses that ledger.
+    """
+
+    try:
+        return negative_knowledge_lines(
+            run_dir,
+            registry=registry,
+            approach_id=approach_id,
+            max_chars=max_chars,
+            environ=environ,
+            note=note,
+        )
+    except PanelArtifactError:
+        lines = [NEGATIVE_KNOWLEDGE_HEADING, NEGATIVE_KNOWLEDGE_UNREADABLE]
+        return lines if len("\n".join(lines)) <= max_chars else []
+
+
 def _pointer_lineage(row: Mapping[str, Any]) -> str:
     """A pointer's lineage: the row's approach_id, else its campaign_id, else "loop".
 
@@ -5216,7 +5247,9 @@ def build_target_brief(
     negative-knowledge block for the plan's approach, the pointers and the
     recovery excerpt then take what is left, in that order, while a heading and
     a cut marker stay reserved for the excerpt. Every cut, including a head that
-    alone overflows, ends with "[cut: N characters omitted]".
+    alone overflows, ends with "[cut: N characters omitted]". A ledger that
+    cannot be read safely gives the block's heading and an unreadable line
+    instead of rows.
     """
     parts: list[str] = [
         "# Panel target-advice brief (host parent)",
@@ -5301,7 +5334,7 @@ def build_target_brief(
             if plan_approach is None
             else None
         )
-        block = negative_knowledge_lines(
+        block = _negative_knowledge_or_notice(
             run_dir,
             registry=registry,
             approach_id=plan_approach,
@@ -5345,9 +5378,10 @@ def build_review_brief(
 
     In both branches the open dead ends of the candidate's approach, with an
     instruction to flag a repeat, and then the pointers outside its lineage
-    follow the candidate excerpt. They take only what the reviewed content
-    leaves under ``max_chars``, so only reviewed content can make the brief
-    refuse.
+    follow the candidate excerpt. A ledger that cannot be read safely gives the
+    dead ends' heading and an unreadable line instead. They take only what the
+    reviewed content leaves under ``max_chars``, so only reviewed content can
+    make the brief refuse.
     """
     _workspace_path(run_dir, iter_dir)
     _assert_real_directory(iter_dir)
@@ -5442,7 +5476,7 @@ def build_review_brief(
         at = extras_at
         approach_id = pending.get("approach_id")
         if isinstance(approach_id, str) and approach_id.strip():
-            block = negative_knowledge_lines(
+            block = _negative_knowledge_or_notice(
                 run_dir,
                 approach_id=approach_id.strip(),
                 max_chars=min(

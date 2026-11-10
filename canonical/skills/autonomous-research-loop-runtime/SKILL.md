@@ -816,8 +816,10 @@ point at earlier results:
 - The strategy-review brief adds, after the current plan, the
   `duplicate_of_dead_mechanism` warnings and the pointers, each from what is
   left under its limit.
-- The target and review briefs fail on a ledger that cannot be read safely,
-  as the strategy brief does.
+- A ledger that cannot be read safely gives the target and review briefs the
+  block's heading and the unreadable line above, when the two fit what is
+  left, instead of rows; both briefs still build. Only the strategy brief
+  refuses such a ledger.
 
 Every rendered row, warning and pointer goes through
 `panel_payload_sensitive_findings`. One that holds credential-like text or
