@@ -12027,27 +12027,29 @@ class LoopAccountingTests(unittest.TestCase):
         self.assertEqual(arl._validated_iteration_submission_request(saved), saved)
 
     def test_validate_refuses_null_amount_and_stored_unknown_status(self) -> None:
-        """validate_loop_dir refuses a null amount, a stored unknown status and a status that disagrees with its amount.
+        """validate_loop_dir refuses, on a row that stores a recording status, a null amount, a stored unknown status and a status that disagrees with its amount.
 
         Lists and objects in these fields give an error, never a TypeError,
         and a usd integer too large for a float gives an error instead of an
-        OverflowError. A null, object or infinite usd was refused before
-        (regression part), a null one with the general usd message where it
-        now gets its own. Rows written before the statuses existed, with or
-        without amounts, and rows whose statuses match their amounts still
-        validate (regression part).
+        OverflowError. A row written before the statuses existed keeps the usd
+        check it had: an object, infinite or too-large usd is refused there
+        with the general usd message (regression part, apart from the
+        OverflowError). Such rows, with or without amounts, and rows whose
+        statuses match their amounts still validate (regression part).
+        test_legacy_row_tokens_amount_reads_unknown_with_a_warning covers a
+        null usd and the tokens amount of a row without statuses.
         """
         arl = self._runtime()
         refused = {
-            "null usd": {"usd": None},
+            "null usd": {"usd": None, "usd_recording_status": "explicit"},
             "object usd": {"usd": {"amount": 1}},
             "infinite usd": {"usd": float("inf")},
             "huge usd": {"usd": 10**400},
-            "null tokens": {"tokens": None},
-            "list tokens": {"tokens": [1]},
-            "string tokens": {"tokens": "12"},
-            "negative tokens": {"tokens": -1},
-            "bool tokens": {"tokens": True},
+            "null tokens": {"tokens": None, "tokens_recording_status": "explicit"},
+            "list tokens": {"tokens": [1], "tokens_recording_status": "explicit"},
+            "string tokens": {"tokens": "12", "tokens_recording_status": "explicit"},
+            "negative tokens": {"tokens": -1, "tokens_recording_status": "explicit"},
+            "bool tokens": {"tokens": True, "tokens_recording_status": "explicit"},
             "stored unknown tokens": {"tokens_recording_status": "unknown"},
             "stored unknown usd": {"usd_recording_status": "unknown"},
             "list status": {"usd_recording_status": ["explicit"], "usd": 0.5},
@@ -12097,6 +12099,89 @@ class LoopAccountingTests(unittest.TestCase):
                             "amount is left out of the row"
                         ],
                     )
+
+    def test_legacy_row_tokens_amount_reads_unknown_with_a_warning(self) -> None:
+        """A row that stores no recording status keeps validating as it did before the statuses existed.
+
+        Its tokens amount was never checked: one that is null, a float, a
+        string, a boolean, negative or a list reads as unknown, validate_loop_dir
+        reports a warning and no error, status counts the row as unreported,
+        and the next append succeeds. Its usd amount keeps the check it had: a
+        null or negative usd still fails with the same message, and the next
+        append is still refused (regression part for the negative usd). A row
+        that stores a status keeps the full rule, so a null tokens amount there
+        still fails (regression part).
+        """
+        arl = self._runtime()
+        legacy_usd_error = "iteration 1 budget_delta.usd must be a finite non-negative number"
+        cases = {
+            "null tokens": ({"tokens": None, "usd": 0.0}, "is null"),
+            "float tokens": ({"tokens": 1200.0, "usd": 0.0}, "is not a non-negative integer"),
+            "string tokens": ({"tokens": "1200", "usd": 0.0}, "is not a non-negative integer"),
+            "bool tokens": ({"tokens": True}, "is not a non-negative integer"),
+            "negative tokens": ({"tokens": -5}, "is not a non-negative integer"),
+            "list tokens": ({"tokens": [1]}, "is not a non-negative integer"),
+            "null usd": ({"tokens": 0, "usd": None}, None),
+            "negative usd": ({"tokens": 0, "usd": -1}, None),
+            "status with null tokens": (
+                {
+                    "tokens": None,
+                    "tokens_recording_status": "explicit",
+                    "usd_recording_status": "unreported",
+                },
+                None,
+            ),
+        }
+        for label, (spend, warned) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                arl.init_loop(arl.selftest_init_args(loop, max_iterations=4))
+                row = iteration_record(1, "continue")
+                row["budget_delta"] = {"iterations": 1, "wall_time_seconds": 0, **spend}
+                write_iterations(loop, [row])
+                budget = read_loop_json(loop, "budget.json")
+                budget["spent_iterations"] = 1
+                write_loop_json(loop, "budget.json", budget)
+                state = read_loop_json(loop, "loop_state.json")
+                state.update(last_iteration=1, status="running")
+                write_loop_json(loop, "loop_state.json", state)
+                validation = arl.validate_loop_dir(loop)
+                spend_warnings = [
+                    warning
+                    for warning in validation["warnings"]
+                    if "budget_delta" in warning
+                ]
+                if warned is None:
+                    expected = (
+                        [
+                            "iteration 1 budget_delta.tokens is null; an unreported "
+                            "amount is left out of the row"
+                        ]
+                        if label == "status with null tokens"
+                        else [legacy_usd_error]
+                    )
+                    self.assertEqual(validation["errors"], expected)
+                    self.assertEqual(spend_warnings, [])
+                    with self.assertRaises(ValueError) as caught:
+                        self._append(arl, loop)
+                    self.assertIn("cannot append iteration before validation passes", str(caught.exception))
+                    self.assertEqual(len(self._rows(loop)), 1)
+                    continue
+                self.assertEqual(validation["errors"], [])
+                self.assertEqual(validation["status"], "ok")
+                self.assertEqual(
+                    spend_warnings,
+                    [
+                        f"iteration 1 budget_delta.tokens {warned}; the row stores no "
+                        "recording status, so the amount reads as unknown"
+                    ],
+                )
+                accounting = arl.status_command(argparse.Namespace(dir=str(loop)))["accounting"]
+                self.assertEqual(accounting["tokens"]["unreported_iterations"], 1)
+                appended = self._append(arl, loop, "--tokens", "5")
+                self.assertEqual(appended["status"], "ok", appended)
+                self.assertEqual(len(self._rows(loop)), 2)
+                self.assertEqual(arl.validate_loop_dir(loop)["errors"], [])
 
     def test_status_mixed_ledger_accounting(self) -> None:
         """status counts explicit and unreported iterations per resource over old and new rows.

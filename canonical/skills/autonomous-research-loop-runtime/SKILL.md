@@ -912,15 +912,19 @@ null. Leaving a flag out records `unreported`, and `--usd 0` records an
 explicit zero. `budget.json` adds only reported amounts, and its totals are
 never rebuilt from the rows. A row written before these fields existed counts
 as explicit when its amount is nonzero and as unknown when it is zero, since
-that zero may be the old default; unknown is only derived. `validate` refuses
-a row that stores `unknown`, a null amount, a tokens amount that is not a
-non-negative integer, a usd amount that is not a finite non-negative number, a
-status other than `explicit` or `unreported`, an `explicit` status without its
-amount and an `unreported` status with one. A host-mediated request carries
-`null` for an unreported amount, staging refuses the same disagreements
-before anything is staged, finalize adds nothing for an absent amount whether
-it accepts or rejects the candidate, and `retract-iteration` subtracts only
-what the row added.
+that zero may be the old default; unknown is only derived. On a row that
+stores a status, `validate` refuses a stored `unknown`, a null amount, a tokens
+amount that is not a non-negative integer, a usd amount that is not a finite
+non-negative number, a status other than `explicit` or `unreported`, an
+`explicit` status without its amount and an `unreported` status with one. A
+row written before the statuses keeps the check it had: a usd amount that is
+not a finite non-negative number, null included, is refused with the same
+message, and a tokens amount that is null or not a non-negative integer reads
+as unknown with a warning, never an error, so a ledger that validated before
+keeps validating. A host-mediated request carries `null` for an unreported
+amount, staging applies the full rule to every row before anything is staged,
+finalize adds nothing for an absent amount whether it accepts or rejects the
+candidate, and `retract-iteration` subtracts only what the row added.
 
 **Caps.** "Caps are accounting over self-reported usage between iterations,
 not a spending limit." `done` compares the recorded `spent_tokens` and

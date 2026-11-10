@@ -3032,6 +3032,7 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
     # A stored success_basis is a record of what the row's fields gave when it
     # was written; a different value is reported, and readers derive it anew.
     basis_warnings: list[str] = []
+    spend_warnings: list[str] = []
     for record in iterations:
         if "success_basis" in record:
             derived = success_basis_for_row(record)
@@ -3056,13 +3057,14 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
             errors.append(f"iteration {expected} missing objective")
         delta = record.get("budget_delta")
         if isinstance(delta, dict):
-            # The rule append-iteration, staging and finalize share: a valid
-            # amount when present, never null, and a stored status that is
-            # explicit with its amount or unreported without it.
-            errors.extend(
-                f"iteration {expected} {error}"
-                for error in goal_focus_v2.spend_recording_errors(delta)
-            )
+            # A row that stores a recording status gets the rule staging
+            # shares: a valid amount when present, never null, and a status
+            # that is explicit with its amount or unreported without it. A row
+            # from before the statuses keeps the usd check it had, and an
+            # unusable tokens amount there only warns.
+            row_errors, row_warnings = goal_focus_v2.spend_recording_findings(delta)
+            errors.extend(f"iteration {expected} {error}" for error in row_errors)
+            spend_warnings.extend(f"iteration {expected} {warning}" for warning in row_warnings)
         expected += 1
     if budget and iterations:
         max_iterations = budget.get("max_iterations")
@@ -3163,6 +3165,7 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
     latest = iterations[-1] if iterations else None
     warnings = collect_goal_priority_warnings(run_dir, latest_record=latest)
     warnings.extend(basis_warnings)
+    warnings.extend(spend_warnings)
     goal_focus_checked: dict[str, Any] | None = None
     if goal_focus_state_present(run_dir):
         try:

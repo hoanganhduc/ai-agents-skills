@@ -189,7 +189,9 @@ def _finite_nonnegative_amount(value: Any, field: str) -> float:
 # row, never stored as null, with status unreported. A row written before the
 # statuses existed has neither: its amount reads explicit when nonzero and
 # unknown when zero, because that zero may be the old default. "unknown" is
-# only ever derived; a row that stores it is refused.
+# only ever derived; a row that stores it is refused. Such an older row is
+# checked as it was before: its usd amount must be valid, and a tokens amount
+# that is not only reads unknown (spend_recording_findings).
 SPEND_RESOURCES = ("tokens", "usd")
 SPEND_RECORDING_STATUSES = frozenset({"explicit", "unreported"})
 SPEND_RECORDING_UNKNOWN = "unknown"
@@ -239,7 +241,8 @@ def spend_recording_errors(delta: Mapping[str, Any]) -> list[str]:
     and never null, a stored status is explicit or unreported (unknown is
     refused, being derived only), explicit comes with its amount and
     unreported without it. A row that stores no status is not refused for
-    that: it predates the statuses.
+    that: it predates the statuses. Staging applies this rule to every row it
+    stages; a stored row goes through spend_recording_findings.
     """
     errors: list[str] = []
     for resource in SPEND_RESOURCES:
@@ -275,6 +278,32 @@ def spend_recording_errors(delta: Mapping[str, Any]) -> list[str]:
         elif status == "unreported" and present:
             errors.append(f"budget_delta.{key} is unreported but budget_delta.{resource} is present")
     return errors
+
+
+def spend_recording_findings(delta: Mapping[str, Any]) -> tuple[list[str], list[str]]:
+    """Errors and warnings for the spend fields of one stored row's budget_delta.
+
+    A row that stores a recording status gets the full spend_recording_errors
+    rule. A row that stores none was written before the statuses existed and
+    keeps the check validation made then: a usd amount that is present must be
+    a finite non-negative number, null included, with the same message. Its
+    tokens amount was never checked, so one that is null or not a
+    non-negative integer reads as unknown and gives a warning, never an
+    error: a ledger that validated before the statuses keeps validating.
+    """
+    if any(f"{resource}_recording_status" in delta for resource in SPEND_RESOURCES):
+        return spend_recording_errors(delta), []
+    errors: list[str] = []
+    if "usd" in delta and _spend_amount("usd", delta["usd"]) is None:
+        errors.append("budget_delta.usd must be a finite non-negative number")
+    warnings: list[str] = []
+    if "tokens" in delta and _spend_amount("tokens", delta["tokens"]) is None:
+        warnings.append(
+            "budget_delta.tokens "
+            + ("is null" if delta["tokens"] is None else "is not a non-negative integer")
+            + "; the row stores no recording status, so the amount reads as unknown"
+        )
+    return errors, warnings
 
 
 def _stable_id(prefix: str, *parts: Any) -> str:
