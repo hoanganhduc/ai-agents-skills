@@ -15289,6 +15289,7 @@ def goal_focus_replan_command(args: argparse.Namespace) -> dict[str, Any]:
             "strategy_review",
             iter_dir=iter_dir,
             providers=providers,
+            standalone=True,
         )
     finally:
         if previous_primary is None:
@@ -16244,6 +16245,7 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
         prompt=prompt or None,
         providers=providers,
         timeout_s=timeout,
+        standalone=True,
     )
     return {
         "status": "ok" if summary.get("panel_content_pass") else "failed",

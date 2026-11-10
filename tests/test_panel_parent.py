@@ -2912,6 +2912,12 @@ class BriefPointerTests(unittest.TestCase):
         "No iteration worker runs while the host builds this brief, so no pointer "
         "is held back as still being written."
     )
+    STANDALONE_SENTENCE = (
+        "This brief was built outside the drive, so an iteration worker may be "
+        "running: a pointer may miss its newest records or name one still being "
+        "written."
+    )
+    INFLIGHT_SENTENCE = "A host dispatch is in flight, so its lineage gets no pointer."
 
     def setUp(self) -> None:
         super().setUp()
@@ -3337,6 +3343,131 @@ class BriefPointerTests(unittest.TestCase):
                 (loop,) = [line for line in pointers if "; lineage loop; " in line]
                 self.assertTrue(loop.startswith("- [unchecked] "), loop)
                 self.assertIn("proof_artifacts/legacy-claim.json", loop)
+
+    def test_a_standalone_brief_says_a_worker_may_run_and_leaves_out_the_dispatch_lineage(
+        self,
+    ) -> None:
+        """Only the drive's own briefs say that no worker runs; a standalone brief says one may.
+
+        On ecade7e every brief claimed that no iteration worker runs, though
+        the standalone panel command and goal-focus replan can build one while
+        a drive's worker writes its records. A standalone brief now says it
+        was built outside the drive, and the lineage an in-flight host
+        dispatch names gets no pointer, with a line saying so. That the
+        drive's brief keeps the no-worker sentence and its pointers, and never
+        reads the dispatch record, is a regression check.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            root.mkdir()
+            PanelParentUnitTests._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": 1, "approach_id": "A1", "evidence_ids": ["older-claim"]},
+                    {"iteration": 2, "approach_id": "A7", "evidence_ids": ["live-claim"]},
+                ],
+            )
+
+            def build(**flags: object) -> list[str]:
+                return pp.brief_pointer_lines(
+                    root, exclude_lineage=None, max_chars=10_000, environ={}, **flags
+                )
+
+            with self.subTest("a standalone brief without a dispatch keeps every lineage"):
+                lines = build(standalone=True)
+                self.assertEqual(lines[:2], [self.HEADING, self.STANDALONE_SENTENCE])
+                self.assertNotIn(self.WRITER_SENTENCE, lines)
+                self.assertNotIn(self.INFLIGHT_SENTENCE, lines)
+                self.assertEqual(len(self._pointer_lines(lines)), 2, lines)
+
+            (root / "iteration_dispatch.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "goal_focus_dispatch.v1",
+                        "approach_id": "A7",
+                        "campaign_id": "C1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.subTest("the lineage of an in-flight dispatch gets no pointer"):
+                lines = build(standalone=True)
+                self.assertEqual(
+                    lines[:3],
+                    [self.HEADING, self.STANDALONE_SENTENCE, self.INFLIGHT_SENTENCE],
+                )
+                (pointer,) = self._pointer_lines(lines)
+                self.assertIn("lineage A1", pointer)
+                self.assertNotIn("live-claim", "\n".join(lines))
+                self.assertNotIn("further pointers omitted", "\n".join(lines))
+
+            with self.subTest("regression check: the drive's brief keeps its sentence and pointers"):
+                lines = build()
+                self.assertEqual(lines[:2], [self.HEADING, self.WRITER_SENTENCE])
+                self.assertEqual(len(self._pointer_lines(lines)), 2, lines)
+
+            if os.name == "posix":
+                dispatch = root / "iteration_dispatch.json"
+                outside = Path(tmp) / "outside-dispatch.json"
+                outside.write_bytes(dispatch.read_bytes())
+                dispatch.unlink()
+                dispatch.symlink_to(outside)
+                with self.subTest("a dispatch record that cannot be read safely is reported"):
+                    lines = build(standalone=True)
+                    self.assertEqual(lines[:2], [self.HEADING, self.STANDALONE_SENTENCE])
+                    self.assertNotIn(self.INFLIGHT_SENTENCE, lines)
+                    self.assertEqual(lines[-1], pp.POINTER_UNREADABLE)
+                    self.assertEqual(len(self._pointer_lines(lines)), 2, lines)
+
+    def test_the_standalone_flag_reaches_every_brief_through_the_phase_entry(self) -> None:
+        """run_panel_phase_for_drive passes standalone to the brief of each phase it builds.
+
+        On ecade7e the entry took no such flag. That the default, used by
+        every drive call, keeps the no-worker sentence is a regression check.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "loop"
+            iter_dir = run_dir / "iterations" / "iter001"
+            iter_dir.mkdir(parents=True)
+            PanelParentUnitTests._write_strategy_authority(run_dir)
+            (run_dir / "iteration_candidate.json").write_text(
+                json.dumps({"candidate_id": "cand-a", "approach_id": "approach-a"}),
+                encoding="utf-8",
+            )
+            PanelParentUnitTests._write_pointer_ledger(
+                run_dir,
+                [{"iteration": 1, "approach_id": "route-b", "evidence_ids": ["route-claim"]}],
+            )
+            prompts: list[str] = []
+
+            def capture(**kwargs: object) -> dict:
+                prompts.append(str(kwargs["prompt"]))
+                return {"obsolete_completion": True}
+
+            for phase in ("strategy_review", "target_advice", "result_review"):
+                for standalone, sentence in (
+                    (True, self.STANDALONE_SENTENCE),
+                    (False, self.WRITER_SENTENCE),
+                ):
+                    with self.subTest(phase=phase, standalone=standalone), mock.patch.object(
+                        pp, "dispatch_phase", side_effect=capture
+                    ):
+                        prompts.clear()
+                        flags = {"standalone": True} if standalone else {}
+                        pp.run_panel_phase_for_drive(
+                            run_dir,
+                            root,
+                            phase,
+                            iter_dir=iter_dir,
+                            providers=["claude"],
+                            **flags,
+                        )
+                        (prompt,) = prompts
+                        self.assertIn(f"{self.HEADING}\n{sentence}\n", prompt)
+                        self.assertIn("proof_artifacts/route-claim.json", prompt)
 
     def test_pointer_section_caps_lines_bytes_and_withholds_sensitive_lines(self) -> None:
         """At most six pointer lines in at most 4,096 UTF-8 bytes; a sensitive line is withheld by kind."""

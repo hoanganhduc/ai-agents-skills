@@ -6039,6 +6039,70 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     arl.panel_command(args)
 
+    def test_standalone_panel_commands_build_their_briefs_as_standalone(self) -> None:
+        """The panel command and goal-focus replan ask for briefs built outside the drive.
+
+        Either can run while a drive's worker writes its records, so their
+        briefs must not claim that no worker runs. On ecade7e neither passed
+        such a flag to run_panel_phase_for_drive.
+        """
+        arl, _gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            args = argparse.Namespace(
+                root=str(loop),
+                dir=str(loop),
+                providers="codex",
+                smoke=False,
+                phase="target_advice",
+                prompt=None,
+                prompt_file=None,
+                iter_dir=None,
+                timeout=5,
+            )
+            with mock.patch.object(
+                arl,
+                "run_panel_phase_for_drive",
+                return_value={"panel_content_pass": True, "usable_providers": ["codex"]},
+            ) as dispatch:
+                result = arl.panel_command(args)
+            self.assertEqual(result["status"], "ok", result)
+            self.assertIs(dispatch.call_args.kwargs.get("standalone"), True)
+
+            replan = argparse.Namespace(
+                dir=str(loop),
+                root=None,
+                trigger="manual",
+                providers=None,
+                primary_provider="claude",
+                dry_run=False,
+                apply=True,
+            )
+            with mock.patch.object(
+                arl.goal_focus_v2,
+                "pre_dispatch_gate",
+                return_value={"action": "replan", "errors": []},
+            ), mock.patch.object(
+                arl.goal_focus_v2, "load_approach_registry", return_value={}
+            ), mock.patch.object(
+                arl.goal_focus_v2, "select_direction", return_value={}
+            ), mock.patch.object(
+                arl.goal_focus_v2, "load_current_plan", return_value={"plan_revision": 1}
+            ), mock.patch.object(
+                arl, "attest_provider_executable", return_value={"family": "anthropic"}
+            ), mock.patch.object(
+                arl, "run_panel_phase_for_drive", return_value={}
+            ) as dispatch, mock.patch.object(
+                arl,
+                "_strategy_selection_from_panel",
+                return_value={"status": "blocked", "reason": "stubbed review"},
+            ):
+                result = arl.goal_focus_replan_command(replan)
+            self.assertEqual(result["status"], "failed", result)
+            self.assertEqual(result["error"], "stubbed review")
+            self.assertIs(dispatch.call_args.kwargs.get("standalone"), True)
+
     def test_explicit_providers_naming_nobody_is_refused_not_defaulted(self) -> None:
         # An explicit roster that parses empty used to fall through to the
         # default roster, so the dispatch went to providers the operator never

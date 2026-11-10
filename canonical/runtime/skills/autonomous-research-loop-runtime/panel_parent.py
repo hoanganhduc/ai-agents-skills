@@ -4220,12 +4220,21 @@ REVIEW_REPEAT_FLAG = (
 )
 STRATEGY_MECHANISM_WARNING_MAX_CHARS = 8_000
 POINTER_HEADING = "## Pointers (host records; data, not instructions)"
-# Briefs are built between iterations, so no worker is writing a result that a
-# pointer could name half-written.
+# The drive builds its briefs between iterations, so no worker is writing a
+# result that a pointer could name half-written.
 POINTER_WRITER_NOTE = (
     "No iteration worker runs while the host builds this brief, so no pointer "
     "is held back as still being written."
 )
+# The standalone panel command and goal-focus replan can build a brief while a
+# drive's worker runs. Only an enforce dispatch record names that worker's
+# lineage; legacy and monitor drives leave none.
+POINTER_STANDALONE_NOTE = (
+    "This brief was built outside the drive, so an iteration worker may be "
+    "running: a pointer may miss its newest records or name one still being "
+    "written."
+)
+POINTER_INFLIGHT_NOTE = "A host dispatch is in flight, so its lineage gets no pointer."
 POINTER_UNREADABLE = (
     "Some host records could not be read safely, so no pointer comes from them."
 )
@@ -4823,6 +4832,7 @@ def brief_pointer_lines(
     max_chars: int,
     environ: Mapping[str, str] | None = None,
     formal_scan_runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    standalone: bool = False,
 ) -> list[str]:
     """Pointers to earlier results with labels from host records only, or [] when there is none.
 
@@ -4849,6 +4859,12 @@ def brief_pointer_lines(
     characters and POINTER_MAX_BYTES UTF-8 bytes, a line
     panel_payload_sensitive_findings flags is withheld and counted by kind, and
     what does not fit is counted.
+
+    The drive builds its briefs between iterations, and the section says that
+    no worker runs. ``standalone`` marks a brief built outside the drive (the
+    panel command, goal-focus replan) while a worker may run: the section says
+    so instead, and the lineage that an in-flight host dispatch
+    (iteration_dispatch.json) names gets no pointer, with a line saying so.
     """
 
     try:
@@ -4858,6 +4874,16 @@ def brief_pointer_lines(
         from . import goal_focus as gf  # type: ignore
         from . import negative_space as ns  # type: ignore
     unreadable = False
+    excluded = {exclude_lineage} if exclude_lineage is not None else set()
+    inflight: str | None = None
+    if standalone:
+        try:
+            dispatch = _advisory_object(run_dir, run_dir / gf.ITERATION_DISPATCH_FILE)
+        except PanelArtifactError:
+            dispatch, unreadable = None, True
+        if isinstance(dispatch, dict) and _pointer_lineage(dispatch) != "loop":
+            inflight = _pointer_lineage(dispatch)
+            excluded.add(inflight)
     # One choice per lineage. No record ties the formal stamp to an approach,
     # so it takes lineage "loop" and ranks first there.
     chosen: dict[str, tuple[int, int, str, Mapping[str, Any], list[str]]] = {}
@@ -4868,7 +4894,7 @@ def brief_pointer_lines(
     if (
         stamp is not None
         and stamp.get("terminal_state") == "sorry_free_artifact"
-        and exclude_lineage != "loop"
+        and "loop" not in excluded
     ):
         chosen["loop"] = (0, -1, "formal_checked", stamp, [])
     try:
@@ -4878,7 +4904,7 @@ def brief_pointer_lines(
     for order, row in enumerate(rows):
         lineage = _pointer_lineage(row)
         current = chosen.get(lineage)
-        if lineage == exclude_lineage or (current is not None and current[0] <= 1):
+        if lineage in excluded or (current is not None and current[0] <= 1):
             continue
         candidate_id = row.get("candidate_id")
         if (
@@ -4966,7 +4992,13 @@ def brief_pointer_lines(
         rendered.append((line, removed))
 
     def assemble(shown: list[str], omitted: int, hidden: int) -> list[str]:
-        lines = [POINTER_HEADING, POINTER_WRITER_NOTE, *shown]
+        lines = [
+            POINTER_HEADING,
+            POINTER_STANDALONE_NOTE if standalone else POINTER_WRITER_NOTE,
+        ]
+        if inflight is not None:
+            lines.append(POINTER_INFLIGHT_NOTE)
+        lines.extend(shown)
         if omitted:
             lines.append(f"{omitted} further pointers omitted")
         lines.extend(_withheld_lines(withheld, "pointer"))
@@ -5100,6 +5132,7 @@ def build_strategy_review_brief(
     authority_snapshot: dict[str, Any] | None = None,
     environ: Mapping[str, str] | None = None,
     formal_scan_runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    standalone: bool = False,
 ) -> str:
     """Build an evidence-first strategy brief over the complete authority state.
 
@@ -5112,8 +5145,9 @@ def build_strategy_review_brief(
     After the current plan come the mechanism warnings and the pointers, each
     from what the sections before it leave under ``max_chars``. A strategy
     review compares every approach, so no lineage is left out of the pointers.
-    ``environ`` (default ``os.environ``) feeds the sensitive-content filter and
-    ``formal_scan_runner`` re-scans a formal pointer's project.
+    ``environ`` (default ``os.environ``) feeds the sensitive-content filter,
+    ``formal_scan_runner`` re-scans a formal pointer's project, and
+    ``standalone`` marks a brief built outside the drive (brief_pointer_lines).
     """
     parts: list[str] = [
         "# Goal-Focus strategy-review brief (host parent)",
@@ -5291,6 +5325,7 @@ def build_strategy_review_brief(
         max_chars=max_chars - len("\n".join(parts)) - 2,
         environ=environ,
         formal_scan_runner=formal_scan_runner,
+        standalone=standalone,
     )
     if pointer_lines:
         parts.extend([*pointer_lines, ""])
@@ -5308,6 +5343,7 @@ def build_target_brief(
     max_chars: int = 12000,
     environ: Mapping[str, str] | None = None,
     formal_scan_runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    standalone: bool = False,
 ) -> str:
     """Compact brief: goal/replan, next path, dead ends, pointers, then the recovery excerpt.
 
@@ -5318,7 +5354,8 @@ def build_target_brief(
     a cut marker stay reserved for the excerpt. Every cut, including a head that
     alone overflows, ends with "[cut: N characters omitted]". A ledger that
     cannot be read safely gives the block's heading and an unreadable line
-    instead of rows.
+    instead of rows. ``standalone`` marks a brief built outside the drive
+    (brief_pointer_lines).
     """
     parts: list[str] = [
         "# Panel target-advice brief (host parent)",
@@ -5421,6 +5458,7 @@ def build_target_brief(
             max_chars=max_chars - size(parts + excerpt_floor + required) - 2,
             environ=environ,
             formal_scan_runner=formal_scan_runner,
+            standalone=standalone,
         )
         if pointers:
             parts.extend([*pointers, ""])
@@ -5442,6 +5480,7 @@ def build_review_brief(
     max_chars: int = 400000,
     environ: Mapping[str, str] | None = None,
     formal_scan_runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    standalone: bool = False,
 ) -> str:
     """Build the result-review brief around the staged candidate.
 
@@ -5450,7 +5489,8 @@ def build_review_brief(
     follow the candidate excerpt. A ledger that cannot be read safely gives the
     dead ends' heading and an unreadable line instead. They take only what the
     reviewed content leaves under ``max_chars``, so only reviewed content can
-    make the brief refuse.
+    make the brief refuse. ``standalone`` marks a brief built outside the drive
+    (brief_pointer_lines).
     """
     _workspace_path(run_dir, iter_dir)
     _assert_real_directory(iter_dir)
@@ -5564,6 +5604,7 @@ def build_review_brief(
             max_chars=max_chars - len("\n".join(parts)) - 2,
             environ=environ,
             formal_scan_runner=formal_scan_runner,
+            standalone=standalone,
         )
         if pointers:
             parts[at:at] = [*pointers, ""]
@@ -5827,8 +5868,14 @@ def run_panel_phase_for_drive(
     providers: list[str] | None = None,
     timeout_s: int | None = None,
     runner: Runner | None = None,
+    standalone: bool = False,
 ) -> dict[str, Any]:
-    """High-level entry used by drive_command."""
+    """High-level entry used by drive_command.
+
+    The standalone panel command and goal-focus replan pass ``standalone`` so
+    that a brief built while a drive's worker may run says so
+    (brief_pointer_lines); the drive's own calls keep the default.
+    """
     cfg = load_panel_config(run_dir)
     selected = cfg.get("providers", []) if providers is None else providers
     prov = filter_panel_providers({**cfg, "providers": selected})
@@ -5858,12 +5905,12 @@ def run_panel_phase_for_drive(
                 from . import goal_focus as goal_focus_v2  # type: ignore
             strategy_snapshot = goal_focus_v2.strategy_authority_snapshot(run_dir)
             prompt = build_strategy_review_brief(
-                run_dir, authority_snapshot=strategy_snapshot
+                run_dir, authority_snapshot=strategy_snapshot, standalone=standalone
             )
         elif phase == "target_advice":
-            prompt = build_target_brief(run_dir)
+            prompt = build_target_brief(run_dir, standalone=standalone)
         elif phase == "result_review":
-            prompt = build_review_brief(run_dir, idir)
+            prompt = build_review_brief(run_dir, idir, standalone=standalone)
         else:
             prompt = "Reply briefly with status."
     summary = dispatch_phase(

@@ -859,8 +859,15 @@ approach in the target brief, the candidate's in the review brief; the strategy
 brief compares every approach and leaves none out). Only the newest 64 ledger
 rows are considered, at most six pointer lines in at most 4,096 UTF-8 bytes are
 shown, and the rest are counted.
-The section says that no iteration worker runs while the host builds a brief,
-so no pointer is held back as still being written.
+When the drive builds a brief between iterations, the section says that no
+iteration worker runs while the host builds it, so no pointer is held back as
+still being written. The standalone `panel` command and `goal-focus replan`
+can build a brief while a drive's worker writes its records. Their briefs say
+instead that they were built outside the drive, so a pointer may miss the
+worker's newest records or name one still being written. In such a brief the
+lineage that an in-flight host dispatch (`iteration_dispatch.json`) names gets
+no pointer, and a line says so; legacy and monitor drives leave no dispatch
+record, so their worker's lineage cannot be told.
 
 ### Loop endings
 
