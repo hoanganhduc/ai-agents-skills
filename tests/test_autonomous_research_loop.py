@@ -4096,6 +4096,259 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             [event["event"] for event in control["events"]],
         )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "consuming a host-mediated submission needs POSIX directory descriptors",
+    )
+    def test_enforce_drive_records_the_staging_warnings_on_a_post_staging_review_error(self) -> None:
+        """A candidate that cannot be loaded or validated right after staging leaves its staging warnings on the cycle's result_review_error.
+
+        The stub worker submits through the runtime a dead end that repeats an
+        open worker row, as in
+        test_enforce_drive_records_the_staging_warnings_in_its_progress_log,
+        and the host's consume stages it with the duplicate warning. Right
+        after staging, validate_host_staged_candidate fails on one path; on
+        the other, the first load of the pending candidate raises, as an I/O
+        fault would. Neither path reaches result_review_start: each ends its
+        cycle with its own result_review_error, and that event carries the
+        warning as staging_warnings. A control lane without the open row is a
+        regression check: the event's notify issues and failure group, the
+        drive's status, reason and exit code, its failure groups and its event
+        sequence equal the control's.
+        """
+        arl, gf = self._runtime_modules()
+        # Per path: the event id prefix of the cycle's result_review_error and
+        # the reason the drive stops for (max_failures is 1).
+        paths = {
+            "validation": ("dispatch-attestation-error-", "runtime_error"),
+            "load": ("missing-staged-candidate-", "max_failures"),
+        }
+        for path, (event_id_prefix, stop_reason) in paths.items():
+            outcomes: dict[str, dict[str, Any]] = {}
+            open_entry_id = ""
+            for lane in ("control", "duplicate"):
+                with self.subTest(path=path, lane=lane):
+                    label = f"post-staging-{path}-{lane}"
+                    base = self.provider_fixture.root / label
+                    project = base / "project"
+                    loop = project / ".autoloop" / "loop"
+                    project.mkdir(parents=True, mode=0o700)
+                    registry_dir = self._trusted_registry_root(label)
+                    init_args = arl.selftest_init_args(loop, max_iterations=3)
+                    init_args.goal_focus_mode = "enforce"
+                    arl.init_loop(init_args)
+                    self._activate_single_direction(arl, gf, loop)
+                    if lane == "duplicate":
+                        # The open worker row of the test above, in one host
+                        # transaction that keeps .goal_focus private.
+                        open_row = gf.ns.build_entry(
+                            kind="dead_end",
+                            mechanism_text="induction on the  number of COLOURS",
+                            failure_summary="an earlier iteration's note",
+                            reopen_condition="a different invariant",
+                            approach_id="approach-a",
+                            campaign_id="campaign-a",
+                            evidence_ids=["E0"],
+                            writer="worker",
+                            review_status="unreviewed",
+                        )
+                        open_entry_id = open_row["entry_id"]
+                        ledger = gf.ns.NEGATIVE_SPACE_REL.as_posix()
+                        arl.commit_transaction(
+                            loop,
+                            jsonl_appends={ledger: [open_row]},
+                            expected_absent=[ledger],
+                        )
+                    args = arl.selftest_drive_args(loop, registry_dir, "unused")
+                    args.root = str(project)
+                    args.cmd = None
+                    args.provider = "claude"
+                    profile = arl.provider_resource_limits(60, role="primary")
+                    submissions: list[subprocess.CompletedProcess[str]] = []
+                    phases: list[str] = []
+                    after_staging: list[str] = []
+                    real_consume = arl.consume_iteration_submission
+                    real_load = arl.goal_focus_v2.load_pending_candidate
+
+                    def stub_worker(*_args, **kwargs):  # noqa: ANN002, ANN003
+                        child_env = kwargs["child_env"]
+                        evidence = (
+                            Path(child_env["AAS_AUTOLOOP_EVIDENCE_DIR"]) / "dead-end-evidence"
+                        )
+                        evidence.write_text(
+                            "the inductive step loses a colour at n = 3\n", encoding="utf-8"
+                        )
+                        evidence.chmod(0o600)
+                        submitted = subprocess.run(
+                            [
+                                sys.executable,
+                                "-B",
+                                str(HELPER),
+                                "append-iteration",
+                                "--dir",
+                                str(loop),
+                                "--mode",
+                                "bounded-research",
+                                "--objective",
+                                "try the inductive route",
+                                "--decision",
+                                "revise",
+                                "--claim-id",
+                                "dead-end-claim",
+                                "--evidence-id",
+                                "dead-end-evidence",
+                                "--compute-none",
+                                "--dead-end-kind",
+                                "dead_end",
+                                "--dead-end-mechanism",
+                                "Induction on the number of colours",
+                                "--dead-end-failure",
+                                "the inductive step loses a colour at n = 3",
+                                "--dead-end-reopen-condition",
+                                "a different invariant for the inductive step",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            timeout=60,
+                            env={**child_env, "PYTHONDONTWRITEBYTECODE": "1"},
+                            check=False,
+                        )
+                        submissions.append(submitted)
+                        clean_attestation = _primary_resource_attestation()
+                        clean_attestation["limits"] = arl.public_resource_limits(profile)
+                        kwargs["resource_metadata"].update(clean_attestation)
+                        return submitted.returncode, False, None
+
+                    def consume_and_note(*consume_args, **consume_kwargs):  # noqa: ANN002, ANN003
+                        staged = real_consume(*consume_args, **consume_kwargs)
+                        after_staging.append("staged")
+                        return staged
+
+                    def load_failing_once_after_staging(*load_args, **load_kwargs):  # noqa: ANN002, ANN003
+                        if after_staging == ["staged"]:
+                            after_staging.append("load failed")
+                            raise OSError("simulated I/O fault reading the staged candidate")
+                        return real_load(*load_args, **load_kwargs)
+
+                    def record_phase(_run_dir, _root, phase, **_kwargs):  # noqa: ANN001, ANN003
+                        phases.append(phase)
+                        return {}
+
+                    fault = (
+                        mock.patch.object(
+                            arl.goal_focus_v2,
+                            "validate_host_staged_candidate",
+                            side_effect=ValueError(
+                                "simulated: the staged candidate failed host validation"
+                            ),
+                        )
+                        if path == "validation"
+                        else mock.patch.object(
+                            arl.goal_focus_v2,
+                            "load_pending_candidate",
+                            side_effect=load_failing_once_after_staging,
+                        )
+                    )
+                    with mock.patch.dict(
+                        os.environ,
+                        {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+                        clear=False,
+                    ), mock.patch.object(
+                        arl, "preflight_resource_backend", return_value=profile
+                    ), mock.patch.object(
+                        arl, "run_primary_subprocess", side_effect=stub_worker
+                    ) as primary, mock.patch.object(
+                        arl, "consume_iteration_submission", side_effect=consume_and_note
+                    ), fault, mock.patch.object(
+                        arl, "run_panel_phase_for_drive", side_effect=record_phase
+                    ), mock.patch.object(
+                        sys, "stdout", io.StringIO()
+                    ), mock.patch.object(
+                        sys, "stderr", io.StringIO()
+                    ):
+                        result = arl.drive_command(args)
+
+                    self.assertEqual(primary.call_count, 1, result)
+                    (submitted,) = submissions
+                    self.assertEqual(
+                        submitted.returncode, 0, submitted.stdout + submitted.stderr
+                    )
+                    self.assertEqual(
+                        after_staging,
+                        ["staged", "load failed"] if path == "load" else ["staged"],
+                    )
+                    # No review ran: the cycle ended at the staged candidate.
+                    self.assertEqual(phases, [], result)
+                    self.assertEqual(result["reason"], stop_reason, result)
+                    events = [
+                        json.loads(line)
+                        for line in (loop / "driver_logs" / "progress.jsonl")
+                        .read_text(encoding="utf-8")
+                        .splitlines()
+                        if line.strip()
+                    ]
+                    self.assertNotIn(
+                        "result_review_start", [event["event"] for event in events]
+                    )
+                    (error_event,) = [
+                        event for event in events if event["event"] == "result_review_error"
+                    ]
+                    self.assertTrue(
+                        str(error_event.get("event_id") or "").startswith(event_id_prefix),
+                        error_event,
+                    )
+                    outcomes[lane] = {
+                        "result": result,
+                        "events": events,
+                        "error_event": error_event,
+                        "failure_groups": arl.failure_groups(loop),
+                    }
+
+            with self.subTest(path=path):
+                duplicate, control = outcomes["duplicate"], outcomes["control"]
+                self.assertFalse(
+                    [event for event in control["events"] if "staging_warnings" in event]
+                )
+                carrying = [
+                    event for event in duplicate["events"] if "staging_warnings" in event
+                ]
+                self.assertEqual(
+                    [event["event"] for event in carrying],
+                    ["result_review_error"],
+                    duplicate["events"],
+                )
+                (warning,) = carrying[0]["staging_warnings"]
+                self.assertTrue(
+                    warning.startswith(
+                        "negative_space_duplicate_open_row: open negative-space row "
+                        f"{open_entry_id} already records this mechanism for approach "
+                        "approach-a"
+                    ),
+                    warning,
+                )
+                # Information only: the error's notify issues and failure
+                # group, the stop and the failure groups are the control's.
+                error_event, control_error = duplicate["error_event"], control["error_event"]
+                self.assertEqual(
+                    error_event["notification"]["issues"],
+                    control_error["notification"]["issues"],
+                )
+                self.assertEqual(
+                    arl._failure_attempt_group(error_event),
+                    arl._failure_attempt_group(control_error),
+                )
+                stop_keys = ("status", "reason", "exit_code")
+                self.assertEqual(
+                    {key: duplicate["result"].get(key) for key in stop_keys},
+                    {key: control["result"].get(key) for key in stop_keys},
+                )
+                self.assertEqual(duplicate["failure_groups"], control["failure_groups"])
+                self.assertEqual(
+                    [event["event"] for event in duplicate["events"]],
+                    [event["event"] for event in control["events"]],
+                )
+
     def test_staging_warnings_are_bounded_and_scrubbed_for_the_progress_log(self) -> None:
         """Staging warnings reach a progress event bounded like its other text fields, and scrubbed.
 

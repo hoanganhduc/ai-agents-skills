@@ -766,7 +766,11 @@ warning.
   returns (at most 10, each cut at 400 characters and scrubbed like every
   progress string) as `staging_warnings` on the candidate's
   `result_review_start` event in `driver_logs/progress.jsonl`; that event
-  raises no notify issue, is not a failure, and changes no stop decision. Only
+  raises no notify issue, is not a failure, and changes no stop decision. When
+  the staged candidate cannot be loaded, or fails host validation, right after
+  staging, the cycle ends with a `result_review_error` instead, and that event
+  carries the same field; the field adds no notify issue, leaves the event's
+  failure group as it is, and changes no stop decision. Only
   `negative-space add` refuses a duplicate.
   `retract-iteration` leaves the dead-end row the retracted iteration wrote:
   the row is history, and recording the same dead end again adds an advisory

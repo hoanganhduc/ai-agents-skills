@@ -13147,7 +13147,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             worker_rc = rc
             # Warnings the host's staging of the submission returns, such as
             # negative_space_duplicate_open_row; information for the progress
-            # log, never a failure.
+            # log, never a failure. They are recorded on the candidate's
+            # result_review_start, or on the result_review_error that ends the
+            # cycle when the staged candidate cannot be loaded or validated.
             staging_warnings: list[str] = []
             if goal_focus_mode == "enforce":
                 try:
@@ -13573,6 +13575,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             ),
                             next_action="Inspect the iteration log, correct the worker command, and retry the same reviewed plan.",
                             log_path=str(log_path),
+                            staging_warnings=staging_warnings or None,
                         )
                         if failures >= max_failures:
                             reason = "max_failures"
@@ -13611,6 +13614,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             current_summary=f"The exact staged candidate remains pending: {str(exc)[:400]}",
                             next_action="Repair or reject the exact pending candidate before independent review.",
                             error=str(exc)[:400],
+                            staging_warnings=staging_warnings or None,
                         )
                         reason = "runtime_error"
                         break
