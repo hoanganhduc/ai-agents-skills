@@ -9783,6 +9783,29 @@ def _scrub_progress_payload(
     return payload
 
 
+# Bounds for the warnings a host staging result hands the drive's progress
+# log; every progress string is scrubbed as it is written.
+PROGRESS_WARNINGS_MAX = 10
+PROGRESS_WARNING_MAX_CHARS = 400
+
+
+def _progress_warnings(result: object) -> list[str]:
+    """The non-blank string warnings of a staging result, cut for the progress log.
+
+    At most PROGRESS_WARNINGS_MAX of them, each cut to
+    PROGRESS_WARNING_MAX_CHARS characters; [] when the result carries none.
+    """
+
+    warnings = result.get("warnings") if isinstance(result, Mapping) else None
+    if not isinstance(warnings, list):
+        return []
+    return [
+        warning[:PROGRESS_WARNING_MAX_CHARS]
+        for warning in warnings
+        if isinstance(warning, str) and warning.strip()
+    ][:PROGRESS_WARNINGS_MAX]
+
+
 def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | None = None) -> None:
     """Write LIVE_STATUS.md and append progress.jsonl (best-effort, never raises)."""
     try:
@@ -13112,6 +13135,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             # The submission gate below rewrites rc to its own verdict, so keep
             # the status the worker actually exited with for later diagnostics.
             worker_rc = rc
+            # Warnings the host's staging of the submission returns, such as
+            # negative_space_duplicate_open_row; information for the progress
+            # log, never a failure.
+            staging_warnings: list[str] = []
             if goal_focus_mode == "enforce":
                 try:
                     if cleanup_error is not None:
@@ -13127,7 +13154,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     if evidence_dir is None:
                         raise OSError("candidate evidence directory is unavailable")
-                    consume_iteration_submission(
+                    staged_submission = consume_iteration_submission(
                         run_dir,
                         evidence_dir,
                         expected_run_id=safe_registry_run_id(run_id),
@@ -13159,6 +13186,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     # completion boundary even if the worker later returned a
                     # non-zero status after emitting its submission.
                     rc = 0
+                    staging_warnings = _progress_warnings(staged_submission)
             post_spent = pre_spent
             try:
                 budget_path = loop_paths(run_dir)["budget"]
@@ -13613,6 +13641,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         provider=provider or "custom",
                         started_at=iteration_started_at,
                         iter_dir=str(review_dir),
+                        staging_warnings=staging_warnings or None,
                     )
                     try:
                         cached_formal_review = goal_focus_v2.pending_formal_review(

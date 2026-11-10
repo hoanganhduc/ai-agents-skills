@@ -760,7 +760,13 @@ warning.
   fingerprint) is still recorded, or staged, as the advisory worker row it is:
   the command's `warnings` carry `negative_space_duplicate_open_row` with the
   open row's entry id, and `validate` warns about a duplicate on one approach
-  that involves a worker row. Only `negative-space add` refuses a duplicate.
+  that involves a worker row. Under the drive in enforce mode the host stages
+  the worker's submission, and the drive records the warnings that staging
+  returns (at most 10, each cut at 400 characters and scrubbed like every
+  progress string) as `staging_warnings` on the candidate's
+  `result_review_start` event in `driver_logs/progress.jsonl`; that event
+  raises no notify issue, is not a failure, and changes no stop decision. Only
+  `negative-space add` refuses a duplicate.
   `retract-iteration` leaves the dead-end row the retracted iteration wrote:
   the row is history, and recording the same dead end again adds an advisory
   duplicate with that warning.

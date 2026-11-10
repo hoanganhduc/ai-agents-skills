@@ -3894,6 +3894,244 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                         ["worker_exited_without_staging"],
                     )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "consuming a host-mediated submission needs POSIX directory descriptors",
+    )
+    def test_enforce_drive_records_the_staging_warnings_in_its_progress_log(self) -> None:
+        """An enforce drive records the duplicate dead-end warning staging returns, as information only.
+
+        The stub worker submits its iteration through the runtime with dead-end
+        flags whose mechanism repeats an open worker row of the plan's
+        approach; the host's consume stages it and returns
+        negative_space_duplicate_open_row. The drive keeps that result and
+        records the warning as staging_warnings on the result_review_start
+        event of the staged candidate. The review has no verdict and
+        max_review_waits is 1, so the drive ends review_wait_exhausted. The
+        control lane, with no open row, is a regression check: the event
+        carrying the warning raises no notify issue and is no failure, and
+        the drive's result and failure groups match the control's.
+        """
+        arl, gf = self._runtime_modules()
+        outcomes: dict[str, dict[str, Any]] = {}
+        open_entry_id = ""
+        for lane in ("control", "duplicate"):
+            with self.subTest(lane=lane):
+                base = self.provider_fixture.root / f"staging-warnings-{lane}"
+                project = base / "project"
+                loop = project / ".autoloop" / "loop"
+                project.mkdir(parents=True, mode=0o700)
+                registry_dir = self._trusted_registry_root(f"staging-warnings-{lane}")
+                init_args = arl.selftest_init_args(loop, max_iterations=3)
+                init_args.goal_focus_mode = "enforce"
+                arl.init_loop(init_args)
+                self._activate_single_direction(arl, gf, loop)
+                if lane == "duplicate":
+                    # An open worker row of approach-a with the submission's
+                    # mechanism up to case and spacing, written in one host
+                    # transaction that keeps .goal_focus private.
+                    open_row = gf.ns.build_entry(
+                        kind="dead_end",
+                        mechanism_text="induction on the  number of COLOURS",
+                        failure_summary="an earlier iteration's note",
+                        reopen_condition="a different invariant",
+                        approach_id="approach-a",
+                        campaign_id="campaign-a",
+                        evidence_ids=["E0"],
+                        writer="worker",
+                        review_status="unreviewed",
+                    )
+                    open_entry_id = open_row["entry_id"]
+                    ledger = gf.ns.NEGATIVE_SPACE_REL.as_posix()
+                    arl.commit_transaction(
+                        loop,
+                        jsonl_appends={ledger: [open_row]},
+                        expected_absent=[ledger],
+                    )
+                args = arl.selftest_drive_args(loop, registry_dir, "unused")
+                args.root = str(project)
+                args.cmd = None
+                args.provider = "claude"
+                # The stub review gives no verdict: one wait ends the drive.
+                args.max_review_waits = 1
+                profile = arl.provider_resource_limits(60, role="primary")
+                submissions: list[subprocess.CompletedProcess[str]] = []
+                phases: list[str] = []
+
+                def stub_worker(*_args, **kwargs):  # noqa: ANN002, ANN003
+                    child_env = kwargs["child_env"]
+                    evidence = (
+                        Path(child_env["AAS_AUTOLOOP_EVIDENCE_DIR"]) / "dead-end-evidence"
+                    )
+                    evidence.write_text(
+                        "the inductive step loses a colour at n = 3\n", encoding="utf-8"
+                    )
+                    evidence.chmod(0o600)
+                    # The worker's one submission, written through the runtime
+                    # in the environment the drive gives its worker.
+                    submitted = subprocess.run(
+                        [
+                            sys.executable,
+                            "-B",
+                            str(HELPER),
+                            "append-iteration",
+                            "--dir",
+                            str(loop),
+                            "--mode",
+                            "bounded-research",
+                            "--objective",
+                            "try the inductive route",
+                            "--decision",
+                            "revise",
+                            "--claim-id",
+                            "dead-end-claim",
+                            "--evidence-id",
+                            "dead-end-evidence",
+                            "--compute-none",
+                            "--dead-end-kind",
+                            "dead_end",
+                            "--dead-end-mechanism",
+                            "Induction on the number of colours",
+                            "--dead-end-failure",
+                            "the inductive step loses a colour at n = 3",
+                            "--dead-end-reopen-condition",
+                            "a different invariant for the inductive step",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=60,
+                        env={**child_env, "PYTHONDONTWRITEBYTECODE": "1"},
+                        check=False,
+                    )
+                    submissions.append(submitted)
+                    clean_attestation = _primary_resource_attestation()
+                    clean_attestation["limits"] = arl.public_resource_limits(profile)
+                    kwargs["resource_metadata"].update(clean_attestation)
+                    return submitted.returncode, False, None
+
+                def no_verdict(_run_dir, _root, phase, **_kwargs):  # noqa: ANN001, ANN003
+                    phases.append(phase)
+                    return {}
+
+                with mock.patch.dict(
+                    os.environ,
+                    {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+                    clear=False,
+                ), mock.patch.object(
+                    arl, "preflight_resource_backend", return_value=profile
+                ), mock.patch.object(
+                    arl, "run_primary_subprocess", side_effect=stub_worker
+                ) as primary, mock.patch.object(
+                    arl, "run_panel_phase_for_drive", side_effect=no_verdict
+                ), mock.patch.object(
+                    sys, "stdout", io.StringIO()
+                ), mock.patch.object(
+                    sys, "stderr", io.StringIO()
+                ):
+                    result = arl.drive_command(args)
+
+                self.assertEqual(primary.call_count, 1, result)
+                (submitted,) = submissions
+                self.assertEqual(
+                    submitted.returncode, 0, submitted.stdout + submitted.stderr
+                )
+                self.assertEqual(phases, ["result_review"], result)
+                self.assertEqual(result["reason"], "review_wait_exhausted", result)
+                pending = gf.load_pending_candidate(loop)
+                self.assertIsNotNone(pending)
+                outcomes[lane] = {
+                    "result": result,
+                    "events": [
+                        json.loads(line)
+                        for line in (loop / "driver_logs" / "progress.jsonl")
+                        .read_text(encoding="utf-8")
+                        .splitlines()
+                        if line.strip()
+                    ],
+                    "failure_groups": arl.failure_groups(loop),
+                    "candidate_id": pending["candidate_id"],
+                }
+
+        duplicate, control = outcomes["duplicate"], outcomes["control"]
+        events = duplicate["events"]
+        self.assertFalse(
+            [event for event in control["events"] if "staging_warnings" in event]
+        )
+        carrying = [event for event in events if "staging_warnings" in event]
+        self.assertEqual(
+            [event["event"] for event in carrying], ["result_review_start"], events
+        )
+        (start,) = carrying
+        (warning,) = start["staging_warnings"]
+        self.assertTrue(
+            warning.startswith(
+                "negative_space_duplicate_open_row: open negative-space row "
+                f"{open_entry_id} already records this mechanism for approach "
+                "approach-a"
+            ),
+            warning,
+        )
+        self.assertEqual(start["candidate_id"], duplicate["candidate_id"])
+        # Information only: no notify issue, no failure, no remote notice.
+        self.assertEqual(
+            start["notification"]["issues"],
+            {"reported": False, "errors": [], "failures": []},
+        )
+        self.assertIsNone(arl._failure_attempt_group(start))
+        self.assertNotIn(start["event"], arl._DEFAULT_REMOTE_NOTIFY_EVENTS)
+        self.assertNotIn(
+            "negative_space_duplicate_open_row",
+            json.dumps([event.get("notification") for event in events]),
+        )
+        # Stop arbitration and the failure groups are the control's.
+        stop_keys = ("status", "reason", "exit_code")
+        self.assertEqual(
+            {key: duplicate["result"].get(key) for key in stop_keys},
+            {key: control["result"].get(key) for key in stop_keys},
+        )
+        self.assertEqual(duplicate["failure_groups"], control["failure_groups"])
+        self.assertEqual(
+            [event["event"] for event in events],
+            [event["event"] for event in control["events"]],
+        )
+
+    def test_staging_warnings_are_bounded_and_scrubbed_for_the_progress_log(self) -> None:
+        """Staging warnings reach a progress event bounded like its other text fields, and scrubbed.
+
+        _progress_warnings keeps at most PROGRESS_WARNINGS_MAX non-blank
+        strings, each cut to PROGRESS_WARNING_MAX_CHARS characters, and gives
+        [] for a result without a warnings list. That the progress event
+        redacts an email-like or credential-shaped warning is a regression
+        check: every progress string is scrubbed.
+        """
+        arl, _gf = self._runtime_modules()
+        long_warning = "w" * (arl.PROGRESS_WARNING_MAX_CHARS + 50)
+        raw = [long_warning, "", "   ", 7, None, *[f"warning {n}" for n in range(12)]]
+        bounded = arl._progress_warnings({"warnings": raw})
+        self.assertEqual(len(bounded), arl.PROGRESS_WARNINGS_MAX)
+        self.assertEqual(bounded[0], long_warning[: arl.PROGRESS_WARNING_MAX_CHARS])
+        self.assertEqual(
+            bounded[1:],
+            [f"warning {n}" for n in range(arl.PROGRESS_WARNINGS_MAX - 1)],
+        )
+        for result in (None, {}, {"warnings": "one"}, {"warnings": None}, ["one"]):
+            self.assertEqual(arl._progress_warnings(result), [], result)
+        # Built without literal values so sanitize-check stays clean.
+        email = "ana" + chr(64) + "example.org"
+        credential = "sk-" + "a" * 24
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            arl.init_loop(arl.selftest_init_args(loop, max_iterations=3))
+            event = arl.build_progress_event(
+                loop,
+                "result_review_start",
+                extra={"staging_warnings": [f"ask {email}", f"key {credential}"]},
+            )
+        self.assertEqual(
+            event["staging_warnings"], ["ask [REDACTED_PII]", "key [REDACTED]"]
+        )
+
     def test_enforce_stage_leaves_the_success_basis_to_finalize(self) -> None:
         """An enforce-mode submission that claims success stages no success_basis; finalize decides it.
 
