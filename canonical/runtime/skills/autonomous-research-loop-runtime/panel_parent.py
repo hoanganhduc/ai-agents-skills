@@ -4698,19 +4698,70 @@ def _formal_stamp(run_dir: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# formal_policy.evaluate_formal_terminal_state folds a local stamp's Lake build
+# context into its source_digest under this binding version.
+NATIVE_SOURCE_BINDING = "native_source_context.v1"
+
+
+def _formal_context_fingerprint(project: Path) -> str | None:
+    """The strict gate's build-context fingerprint of ``project``, or None when it cannot be taken.
+
+    The gate's own project_context_snapshot hashes lakefile.lean,
+    lakefile.toml, lean-toolchain and lake-manifest.json; nothing is built.
+    The gate shipped beside this runtime is loaded in-process without writing
+    bytecode. An operator's AAS_STRICT_GATE_SCRIPT is only ever run as a
+    program, and the context it bound cannot be recomputed here, so it gives
+    None, as does a context file that is not one stable regular file.
+    """
+
+    import importlib.util
+    import sys
+
+    try:
+        import formal_policy as fp  # type: ignore
+    except ImportError:  # pragma: no cover - package-style import
+        from . import formal_policy as fp  # type: ignore
+    if os.environ.get(fp.GATE_SCRIPT_ENV, "").strip():
+        return None
+    script = fp._locate_gate_script()
+    if script is None:
+        return None
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec = importlib.util.spec_from_file_location("_aas_pointer_strict_gate", script)
+        if spec is None or spec.loader is None:
+            return None
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+    finally:
+        sys.dont_write_bytecode = previous
+    snapshot = gate.project_context_snapshot(project)
+    fingerprint = snapshot.get("fingerprint") if isinstance(snapshot, dict) else None
+    if not isinstance(fingerprint, str) or not fingerprint or snapshot.get("errors"):
+        return None
+    return fingerprint
+
+
 def _formal_pointer_freshness(
     run_dir: Path,
     stamp: Mapping[str, Any],
     runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None,
 ) -> str:
-    """Re-scan the pinned formal project and compare it with the stamp, over the stamp's own scope.
+    """Recompute the stamp's source binding on the pinned formal project, over the stamp's own scope.
 
-    "fresh" when the scan digest equals the one the stamp recorded, "stale"
-    when it differs, and "freshness unchecked" for a Kaggle binding scope, a
-    stamp without a digest, a project that does not resolve, a scan without a
-    coverage manifest, or any error. The digest compared is the scan's own
-    (``scanned_source_digest`` when a build context was folded into
-    ``source_digest``).
+    The project is scanned again and the scan digest taken over the stamp's
+    scope. A ``native_source_context.v1`` stamp bound that digest to the Lake
+    build context, so the context is hashed again (_formal_context_fingerprint)
+    and folded in as formal_policy folds it: a new toolchain, lakefile or Lake
+    manifest reads stale even when no .lean file changed. Nothing is built.
+
+    "fresh" when the result equals the stamp's ``source_digest``, "stale" when
+    it differs, and "freshness unchecked" for a Kaggle binding scope, a stamp
+    without a digest, any other ``source_binding_version`` (or a
+    ``scanned_source_digest`` without one), a project that does not resolve, a
+    scan without a coverage manifest, a build context that cannot be hashed,
+    or any error.
     """
 
     try:
@@ -4725,8 +4776,14 @@ def _formal_pointer_freshness(
         scope = scan.get("source_digest_scope")
         if not isinstance(scope, str) or scope not in {"project_sources", "whole_manifest"}:
             return "freshness unchecked"
-        staged = scan.get("scanned_source_digest") or scan.get("source_digest")
+        staged = scan.get("source_digest")
         if not isinstance(staged, str) or not staged:
+            return "freshness unchecked"
+        if "source_binding_version" not in scan and "scanned_source_digest" not in scan:
+            bound_to_context = False
+        elif scan.get("source_binding_version") == NATIVE_SOURCE_BINDING:
+            bound_to_context = True
+        else:
             return "freshness unchecked"
         pin = fp.read_host_pin(run_dir) or None
         root = str((pin or {}).get("root") or "").strip()
@@ -4745,6 +4802,15 @@ def _formal_pointer_freshness(
             return "freshness unchecked"
         prefix = fp._run_dir_prefix(Path(run_dir), project) if scope == "project_sources" else ""
         digest, _files = fp._coverage_digest(coverage, exclude_prefix=prefix or None)
+        if bound_to_context:
+            context = _formal_context_fingerprint(project)
+            if context is None:
+                return "freshness unchecked"
+            digest = hashlib.sha256(
+                json.dumps(
+                    [NATIVE_SOURCE_BINDING, digest, context], separators=(",", ":")
+                ).encode()
+            ).hexdigest()
         return "fresh" if digest == staged else "stale"
     except Exception:  # noqa: BLE001 - a pointer that cannot be re-checked says so
         return "freshness unchecked"
@@ -4771,8 +4837,9 @@ def brief_pointer_lines(
 
     Freshness: a panel_accepted row is "fresh" while its live evidence bytes
     equal the archived snapshots and "stale" otherwise; a formal stamp is
-    re-scanned (``formal_scan_runner``, by default the gate's) and compared
-    over the stamp's scope; everything else is "freshness unchecked".
+    re-scanned (``formal_scan_runner``, by default the gate's), its build
+    context hashed again when the stamp is bound to one, and compared over the
+    stamp's scope; everything else is "freshness unchecked".
 
     Lineage is approach_id, else campaign_id, else "loop"; the formal stamp,
     which no record ties to an approach, has lineage "loop". Each lineage gets

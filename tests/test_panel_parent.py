@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import ast
@@ -3071,7 +3072,7 @@ class BriefPointerTests(unittest.TestCase):
             stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
             stamp["gate"]["scan"]["scanned_source_digest"] = staged_digest
             stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
-            with self.subTest("a build-bound stamp is compared on the digest its scan recorded"):
+            with self.subTest("a scan digest bound without a known binding version is unchecked"):
                 (formal,) = [
                     line
                     for line in pp.brief_pointer_lines(
@@ -3083,7 +3084,7 @@ class BriefPointerTests(unittest.TestCase):
                     )
                     if line.startswith("- [formal_checked] ")
                 ]
-                self.assertTrue(formal.endswith("; fresh"), formal)
+                self.assertTrue(formal.endswith("; freshness unchecked"), formal)
             self._write_formal_stamp(
                 root, digest=staged_digest, scope="host_request_and_complete_source_snapshot"
             )
@@ -3107,6 +3108,176 @@ class BriefPointerTests(unittest.TestCase):
                 ]
                 self.assertTrue(formal.endswith("; freshness unchecked"), formal)
                 self.assertEqual(calls, [])
+
+    @staticmethod
+    def _strict_gate() -> object:
+        """The strict gate module, loaded from the repository for its scan and context snapshot."""
+
+        spec = importlib.util.spec_from_file_location(
+            "_brief_pointer_test_strict_gate",
+            REPO_ROOT
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_a_build_bound_formal_stamp_is_compared_with_its_build_context(self) -> None:
+        """A native_source_context.v1 stamp reads stale when its Lake build context changes, with the same .lean files.
+
+        The stamp comes from formal_policy.evaluate_formal_terminal_state over
+        the gate's own scan and build-context snapshot (build and audit
+        stubbed, no Lean). On ecade7e the pointer compared only the scan
+        digest, so a new lean-toolchain, lakefile.toml or lake-manifest.json
+        still read fresh while the host's reverify_formal_evidence reported a
+        source_digest mismatch. A context file that cannot be hashed and an
+        unknown binding version now read "freshness unchecked". Fresh for the
+        unchanged project, agreeing with the host re-check, and stale for a
+        changed .lean file are regression checks.
+        """
+
+        import formal_policy as fp  # noqa: E402
+
+        gate = self._strict_gate()
+
+        def runner(name: str, payload: dict) -> dict:
+            project = Path(payload["project"])
+            if name == "lean_strict_verification_gate.scan":
+                report = gate.scan_input(project, "final_candidate", set())
+                return {"ok": bool(report.get("ok")), "report": report}
+            if name == "lean_strict_verification_gate.verify_typecheck":
+                fingerprint = gate.project_context_snapshot(project)["fingerprint"]
+                return {
+                    "ok": True,
+                    "report": {
+                        "lean_check_status": "typechecked",
+                        "verification_project_context_fingerprint": fingerprint,
+                        "post_verification_project_context_fingerprint": fingerprint,
+                    },
+                }
+            if name == "lean_strict_verification_gate.axiom_audit":
+                return {
+                    "ok": True,
+                    "report": {
+                        "ok": True,
+                        "axiom_audit_status": "audited",
+                        "declarations": [
+                            {"declaration": "two_eq", "status": "resolved", "axioms": []}
+                        ],
+                        "unsanctioned_axioms": [],
+                        "declarations_unparsed": [],
+                    },
+                }
+            return {"ok": False, "status": "unexpected", "report": {}}
+
+        def freshness(loop: Path) -> str:
+            (formal,) = [
+                line
+                for line in pp.brief_pointer_lines(
+                    loop,
+                    exclude_lineage=None,
+                    max_chars=10_000,
+                    environ={},
+                    formal_scan_runner=runner,
+                )
+                if line.startswith("- [formal_checked] ")
+            ]
+            return formal.rsplit("; ", 1)[1]
+
+        context = {
+            "lakefile.toml": 'name = "fixture"\ndefaultTargets = ["Main"]\n',
+            "lean-toolchain": "leanprover/lean4:v4.9.0\n",
+            "lake-manifest.json": json.dumps({"version": 7, "packages": []}) + "\n",
+        }
+        changed = {
+            "lean-toolchain": "leanprover/lean4:v4.20.0\n",
+            "lakefile.toml": context["lakefile.toml"] + 'moreLeanArgs = ["-DautoImplicit=true"]\n',
+            "lake-manifest.json": json.dumps(
+                {"version": 7, "packages": [{"name": "mathlib", "rev": "deadbeef"}]}
+            )
+            + "\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, clear=False):
+            os.environ.pop(fp.GATE_SCRIPT_ENV, None)
+            loop = Path(tmp) / "loop"
+            project = loop / "formal"
+            project.mkdir(parents=True)
+            (loop / "loop_state.json").write_text(
+                json.dumps({"schema_version": 1}), encoding="utf-8"
+            )
+            for name, text in context.items():
+                (project / name).write_text(text, encoding="utf-8")
+            main = project / "Main.lean"
+            main.write_text("theorem two_eq : 1 + 1 = 2 := rfl\n", encoding="utf-8")
+            stamp = fp.evaluate_formal_terminal_state(loop, runner=runner, reason="test")
+            scan = stamp["gate"]["scan"]
+            self.assertEqual(stamp["terminal_state"], "sorry_free_artifact", stamp)
+            self.assertEqual(scan["source_binding_version"], "native_source_context.v1")
+            self.assertNotEqual(scan["source_digest"], scan["scanned_source_digest"])
+
+            with self.subTest("regression check: the unchanged project is fresh"):
+                self.assertEqual(freshness(loop), "fresh")
+                self.assertEqual(
+                    fp.reverify_formal_evidence(loop, runner=runner)["status"], "reverified"
+                )
+
+            for name, text in changed.items():
+                with self.subTest(f"a changed {name} with the same .lean files is stale"):
+                    (project / name).write_text(text, encoding="utf-8")
+                    try:
+                        self.assertEqual(freshness(loop), "stale")
+                        self.assertEqual(
+                            fp.reverify_formal_evidence(loop, runner=runner)["detail"],
+                            "source_digest_mismatch",
+                        )
+                    finally:
+                        (project / name).write_text(context[name], encoding="utf-8")
+
+            with self.subTest("regression check: a changed .lean file is stale"):
+                main.write_text("theorem two_eq : 1 + 1 = 2 := by decide\n", encoding="utf-8")
+                try:
+                    self.assertEqual(freshness(loop), "stale")
+                finally:
+                    main.write_text("theorem two_eq : 1 + 1 = 2 := rfl\n", encoding="utf-8")
+
+            toolchain = project / "lean-toolchain"
+            with self.subTest("a build context that cannot be hashed is unchecked"):
+                toolchain.unlink()
+                toolchain.mkdir()
+                try:
+                    self.assertEqual(freshness(loop), "freshness unchecked")
+                finally:
+                    toolchain.rmdir()
+                    toolchain.write_text(context["lean-toolchain"], encoding="utf-8")
+
+            with self.subTest("an operator's gate script is never loaded, so the context is unchecked"):
+                with mock.patch.dict(
+                    os.environ, {fp.GATE_SCRIPT_ENV: str(Path(gate.__file__))}, clear=False
+                ):
+                    self.assertEqual(freshness(loop), "freshness unchecked")
+
+            stamp_path = project / "terminal_state.json"
+            original = stamp_path.read_bytes()
+            for label, version in (
+                ("a later binding version", "native_source_context.v2"),
+                ("a null binding version", None),
+            ):
+                with self.subTest(f"{label} is unchecked"):
+                    bound = json.loads(original)
+                    bound["gate"]["scan"]["source_binding_version"] = version
+                    stamp_path.write_text(json.dumps(bound), encoding="utf-8")
+                    try:
+                        self.assertEqual(freshness(loop), "freshness unchecked")
+                    finally:
+                        stamp_path.write_bytes(original)
+
+            with self.subTest("regression check: the restored project is fresh again"):
+                self.assertEqual(freshness(loop), "fresh")
 
     def test_the_formal_stamp_is_the_one_pointer_of_lineage_loop(self) -> None:
         """A formal stamp and a ledger row with no approach or campaign share lineage loop, and only the stamp is shown.

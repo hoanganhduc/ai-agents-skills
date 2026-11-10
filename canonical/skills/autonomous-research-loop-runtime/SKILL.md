@@ -837,9 +837,18 @@ label taken from host records only:
 
 | Label | Source | Freshness |
 |---|---|---|
-| `formal_checked` | `formal/terminal_state.json` at `sorry_free_artifact` | the pinned project is scanned again and its digest compared over the stamp's scope: `fresh` or `stale`; a Kaggle binding scope or any failure gives `freshness unchecked` |
+| `formal_checked` | `formal/terminal_state.json` at `sorry_free_artifact` | the pinned project is scanned again over the stamp's scope, its build context hashed again when the stamp is bound to one, and the result compared with the stamp's `source_digest`: `fresh` or `stale`; a Kaggle binding scope, another binding version or any failure gives `freshness unchecked` |
 | `panel_accepted`, "accepted by panel review" | a banked ledger row whose archived candidate and `result_review_summary.v2` pass the host's archive, binding, boundary and coverage checks; it names the `source_candidate_fingerprint` and the evidence ids | `fresh` while the live evidence bytes equal the archived snapshots, else `stale` |
 | `unchecked` | anything else: a banked row that fails those checks (a raw `result_review.v1` included) and a proof artifact that a ledger row cites | `freshness unchecked` |
+
+A local formal stamp binds its scan digest to the Lake build context
+(`source_binding_version` `native_source_context.v1`). Its pointer hashes
+`lakefile.lean`, `lakefile.toml`, `lean-toolchain` and `lake-manifest.json`
+again with the strict gate's own context snapshot, builds nothing, and folds
+them in as the host formal policy does, so a new toolchain, lakefile or Lake
+manifest reads `stale` even when no `.lean` file changed. A context file that
+cannot be hashed, or a gate set through `AAS_STRICT_GATE_SCRIPT` (which only
+ever runs as a program), gives `freshness unchecked`.
 
 No pointer says verified, and words inside an artifact never change a label.
 A pointer's lineage is its approach id, else its campaign id, else `loop`.
