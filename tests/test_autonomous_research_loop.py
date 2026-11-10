@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -1824,6 +1825,31 @@ class RuntimeDriveTests(unittest.TestCase):
         _primary_containment_available(),
         "driving real iterations requires a working bubblewrap",
     )
+    def test_max_failures_stop_writes_host_handoff(self) -> None:
+        """A drive that stops at max_failures leaves host_handoff.md and the recovery.md pointer."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration("import sys; sys.exit(1)")
+            res = self._drive(loop, reg, cmd, "--max-failures", "1")
+            self.assertEqual(res.returncode, 3, res.stderr)
+            result = json.loads(res.stdout)
+            self.assertEqual(result["reason"], "max_failures", result)
+            self.assertEqual(result["host_handoff"]["status"], "written", result)
+            text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("max_failures", text)
+            self.assertIn("## Part 2: Record", text)
+            self.assertEqual(
+                (loop / "recovery.md").read_text(encoding="utf-8").splitlines().count(
+                    LoopEndingsTests.HOST_POINTER
+                ),
+                1,
+            )
+
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_stops_when_zero_exit_never_advances_the_ledger(self) -> None:
         """A silent agent must not hot-spin the driver.
 
@@ -3630,6 +3656,122 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 preflight.assert_called_once_with(60, role="primary")
                 primary.assert_called_once()
                 self.assertTrue(primary.call_args.kwargs["trusted_local"])
+
+    def test_max_failures_drive_writes_host_handoff_without_a_model_call(self) -> None:
+        """A drive stopped by max_failures writes host_handoff.md from records and points recovery.md at it.
+
+        The primary is patched to fail and the panel to raise, so nothing runs
+        a model; the drive result and its drive_stop event report the outcome.
+        """
+        arl, _gf = self._runtime_modules()
+        base = self.provider_fixture.root / "host-handoff-max-failures"
+        project = base / "project"
+        loop = project / ".autoloop" / "loop"
+        project.mkdir(parents=True, mode=0o700)
+        registry_dir = self._trusted_registry_root("host-handoff-max-failures")
+        init_args = arl.selftest_init_args(loop, max_iterations=4)
+        init_args.goal_focus_mode = "off"
+        arl.init_loop(init_args)
+        args = arl.selftest_drive_args(loop, registry_dir, "/bin/false")
+        args.root = str(project)
+        args.max_failures = 1
+        profile = arl.provider_resource_limits(60, role="primary")
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+            clear=False,
+        ), mock.patch.object(
+            arl, "preflight_resource_backend", return_value=profile
+        ), mock.patch.object(
+            arl, "run_primary_subprocess", return_value=(1, False, None)
+        ) as primary, mock.patch.object(
+            arl,
+            "run_panel_phase_for_drive",
+            side_effect=AssertionError("the host handoff must not call a panel"),
+        ), mock.patch.object(
+            sys, "stdout", io.StringIO()
+        ), mock.patch.object(
+            sys, "stderr", io.StringIO()
+        ):
+            result = arl.drive_command(args)
+
+        primary.assert_called_once()
+        self.assertEqual(result["reason"], "max_failures", result)
+        self.assertEqual(result["host_handoff"]["status"], "written", result)
+        text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+        self.assertIn("## Part 1: For the reader", text)
+        self.assertIn("max_failures", text)
+        recovery = (loop / "recovery.md").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(recovery.count(LoopEndingsTests.HOST_POINTER), 1)
+        stops = [
+            json.loads(line)
+            for line in (loop / "driver_logs" / "progress.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if '"drive_stop"' in line
+        ]
+        self.assertEqual(stops[-1]["host_handoff"], "written")
+
+    def test_enforce_stage_leaves_the_success_basis_to_finalize(self) -> None:
+        """An enforce-mode submission that claims success stages no success_basis; finalize decides it.
+
+        Guard for the lane check in append_iteration: the base never wrote the
+        field, so this held there too (regression check).
+        """
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=1)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            self._activate_single_direction(arl, gf, loop)
+            dispatch = gf.prepare_iteration_dispatch(
+                loop,
+                executor_provider="claude",
+                executor_family="anthropic",
+                executor_attestation=_provider_attestation("claude", loop),
+                started_at="2026-07-29T12:00:00Z",
+            )["dispatch"]
+            write_text_evidence(loop, dispatch, "success-evidence")
+            args = arl.build_parser().parse_args(
+                [
+                    "append-iteration",
+                    "--dir",
+                    str(loop),
+                    "--mode",
+                    "bounded-research",
+                    "--objective",
+                    "close the goal",
+                    "--decision",
+                    "stop",
+                    "--stop-reason",
+                    "success",
+                    "--claim-id",
+                    "success-claim",
+                    "--evidence-id",
+                    "success-evidence",
+                    "--compute-none",
+                ]
+            )
+            staged = arl.append_iteration(
+                args,
+                _host_control={
+                    "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                    "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                    "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                    "AAS_AUTOLOOP_ITERATION_STARTED_AT": "2026-07-29T12:00:00Z",
+                    "AAS_AUTOLOOP_RESOURCE_ATTESTATION": _primary_resource_attestation(),
+                },
+            )
+            self.assertEqual(staged["staging_status"], "staged", staged)
+            candidate = json.loads(
+                (loop / "iteration_candidate.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                (candidate["record"]["decision"], candidate["record"]["stop_reason"]),
+                ("stop", "success"),
+            )
+            self.assertNotIn("success_basis", candidate["record"])
 
     def test_trusted_local_invalid_limits_fail_before_legacy_registration(self) -> None:
         arl, _gf = self._runtime_modules()
@@ -10771,3 +10913,741 @@ class StateIndexAndHandoffTests(unittest.TestCase):
             _markdown_section(drw_skill.read_text(encoding="utf-8"), "## Skill handoffs").split()
         )
         self.assertIn("two-part `handoff.md` form under Recovery in `autonomous-research-loop`", drw)
+
+
+class LoopEndingsTests(unittest.TestCase):
+    """How a loop ends: the collection contract, the host handoff and what a success stop stands on."""
+
+    # The contract the last iteration the budget allows carries, per lane, and
+    # the sentence that names the handoff form. Pinned as written.
+    COLLECTION = (
+        "This is the last iteration the budget allows. Start no new exploration: "
+        "consolidate what exists, update STATE.md, write handoff.md in the two-part "
+        "handoff form, stage the best artifact you already have, and record decision "
+        "stop or blocked."
+    )
+    COLLECTION_ENFORCE = (
+        "This is the last iteration the budget allows. Start no new exploration: "
+        "consolidate what exists, update STATE.md, write handoff.md in the two-part "
+        "handoff form, stage the best artifact you already have with its evidence "
+        "for host review, and submit it with decision stop or blocked."
+    )
+    HANDOFF_FORM = (
+        "The two-part form is Part 1, for the reader, then Part 2, the record, under "
+        "the headings Established; Guessed or unverified; Decisions and reasons; "
+        "Tried and failed, and why; User constraints (verbatim); Next steps; "
+        "Identifiers."
+    )
+    SELF_CHECK = (
+        "(3) self-check the result; independent review is recorded only by the "
+        "host or by a reviewer the host dispatches;"
+    )
+    HOST_POINTER = "- Host handoff (written from records, no model call): host_handoff.md"
+    LABELS = {
+        "host_formal_verdict": "success (verified by host formal check)",
+        "host_result_review": "success (accepted by panel review)",
+        "self_reported": "success (self-reported)",
+    }
+    UNCHECKED_WORDS = re.compile(r"\b(?:proved|verified)\b", re.IGNORECASE)
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @staticmethod
+    def _rows(loop: Path) -> list[dict[str, Any]]:
+        return [
+            json.loads(line)
+            for line in (loop / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def _sagemath_artifact(loop: Path, evidence_id: str) -> None:
+        """A sagemath proof artifact the worker wrote, checker status included."""
+        proof = loop / "proofs" / f"{evidence_id}.sage"
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("# the worker's own search script\n", encoding="utf-8")
+        artifacts = loop / "proof_artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / f"{evidence_id}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "id": evidence_id,
+                    "artifact_type": "sagemath",
+                    "machine_checkable": True,
+                    "target": "the loop goal",
+                    "proof_path": f"proofs/{evidence_id}.sage",
+                    "checker": {"name": "sage", "status": "passed"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def test_collection_contract_only_on_final_allowed_iteration(self) -> None:
+        """Only the last iteration the budget allows is told to collect instead of explore.
+
+        With max_iterations 2, spent 0 gives no contract and spent 1 gives the
+        lane's contract and the handoff form, right after the base and before
+        the compute block. A budget.json that cannot be read, or whose counts
+        are not integers, gives no contract and no error; on the base, which
+        never added a contract, that part held too (regression check).
+        """
+        arl = self._runtime()
+        lanes = (("legacy", "off"), ("monitor", "monitor"), ("enforce", "enforce"))
+        unreadable_budgets = (
+            "{not json",
+            "[]",
+            "[" * 100_000 + "]" * 100_000,
+            json.dumps({"max_iterations": True, "spent_iterations": 1}),
+            json.dumps({"max_iterations": "2", "spent_iterations": 1}),
+            json.dumps({"max_iterations": 2, "spent_iterations": [1]}),
+            json.dumps({"max_iterations": 2, "spent_iterations": True}),
+        )
+        for lane, mode in lanes:
+            with self.subTest(lane=lane), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                init_args = arl.selftest_init_args(loop, max_iterations=2)
+                init_args.goal_focus_mode = mode
+                arl.init_loop(init_args)
+                contract, other = (
+                    (self.COLLECTION_ENFORCE, self.COLLECTION)
+                    if lane == "enforce"
+                    else (self.COLLECTION, self.COLLECTION_ENFORCE)
+                )
+                first = arl.iteration_prompt(loop)
+                self.assertNotIn("This is the last iteration the budget allows.", first)
+                self.assertNotIn(self.HANDOFF_FORM, first)
+
+                budget_path = loop / "budget.json"
+                budget = json.loads(budget_path.read_text(encoding="utf-8"))
+                budget["spent_iterations"] = 1
+                budget_path.write_text(json.dumps(budget), encoding="utf-8")
+                last = arl.iteration_prompt(loop)
+                self.assertEqual(last.count(contract), 1)
+                self.assertNotIn(other, last)
+                self.assertIn(
+                    StateIndexAndHandoffTests.STATE_RULE
+                    + "\n\n"
+                    + contract
+                    + " "
+                    + self.HANDOFF_FORM,
+                    last,
+                )
+                self.assertLess(
+                    last.index(contract), last.index("## Compute policy (binding)")
+                )
+                self.assertEqual(last, arl.iteration_prompt(loop))
+                arl.assert_panel_prompt_safe(last, environ={})
+
+                for raw in unreadable_budgets:
+                    budget_path.write_text(raw, encoding="utf-8")
+                    self.assertNotIn(
+                        "This is the last iteration the budget allows.",
+                        arl.iteration_prompt(loop),
+                    )
+
+    def test_legacy_prompt_self_check_sentence(self) -> None:
+        """Step (3) of the legacy and monitor prompts asks for a self-check and names who records independent review.
+
+        The runtime SKILL.md describes the prompt the same way.
+        """
+        arl = self._runtime()
+        for mode in ("off", "monitor"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                init_args = arl.selftest_init_args(loop, max_iterations=3)
+                init_args.goal_focus_mode = mode
+                arl.init_loop(init_args)
+                prompt = arl.iteration_prompt(loop)
+                self.assertEqual(prompt.count(self.SELF_CHECK), 1)
+                self.assertNotIn("verify the result independently", prompt)
+        skill = (
+            REPO_ROOT / "canonical" / "skills" / "autonomous-research-loop-runtime" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        flat = " ".join(skill.split())
+        described = flat[flat.index("`<prompt>` is the standard one-iteration contract") :]
+        described = described[: described.index("--print-prompt")]
+        self.assertIn("self-check the result", described)
+        self.assertNotIn("verify independently", described)
+
+    def test_host_handoff_from_records_and_pointer_survives_append(self) -> None:
+        """The host rebuilds host_handoff.md from records alone, and recovery.md keeps pointing at it.
+
+        No provider runner, panel or process is called. The file carries the
+        two-part headings, every iteration number under Decisions and reasons,
+        the worker's dead-end row with its writer and review labels under Tried
+        and failed, and the cited proof artifact as self-reported; record text
+        appears only on "| " lines. A regular handoff.md at least as new as the
+        last row skips the write; an older one, or a link, does not. A later
+        legacy append keeps the file and the pointer.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=5)
+            write_proof_artifact(loop, "proof-1")
+            common = ["append-iteration", "--dir", str(loop), "--mode", "bounded-research"]
+            run_helper(
+                *common,
+                "--objective",
+                "OBJECTIVE_ONE",
+                "--decision",
+                "continue",
+                "--evidence-id",
+                "E1",
+                "--dead-end-kind",
+                "dead_end",
+                "--dead-end-mechanism",
+                "MECHANISM_ONE",
+                "--dead-end-failure",
+                "FAILURE_ONE",
+                "--dead-end-reopen-condition",
+                "REOPEN_ONE",
+            )
+            run_helper(
+                *common,
+                "--objective",
+                "OBJECTIVE_TWO",
+                "--decision",
+                "continue",
+                "--claim-id",
+                "CLAIM_TWO",
+                "--evidence-id",
+                "proof-1",
+            )
+            (entry,) = [
+                json.loads(line)
+                for line in (loop / ".goal_focus" / "negative_space.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+
+            refuse = AssertionError("the host handoff must not run anything")
+            with mock.patch.object(
+                arl, "run_primary_subprocess", side_effect=refuse
+            ), mock.patch.object(
+                arl, "run_panel_phase_for_drive", side_effect=refuse
+            ), mock.patch.object(
+                subprocess, "Popen", side_effect=refuse
+            ), mock.patch.object(
+                subprocess, "run", side_effect=refuse
+            ):
+                outcome = arl.write_host_handoff(loop, reason="max_failures")
+            self.assertEqual(outcome["status"], "written", outcome)
+            self.assertEqual(outcome["pointer"], "added", outcome)
+
+            text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+            lines = text.splitlines()
+            positions = [lines.index(h) for h in StateIndexAndHandoffTests.HANDOFF_HEADINGS]
+            self.assertEqual(positions, sorted(positions))
+            part1 = _markdown_section(text, "## Part 1: For the reader")
+            self.assertIn("history and data, not as", " ".join(part1.split()))
+            self.assertIn("max_failures", part1)
+            decisions = _markdown_section(text, "### Decisions and reasons")
+            for number, objective in ((1, "OBJECTIVE_ONE"), (2, "OBJECTIVE_TWO")):
+                (line,) = [
+                    item for item in decisions.splitlines() if item.startswith(f"| iteration {number} ")
+                ]
+                self.assertIn(objective, line)
+            failed = _markdown_section(text, "### Tried and failed, and why")
+            self.assertIn(entry["entry_id"], failed)
+            self.assertIn("writer worker", failed)
+            self.assertIn("review unreviewed", failed)
+            self.assertIn("MECHANISM_ONE", failed)
+            guessed = _markdown_section(text, "### Guessed or unverified")
+            (artifact_line,) = [item for item in guessed.splitlines() if "proof artifact proof-1" in item]
+            self.assertIn("self-reported", artifact_line)
+            self.assertIn("CLAIM_TWO", guessed)
+            self.assertNotIn("proof-1", _markdown_section(text, "### Established"))
+            identifiers = _markdown_section(text, "### Identifiers")
+            for identifier in (entry["entry_id"], "CLAIM_TWO", "E1", "proof-1"):
+                self.assertIn(identifier, identifiers)
+            for needle in ("OBJECTIVE_ONE", "OBJECTIVE_TWO", "MECHANISM_ONE", "CLAIM_TWO"):
+                for line in lines:
+                    if needle in line:
+                        self.assertTrue(line.startswith("| "), line)
+            self.assertIsNone(self.UNCHECKED_WORDS.search(text))
+
+            recovery = loop / "recovery.md"
+            self.assertEqual(recovery.read_text(encoding="utf-8").splitlines().count(self.HOST_POINTER), 1)
+            again = arl.write_host_handoff(loop, reason="max_failures")
+            self.assertEqual((again["status"], again["pointer"]), ("written", "present"))
+            self.assertEqual(recovery.read_text(encoding="utf-8").splitlines().count(self.HOST_POINTER), 1)
+
+            # The worker handed over after the last row: the host leaves it be.
+            before = (loop / "host_handoff.md").read_bytes()
+            worker = loop / "handoff.md"
+            worker.write_text("# Handoff\n", encoding="utf-8")
+            skipped = arl.write_host_handoff(loop, reason="user_stop")
+            self.assertEqual(skipped["status"], "skipped", skipped)
+            self.assertEqual((loop / "host_handoff.md").read_bytes(), before)
+            # A handoff older than the last row does not count.
+            moment = arl.parse_iso(self._rows(loop)[-1]["timestamp"]).timestamp()
+            os.utime(worker, (moment - 3600, moment - 3600))
+            self.assertEqual(arl.write_host_handoff(loop, reason="user_stop")["status"], "written")
+            self.assertIn("user_stop", (loop / "host_handoff.md").read_text(encoding="utf-8"))
+            if os.name == "posix":
+                # Neither does a link, however new its target.
+                worker.unlink()
+                fresh = Path(tmp) / "fresh_handoff.md"
+                fresh.write_text("# Handoff\n", encoding="utf-8")
+                worker.symlink_to(fresh)
+                self.assertEqual(arl.write_host_handoff(loop, reason="done")["status"], "written")
+
+            # A later legacy append rewrites recovery.md and keeps both pointers.
+            handoff = (loop / "host_handoff.md").read_bytes()
+            append_iteration(loop, "continue")
+            recovery_lines = recovery.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(recovery_lines.count(StateIndexAndHandoffTests.STATE_POINTER), 1)
+            self.assertEqual(recovery_lines.count(self.HOST_POINTER), 1)
+            self.assertEqual((loop / "host_handoff.md").read_bytes(), handoff)
+            self.assertEqual(arl.validate_loop_dir(loop)["errors"], [])
+
+    def test_drive_stop_writes_host_handoff(self) -> None:
+        """A drive that stops writes host_handoff.md and reports it, unless the worker's handoff.md is current.
+
+        STOP_REQUESTED ends the drive before any iteration runs, so no
+        containment is needed. The drive result and its drive_stop event carry
+        the outcome.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            _init_loop(loop, reg, max_iterations=3)
+            append_iteration(loop, "continue", objective="DRIVE_OBJECTIVE")
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            argv = [
+                sys.executable,
+                "-B",
+                str(HELPER),
+                "drive",
+                "--dir",
+                str(loop),
+                "--root",
+                str(loop),
+                "--cmd",
+                _py_iteration("import sys; sys.exit(1)"),
+            ]
+            env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(reg)})
+
+            def drive() -> dict[str, Any]:
+                completed = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=120,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                return json.loads(completed.stdout)
+
+            result = drive()
+            self.assertEqual(result["reason"], "done", result)
+            self.assertEqual(result["host_handoff"]["status"], "written", result)
+            text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("## Part 2: Record", text)
+            self.assertIn("DRIVE_OBJECTIVE", _markdown_section(text, "### Decisions and reasons"))
+            stops = [
+                json.loads(line)
+                for line in (loop / "driver_logs" / "progress.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if '"drive_stop"' in line
+            ]
+            self.assertEqual(stops[-1]["host_handoff"], "written")
+
+            before = (loop / "host_handoff.md").read_bytes()
+            (loop / "handoff.md").write_text("# Handoff\n", encoding="utf-8")
+            again = drive()
+            self.assertEqual(again["host_handoff"]["status"], "skipped", again)
+            self.assertEqual((loop / "host_handoff.md").read_bytes(), before)
+
+    def test_self_reported_success_labels(self) -> None:
+        """A success the host never checked records self_reported and is shown as such.
+
+        One legacy success stands on a sagemath artifact the worker wrote; the
+        other is an ordinary success beside a leftover sorry_free_artifact
+        formal/terminal_state.json, which never counts, nor does a drive_stop
+        event that names that verdict. status, done and the notification show
+        "success (self-reported)" and never say proved or verified.
+        """
+        arl = self._runtime()
+        import formal_policy as fp  # noqa: WPS
+
+        for case in ("sagemath_artifact", "leftover_terminal_state"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                init_loop(loop, max_iterations=3)
+                if case == "sagemath_artifact":
+                    evidence = "sage-1"
+                    self._sagemath_artifact(loop, evidence)
+                else:
+                    evidence = "proof-1"
+                    write_proof_artifact(loop, evidence)
+                    (loop / "formal").mkdir()
+                    (loop / "formal" / "terminal_state.json").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": fp.TERMINAL_STATE_SCHEMA,
+                                "writer": fp.HOST_WRITER,
+                                "terminal_state": "sorry_free_artifact",
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                append_iteration(loop, "stop", evidence_id=evidence, stop_reason="success")
+                (row,) = self._rows(loop)
+                expected = {"basis": "self_reported", "checked_at": row["timestamp"]}
+                self.assertEqual(row["success_basis"], expected)
+                self.assertNotIn("formal_terminal_state", row)
+
+                status = json.loads(run_helper("status", "--dir", str(loop)).stdout)
+                self.assertEqual(
+                    status["success"],
+                    {"iteration": 1, **expected, "label": "success (self-reported)"},
+                )
+                done = json.loads(run_helper("done", "--dir", str(loop)).stdout)
+                self.assertTrue(done["done"])
+                self.assertEqual(done["success_label"], "success (self-reported)")
+
+                event = arl.build_progress_event(
+                    loop,
+                    "drive_stop",
+                    extra={
+                        "terminal_reason": "done",
+                        "formal_terminal_state": "sorry_free_artifact",
+                    },
+                )
+                reason = event["notification"]["sections"]["decision_reason"]
+                self.assertTrue(reason.startswith("success (self-reported)"), reason)
+                renderings = (event["text"], event["text_html"], event["text_compact"])
+                for rendering in renderings:
+                    self.assertIn("success (self-reported)", rendering)
+                for shown in (json.dumps(status), json.dumps(done), *renderings):
+                    self.assertIsNone(self.UNCHECKED_WORDS.search(shown), shown)
+
+    def test_success_basis_reads_only_the_rows_own_fields(self) -> None:
+        """success_basis_for_row derives the basis from the row alone and never raises on malformed fields."""
+        arl = self._runtime()
+        stamp = {"terminal_state": "sorry_free_artifact", "decided_at": "2026-11-10T00:10:00Z"}
+        recheck = {"status": "reverified", "checked_at": "2026-11-10T01:00:00Z"}
+        summary = {"schema_version": "result_review_summary.v2", "status": "passed"}
+        legacy = {
+            "decision": "stop",
+            "stop_reason": "proof_found",
+            "timestamp": "2026-11-10T00:00:00Z",
+        }
+        goal = {
+            "decision": "stop",
+            "stop_reason": "goal_obligations_satisfied_after_review",
+            "bank_status": "accepted",
+            "result_review": summary,
+            "finalized_at": "2026-11-10T02:00:00Z",
+            "timestamp": "2026-11-10T00:30:00Z",
+        }
+        self_legacy = {"basis": "self_reported", "checked_at": "2026-11-10T00:00:00Z"}
+        self_goal = {"basis": "self_reported", "checked_at": "2026-11-10T00:30:00Z"}
+        formal = {"basis": "host_formal_verdict", "checked_at": "2026-11-10T01:00:00Z"}
+        review = {"basis": "host_result_review", "checked_at": "2026-11-10T02:00:00Z"}
+        cases = (
+            ("legacy success", legacy, self_legacy),
+            ("normalized success reason", {**legacy, "stop_reason": "Proof-Found"}, self_legacy),
+            ("legacy formal success", {**legacy, "formal_terminal_state": stamp, "host_reverification": recheck}, formal),
+            ("stamp with a mismatched recheck", {**legacy, "formal_terminal_state": stamp, "host_reverification": {**recheck, "status": "mismatch"}}, self_legacy),
+            ("recheck without the stamp", {**legacy, "host_reverification": recheck}, self_legacy),
+            ("stamp at another state", {**legacy, "formal_terminal_state": {"terminal_state": "open_ledger"}, "host_reverification": recheck}, self_legacy),
+            ("recheck without its time", {**legacy, "formal_terminal_state": stamp, "host_reverification": {"status": "reverified"}}, {"basis": "host_formal_verdict", "checked_at": "2026-11-10T00:00:00Z"}),
+            ("terminal-state words elsewhere", {**legacy, "terminal_state": "sorry_free_artifact", "formal_terminal_state_path": "formal/terminal_state.json"}, self_legacy),
+            ("banked goal success", goal, review),
+            ("banked goal success with a formal recheck", {**goal, "formal_terminal_state": stamp, "host_reverification": recheck}, formal),
+            ("raw v1 review", {**goal, "result_review": {"schema_version": "result_review.v1", "verdict": "pass"}}, review),
+            ("goal success without finalized_at", {**goal, "finalized_at": ""}, self_goal),
+            ("goal success with a failed review", {**goal, "result_review": {**summary, "status": "failed"}}, self_goal),
+            ("goal success not accepted", {**goal, "bank_status": "rejected"}, self_goal),
+            ("goal success with an unknown review schema", {**goal, "result_review": {"schema_version": "x", "status": "passed"}}, self_goal),
+            ("blocked", {**legacy, "decision": "blocked"}, None),
+            ("continue", {**legacy, "decision": "continue"}, None),
+            ("honest negative stop", {**legacy, "stop_reason": "formal_open_ledger"}, None),
+            ("budget stop", {**legacy, "stop_reason": "budget_exhausted"}, None),
+            ("list stop reason", {**legacy, "stop_reason": ["proof_found"]}, None),
+            ("list decision", {**legacy, "decision": ["stop"]}, None),
+            ("list stamp", {**legacy, "formal_terminal_state": [stamp], "host_reverification": recheck}, self_legacy),
+            ("list recheck status", {**legacy, "formal_terminal_state": stamp, "host_reverification": {"status": ["reverified"]}}, self_legacy),
+            ("object recheck time", {**legacy, "formal_terminal_state": stamp, "host_reverification": {"status": "reverified", "checked_at": {"t": 1}}}, {"basis": "host_formal_verdict", "checked_at": "2026-11-10T00:00:00Z"}),
+            ("list review status", {**goal, "result_review": {**summary, "status": ["passed"]}}, self_goal),
+            ("list bank status", {**goal, "bank_status": ["accepted"]}, self_goal),
+            ("list timestamp", {**legacy, "timestamp": ["2026"]}, {"basis": "self_reported", "checked_at": ""}),
+        )
+        for label, row, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(arl.success_basis_for_row(row), expected)
+        for row in (None, [], "stop", 3, {}):
+            self.assertIsNone(arl.success_basis_for_row(row))
+        for basis, label in self.LABELS.items():
+            self.assertEqual(arl.success_label({"basis": basis, "checked_at": ""}), label)
+        for odd in (None, {}, {"basis": ["self_reported"]}, {"basis": "proved"}, ["self_reported"]):
+            self.assertIsNone(arl.success_label(odd))
+
+    def test_validate_warns_when_a_stored_success_basis_differs(self) -> None:
+        """validate_loop_dir warns, without an error, when a stored success_basis is not the one the row's fields give.
+
+        Readers derive the label from the row's fields, so an edited value
+        never reaches status.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=3)
+            write_proof_artifact(loop, "proof-1")
+            append_iteration(loop, "stop", evidence_id="proof-1", stop_reason="success")
+            clean = arl.validate_loop_dir(loop)
+            self.assertEqual(clean["errors"], [])
+            self.assertEqual([w for w in clean["warnings"] if "success_basis" in w], [])
+            ledger = loop / "iterations.jsonl"
+            (row,) = self._rows(loop)
+            for stored in (
+                {"basis": "host_formal_verdict", "checked_at": row["timestamp"]},
+                {"basis": "self_reported", "checked_at": "2000-01-01T00:00:00Z"},
+                ["self_reported"],
+                "self_reported",
+                None,
+            ):
+                with self.subTest(stored=stored):
+                    ledger.write_text(
+                        json.dumps({**row, "success_basis": stored}) + "\n", encoding="utf-8"
+                    )
+                    result = arl.validate_loop_dir(loop)
+                    self.assertEqual(result["errors"], [])
+                    warnings = [w for w in result["warnings"] if "success_basis" in w]
+                    self.assertEqual(len(warnings), 1, result["warnings"])
+                    self.assertTrue(warnings[0].startswith("iteration 1 "), warnings[0])
+                    status = arl.status_command(argparse.Namespace(dir=str(loop)))
+                    self.assertEqual(status["success"]["label"], "success (self-reported)")
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=3)
+            append_iteration(loop, "continue")
+            ledger = loop / "iterations.jsonl"
+            (row,) = self._rows(loop)
+            ledger.write_text(
+                json.dumps(
+                    {**row, "success_basis": {"basis": "host_result_review", "checked_at": "x"}}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = arl.validate_loop_dir(loop)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(len([w for w in result["warnings"] if "success_basis" in w]), 1)
+            self.assertIsNone(arl.status_command(argparse.Namespace(dir=str(loop)))["success"])
+
+    def test_compute_done_and_hook_check_unchanged(self) -> None:
+        """compute_done and the Stop-hook check give the verdicts they gave before success_basis existed.
+
+        Regression check: success, final stop, final blocked and running
+        fixtures return the same compute_done result as on the base, with no
+        new key, and the hook check releases a finished loop and blocks an
+        unfinished one.
+        """
+        arl = self._runtime()
+        fixtures = (
+            ("success", 3, [("stop", "success", "proof-1")], {"done": True, "paused": False, "reason": "terminal_status:stopped"}),
+            ("final stop", 1, [("stop", "budget_exhausted", None)], {"done": True, "paused": False, "reason": "loops_reached"}),
+            ("final blocked", 1, [("blocked", "no route left", None)], {"done": True, "paused": False, "reason": "loops_reached"}),
+            ("running", 3, [("continue", None, None)], {"done": False, "paused": False, "reason": None}),
+        )
+        for label, max_iterations, appends, expected in fixtures:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                reg, loop, proj = base / "reg", base / "loop", base / "proj"
+                proj.mkdir()
+                _init_loop(loop, reg, max_iterations=max_iterations)
+                write_proof_artifact(loop, "proof-1")
+                for decision, stop_reason, evidence in appends:
+                    append_iteration(loop, decision, stop_reason=stop_reason, evidence_id=evidence)
+                self.assertEqual(arl.compute_done(loop), expected)
+                _arm_loop(loop, reg, proj)
+                env = _subprocess_env(
+                    {"AAS_AUTOLOOP_REGISTRY": str(reg), "CLAUDE_PROJECT_DIR": str(proj)}
+                )
+                env.pop("AUTOLOOP_DISABLE", None)
+                env.pop("AUTOLOOP_DRIVER", None)
+                hook = subprocess.run(
+                    [sys.executable, "-B", str(HELPER), "hook-check"],
+                    input="",
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=30,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(hook.returncode, 0 if expected["done"] else 2, hook.stderr)
+
+    def test_host_handoff_survives_unreadable_records(self) -> None:
+        """Records that cannot be read, or hold odd values, still give a host_handoff.md and never an exception.
+
+        A malformed or deeply nested ledger line leaves the rows out with a
+        note; list-valued row fields are skipped; a negative-space ledger that
+        is not valid JSON, or a link, is noted and not read; hidden characters
+        in record text are dropped and counted.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=5)
+            ledger = loop / "iterations.jsonl"
+            unreadable = "The iteration ledger could not be read safely, so no row is listed."
+            for bad in ("{not json\n", "[" * 100_000 + "]" * 100_000 + "\n"):
+                with self.subTest(ledger=bad[:10]):
+                    ledger.write_text(bad, encoding="utf-8")
+                    outcome = arl.write_host_handoff(loop, reason="runtime_error")
+                    self.assertEqual(outcome["status"], "written", outcome)
+                    text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+                    self.assertIn(unreadable, text)
+                    self.assertIn("the iteration ledger could not be read", text)
+
+            odd = {
+                "iteration": [1],
+                "timestamp": ["2026"],
+                "decision": ["stop"],
+                "stop_reason": {"why": "x"},
+                "bank_status": ["accepted"],
+                "candidate_id": ["c"],
+                "claim_ids": "C1",
+                "evidence_checked": ["E1"],
+                "objective": "ROUTE​ WITH ‮ MARKS",
+                "proposed_next_action": ["next"],
+            }
+            ledger.write_text(json.dumps(odd) + "\n", encoding="utf-8")
+            ns_path = loop / ".goal_focus" / "negative_space.jsonl"
+            ns_path.parent.mkdir(exist_ok=True)
+            ns_path.write_text("{broken\n", encoding="utf-8")
+            outcome = arl.write_host_handoff(loop, reason="runtime_error")
+            self.assertEqual(outcome["status"], "written", outcome)
+            text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+            decisions = _markdown_section(text, "### Decisions and reasons")
+            self.assertIn("| iteration ? at ?: decision ?; objective: ROUTE WITH  MARKS", decisions)
+            self.assertNotIn("​", text)
+            self.assertNotIn("‮", text)
+            self.assertEqual(text.splitlines()[-1], "[hidden characters removed: 2]")
+            self.assertIn(
+                "The negative-space ledger could not be read safely, so its rows are not listed.",
+                _markdown_section(text, "### Tried and failed, and why"),
+            )
+            if os.name == "posix":
+                outside = Path(tmp) / "outside.jsonl"
+                outside.write_text(
+                    json.dumps({"status": "open", "entry_id": "ns-OUTSIDE"}) + "\n",
+                    encoding="utf-8",
+                )
+                ns_path.unlink()
+                ns_path.symlink_to(outside)
+                arl.write_host_handoff(loop, reason="runtime_error")
+                text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+                self.assertNotIn("ns-OUTSIDE", text)
+                self.assertIn("could not be read safely, so its rows are not listed", text)
+
+    def test_done_label_survives_an_unreadable_ledger_tip(self) -> None:
+        """done still answers when the ledger tip cannot be decoded; it gives no success label then."""
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=3)
+            (loop / "iterations.jsonl").write_text(
+                "[" * 100_000 + "]" * 100_000 + "\n", encoding="utf-8"
+            )
+            done = arl.done_command(argparse.Namespace(dir=str(loop)))
+            self.assertEqual(done["success_label"], None)
+            self.assertEqual(
+                {key: done[key] for key in ("done", "paused", "reason")},
+                arl.compute_done(loop),
+            )
+
+    def test_host_handoff_sorts_rows_by_what_checked_them(self) -> None:
+        """Each ledger row lands in the handoff section its host records support.
+
+        A legacy success with a reverified formal stamp is established and
+        labelled as verified by the host formal check; a row banked as
+        accepted whose candidate archive is missing is listed as banked but
+        failing the host's checks; a rejected candidate goes under Tried and
+        failed.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=5)
+            formal = {
+                **iteration_record(1, "stop", evidence_ids=["E-FORMAL"], stop_reason="proof_found"),
+                "formal_terminal_state": {"terminal_state": "sorry_free_artifact"},
+                "host_reverification": {"status": "reverified", "checked_at": "2026-11-10T05:06:07Z"},
+            }
+            unbound = {
+                **iteration_record(2, "revise", evidence_ids=["E-BANKED"]),
+                "bank_status": "accepted",
+                "candidate_id": "cand-unbound",
+                "claim_ids": ["CLAIM-BANKED"],
+            }
+            rejected = {
+                **iteration_record(3, "revise", stop_reason="result_rejected"),
+                "bank_status": "rejected",
+                "candidate_id": "cand-rejected",
+            }
+            write_iterations(loop, [formal, unbound, rejected])
+            outcome = arl.write_host_handoff(loop, reason="done")
+            self.assertEqual(outcome["status"], "written", outcome)
+            text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+            established = _markdown_section(text, "### Established")
+            self.assertIn(
+                "| iteration 1: success (verified by host formal check), checked at "
+                "2026-11-10T05:06:07Z; evidence: E-FORMAL",
+                established,
+            )
+            self.assertNotIn("cand-unbound", established)
+            self.assertIn(
+                "| iteration 2: banked, but its review record fails the host's archive "
+                "and boundary checks; candidate cand-unbound; claims: CLAIM-BANKED; "
+                "evidence: E-BANKED",
+                _markdown_section(text, "### Guessed or unverified"),
+            )
+            self.assertIn(
+                "| iteration 3: candidate cand-rejected rejected by panel review; "
+                "stop reason result_rejected",
+                _markdown_section(text, "### Tried and failed, and why"),
+            )
+            identifiers = _markdown_section(text, "### Identifiers")
+            self.assertIn("| iterations: 1-3 (the last 3 of 3 recorded)", identifiers)
+            self.assertIn("| candidates: cand-unbound, cand-rejected", identifiers)
+
+    def test_docs_describe_the_loop_endings(self) -> None:
+        """Both skills document the collection contract, host_handoff.md and the success labels."""
+        runtime_skill = (
+            REPO_ROOT / "canonical" / "skills" / "autonomous-research-loop-runtime" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        endings = " ".join(_markdown_section(runtime_skill, "### Loop endings").split())
+        self.assertIn(" ".join(self.COLLECTION.split()), endings)
+        self.assertIn(self.HOST_POINTER, endings)
+        for basis, label in self.LABELS.items():
+            self.assertIn(f"| `{basis}` |", _markdown_section(runtime_skill, "### Loop endings"))
+            self.assertIn(f"`{label}`", endings)
+        self.assertIn("`success_label`", endings)
+        loop_skill = (
+            REPO_ROOT / "canonical" / "skills" / "autonomous-research-loop" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        protocol = " ".join(_markdown_section(loop_skill, "## Iteration Protocol").split())
+        self.assertIn("The final allowed iteration collects instead of exploring.", protocol)
+        recovery = " ".join(_markdown_section(loop_skill, "## Recovery").split())
+        self.assertIn(self.HOST_POINTER, recovery)
+        self.assertIn("with no model call", recovery)

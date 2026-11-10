@@ -5545,6 +5545,67 @@ def _validate_result_review_boundary(
                 )
 
 
+# What a success stop stands on, as recorded on its ledger row.
+SUCCESS_BASIS_FORMAL = "host_formal_verdict"
+SUCCESS_BASIS_REVIEW = "host_result_review"
+SUCCESS_BASIS_SELF = "self_reported"
+
+
+def success_basis(row: Mapping[str, Any]) -> dict[str, str]:
+    """The basis of a success-stop ledger row, read from that row's own fields.
+
+    ``host_formal_verdict`` needs the row's own ``formal_terminal_state`` stamp
+    at ``sorry_free_artifact`` and a ``host_reverification`` whose status is
+    ``reverified``; it is checked when that re-check ran. Otherwise
+    ``host_result_review`` needs a goal success that finalize banked for the
+    row with a passing result review, checked at ``finalized_at``. Anything
+    else is ``self_reported``, checked at the row's ``timestamp``. Nothing else
+    is read: not ``formal/terminal_state.json``, not a ``drive_stop`` verdict.
+    The caller decides that the row is a success stop.
+    """
+
+    def text(value: Any) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    stamp = row.get("formal_terminal_state")
+    recheck = row.get("host_reverification")
+    if (
+        isinstance(stamp, Mapping)
+        and stamp.get("terminal_state") == "sorry_free_artifact"
+        and isinstance(recheck, Mapping)
+        and recheck.get("status") == "reverified"
+    ):
+        return {
+            "basis": SUCCESS_BASIS_FORMAL,
+            "checked_at": text(recheck.get("checked_at"))
+            or text(row.get("finalized_at"))
+            or text(row.get("timestamp")),
+        }
+    review = row.get("result_review")
+    finalized_at = text(row.get("finalized_at"))
+    if (
+        text(row.get("stop_reason")) == HOST_REVIEWED_GOAL_SUCCESS_REASON
+        and row.get("bank_status") == "accepted"
+        and isinstance(review, Mapping)
+        and finalized_at
+    ):
+        schema = review.get("schema_version")
+        verdict = (
+            review.get("verdict")
+            if schema == RESULT_REVIEW_SCHEMA
+            else review.get("status")
+            if schema == "result_review_summary.v2"
+            else None
+        )
+        if isinstance(verdict, str) and verdict.strip().lower() in {
+            "passed",
+            "accepted",
+            "pass",
+        }:
+            return {"basis": SUCCESS_BASIS_REVIEW, "checked_at": finalized_at}
+    return {"basis": SUCCESS_BASIS_SELF, "checked_at": text(row.get("timestamp"))}
+
+
 def validate_host_finalized_goal_success(
     run_dir: str | Path, record: Mapping[str, Any]
 ) -> list[str]:
@@ -6329,6 +6390,8 @@ def finalize_candidate(
                 record["proposed_stop_reason"] = record.get("stop_reason")
             record["decision"] = "stop"
             record["stop_reason"] = HOST_REVIEWED_GOAL_SUCCESS_REASON
+            # The formal re-check first, else the review banked here.
+            record["success_basis"] = success_basis(record)
         elif record.get("decision") in {"stop", "blocked"}:
             record["proposed_decision"] = record.get("decision")
             record["proposed_stop_reason"] = record.get("stop_reason")

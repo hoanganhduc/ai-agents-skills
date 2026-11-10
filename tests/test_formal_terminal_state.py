@@ -1075,6 +1075,55 @@ class EarlyStopGuardTests(unittest.TestCase):
             validated = _run_runtime("validate", "--dir", str(run_dir), env=env)
             self.assertEqual(validated.returncode, 0, validated.stdout + validated.stderr)
 
+    def test_formal_track_success_records_host_formal_verdict(self) -> None:
+        """A formal-track legacy success records host_formal_verdict, checked when the host re-ran its checks.
+
+        Follows test_a_legacy_success_stop_re_verifies_the_staged_verdict: the
+        banked row carries the formal stamp and a reverified host re-check, so
+        its success_basis names the formal verdict with the re-check's
+        checked_at, and status labels it as verified by the host formal check.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, env = self._legacy_formal_loop(
+                Path(tmp), lean_body="theorem t : True := trivial\n"
+            )
+            stamped = _run_runtime(
+                "formal-terminal-state", "--dir", str(run_dir), "--reason", "test", env=env
+            )
+            self.assertEqual(stamped.returncode, 0, stamped.stdout + stamped.stderr)
+
+            accepted = _append_stop(
+                run_dir,
+                stop_reason="proof_found",
+                evidence_id="proof-artifact-1",
+                env=env,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+            rows = [
+                json.loads(line)
+                for line in (run_dir / "iterations.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            row = rows[-1]
+            self.assertEqual(row["formal_terminal_state"]["terminal_state"], "sorry_free_artifact")
+            self.assertEqual(row["host_reverification"]["status"], "reverified")
+            self.assertTrue(row["host_reverification"]["checked_at"])
+            self.assertEqual(
+                row["success_basis"],
+                {
+                    "basis": "host_formal_verdict",
+                    "checked_at": row["host_reverification"]["checked_at"],
+                },
+            )
+            status = _run_runtime("status", "--dir", str(run_dir), env=env)
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            self.assertEqual(
+                json.loads(status.stdout)["success"]["label"],
+                "success (verified by host formal check)",
+            )
+
     def test_a_source_edited_after_the_verdict_refuses_the_legacy_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir, env = self._legacy_formal_loop(

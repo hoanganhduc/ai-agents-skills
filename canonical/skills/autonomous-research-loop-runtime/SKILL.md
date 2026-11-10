@@ -120,9 +120,12 @@ one-iteration invocation for that install target:
 | `antigravity` | `agy -p "<prompt>" --dangerously-skip-permissions` (falls back to `gemini --yolo -p "<prompt>"`). **Never put flags between `-p` and the prompt** — `-p`/`--print` consumes the next argv as the prompt text (wrong: `agy --print --dangerously-skip-permissions "$PROMPT"`). `agy` does not read the user prompt from stdin. |
 
 `<prompt>` is the standard one-iteration contract: read `recovery.md` and the
-ledger, execute the single recorded next action under the loop policy, verify
-independently, append exactly one iteration record, refresh the recovery files,
-exit. Inspect it with `agent-cmd --provider <p> --dir <loop> --print-prompt`.
+ledger, execute the single recorded next action under the loop policy,
+self-check the result (independent review is recorded only by the host or by a
+reviewer the host dispatches), append exactly one iteration record, refresh the
+recovery files, exit. On the last iteration the budget allows it also carries
+the collection contract (see [Loop endings](#loop-endings)). Inspect it with
+`agent-cmd --provider <p> --dir <loop> --print-prompt`.
 OpenClaw is not a driver target (no local agent CLI); drive its loops from a
 supported provider instead.
 
@@ -819,6 +822,61 @@ leaves none out). Only the newest 64 ledger rows are considered, at most six
 pointer lines in at most 4,096 UTF-8 bytes are shown, and the rest are counted.
 The section says that no iteration worker runs while the host builds a brief,
 so no pointer is held back as still being written.
+
+### Loop endings
+
+A loop's ending has three parts: the last iteration collects instead of
+exploring, the host hands over from records, and a success stop says what it
+stands on.
+
+**Collection contract.** When `budget.json` shows that the next iteration is
+the last one the budget allows (`spent_iterations + 1 >= max_iterations`), the
+iteration prompt adds, right after its base: "This is the last iteration the
+budget allows. Start no new exploration: consolidate what exists, update
+STATE.md, write handoff.md in the two-part handoff form, stage the best
+artifact you already have, and record decision stop or blocked." The enforce
+lane asks the worker to stage that artifact with its evidence for host review
+and submit it with decision stop or blocked, because the append gate refuses a
+continuing decision on the final allowed iteration in both lanes. A sentence
+naming the two parts and their headings follows. Nothing runs past the cap; the
+contract is a prompt rule, so a worker can still explore.
+
+**Host handoff.** When `drive` stops, after the formal shutdown verdict, the
+host writes `host_handoff.md` in the loop directory unless a regular
+`handoff.md` is at least as new as the last ledger row (its `finalized_at`, else
+its `timestamp`). The file is built from records alone, with no model call: the
+last 20 ledger rows across shards, the newest 20 open negative-space rows with
+their writer and review labels, the banked candidates with their claim and
+evidence ids, the proof artifacts the rows cite (always marked self-reported),
+the goal, success criteria and stop conditions from `loop_state.json`, and the
+drive's stop reason, in the two-part handoff form of the
+`autonomous-research-loop` skill. A banked row is listed under Established only
+while it passes the host's archive and boundary checks, as a `panel_accepted`
+pointer does. Every line copied from a record starts with `| `, each field is
+cut with `[cut: N characters omitted]`, and hidden characters are dropped and
+counted. `recovery.md` gains the line
+`- Host handoff (written from records, no model call): host_handoff.md` once,
+and `init`, `append-iteration` and `retract-iteration` keep it while the file
+exists. The drive result and its `drive_stop` event report `host_handoff`:
+`written`, `skipped` or `failed`. `validate` does not read the file.
+
+**Success basis.** Every success stop records `success_basis`
+`{basis, checked_at}`, taken from the row's own fields only:
+
+| `basis` | When | `checked_at` | Label |
+|---|---|---|---|
+| `host_formal_verdict` | the row carries the `formal_terminal_state` stamp at `sorry_free_artifact` and a `host_reverification` whose status is `reverified` | the re-check's `checked_at` | `success (verified by host formal check)` |
+| `host_result_review` | finalize banked the goal success for this row with a passing result review | `finalized_at` | `success (accepted by panel review)` |
+| `self_reported` | anything else, including a proof artifact whose checker status the worker wrote | the row's `timestamp` | `success (self-reported)` |
+
+A leftover `formal/terminal_state.json` or a `drive_stop` verdict never sets
+the basis. `status` adds `success` (`iteration`, `basis`, `checked_at`,
+`label`) when the ledger tip is a success stop, `done` adds `success_label`
+(`compute_done` and the Stop hook are unchanged), and a notification about that
+row starts its decision reason with the label. Each derives the basis from the
+row again, and `validate` warns when a stored `success_basis` differs from it.
+Only `host_formal_verdict` is shown as verified; nothing else says verified or
+proved.
 
 ### Legacy `goal_priority.v1` compatibility
 

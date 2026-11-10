@@ -520,7 +520,7 @@ def _bound_review(staged: dict, **overrides: object) -> dict:
     }
 
 
-def _accepted_terminal_fixture(root: Path) -> tuple[dict, dict]:
+def _accepted_terminal_fixture(root: Path, **record_extra: object) -> tuple[dict, dict]:
     """Create the exact staged candidate and panel review used by finalization."""
 
     args = rt.selftest_init_args(root, max_iterations=20)
@@ -542,6 +542,7 @@ def _accepted_terminal_fixture(root: Path) -> tuple[dict, dict]:
             ],
             "evidence_ids": ["proof.json"],
             "budget_delta": {"iterations": 1, "tokens": 50, "usd": 0.0},
+            **record_extra,
         },
     )
     review = _bound_review(
@@ -5188,3 +5189,135 @@ class BankedReviewErrorsTests(_AttestedGoalFocusTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SuccessBasisAtFinalizeTests(_AttestedGoalFocusTestCase):
+    """finalize records what a banked goal success stands on, from the row it writes."""
+
+    def test_enforce_banked_success_records_host_result_review(self) -> None:
+        """A goal success banked after panel review records host_result_review, checked at finalized_at.
+
+        validate_host_finalized_goal_success still passes and validate_loop_dir
+        neither errors nor warns about the basis. When the banked row also
+        carries the formal stamp and a reverified host re-check, the formal
+        verdict comes first, checked when the host re-ran its checks. An
+        accepted row that does not satisfy the goal, and a rejected one, carry
+        no basis.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            _staged, review = _accepted_terminal_fixture(root)
+            result = gf.finalize_candidate(root, accepted=True, review=review)
+            record = result["record"]
+            self.assertEqual(
+                record["success_basis"],
+                {"basis": "host_result_review", "checked_at": record["finalized_at"]},
+            )
+            row = json.loads((root / "iterations.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(row["success_basis"], record["success_basis"])
+            self.assertEqual(gf.validate_host_finalized_goal_success(root, row), [])
+            validation = rt.validate_loop_dir(root)
+            self.assertEqual(validation["errors"], [], validation)
+            self.assertEqual(
+                [w for w in validation["warnings"] if "success_basis" in w], []
+            )
+            self.assertEqual(rt.success_basis_for_row(row), record["success_basis"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            _staged, review = _accepted_terminal_fixture(
+                root,
+                formal_terminal_state={
+                    "terminal_state": "sorry_free_artifact",
+                    "source_digest": "a" * 64,
+                },
+            )
+            result = gf.finalize_candidate(
+                root,
+                accepted=True,
+                review=review,
+                formal_reverifier=lambda _root: {
+                    "status": "reverified",
+                    "ok": True,
+                    "staged": {"source_digest": "a" * 64},
+                    "observed": {"source_digest": "a" * 64},
+                    "checked_at": "2026-11-10T03:04:05Z",
+                },
+            )
+            self.assertEqual(
+                result["record"]["success_basis"],
+                {"basis": "host_formal_verdict", "checked_at": "2026-11-10T03:04:05Z"},
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+            staged = _stage_enforced_candidate(
+                root, plan, {"output": "a partial result", "evidence_ids": ["proof.json"]}
+            )
+            accepted = gf.finalize_candidate(
+                root, accepted=True, review=_bound_review(staged)
+            )
+            self.assertEqual(accepted["record"]["bank_status"], "accepted")
+            self.assertNotIn("success_basis", accepted["record"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+            staged = _stage_enforced_candidate(
+                root,
+                plan,
+                {
+                    "output": "a claimed proof",
+                    "decision": "stop",
+                    "stop_reason": "proof_found",
+                    "evidence_ids": ["proof.json"],
+                },
+            )
+            rejected = gf.finalize_candidate(
+                root,
+                accepted=False,
+                review=_bound_review(staged, status="failed", reason="gap"),
+            )
+            self.assertEqual(rejected["record"]["bank_status"], "rejected")
+            self.assertNotIn("success_basis", rejected["record"])
+
+    def test_host_handoff_lists_a_banked_success_only_while_its_review_checks_out(self) -> None:
+        """host_handoff.md puts a banked goal success under Established only while its archived review passes the host's checks.
+
+        Once the archived review is edited, the same row moves to Guessed or
+        unverified, as an unchecked pointer would.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            staged, review = _accepted_terminal_fixture(root)
+            gf.finalize_candidate(root, accepted=True, review=review)
+            candidate_id = staged["candidate"]["candidate_id"]
+
+            outcome = rt.write_host_handoff(root, reason="done")
+            self.assertEqual(outcome["status"], "written", outcome)
+            text = (root / "host_handoff.md").read_text(encoding="utf-8")
+            established = text.split("### Established", 1)[1].split("### Guessed or unverified", 1)[0]
+            self.assertIn(
+                f"| iteration 1: success (accepted by panel review); candidate {candidate_id}",
+                established,
+            )
+
+            archive = root / ".goal_focus" / "candidates" / f"{candidate_id}.json"
+            archived = json.loads(archive.read_text(encoding="utf-8"))
+            archived["review"]["summary"] = "edited after the bank"
+            archive.write_text(json.dumps(archived), encoding="utf-8")
+            rt.write_host_handoff(root, reason="done")
+            text = (root / "host_handoff.md").read_text(encoding="utf-8")
+            established, rest = text.split("### Established", 1)[1].split(
+                "### Guessed or unverified", 1
+            )
+            guessed = rest.split("### Decisions and reasons", 1)[0]
+            self.assertNotIn(candidate_id, established)
+            self.assertIn(
+                "| iteration 1: banked, but its review record fails the host's "
+                f"archive and boundary checks; candidate {candidate_id}",
+                guessed,
+            )

@@ -143,6 +143,14 @@ found and must cite at least one evidence id that resolves to a proof artifact,
 and `blocked` is not accepted: record the blocker and continue with `revise` or
 `delegate`.
 
+The final allowed iteration collects instead of exploring. When the next
+iteration is the last one the budget allows, the runtime's iteration prompt
+says so and asks for no new exploration: consolidate what exists, update
+`STATE.md`, write `handoff.md` in the two-part form under Recovery, stage the
+best artifact already in hand (in enforce mode, with its evidence for host
+review), and record `stop` or `blocked`. Nothing runs past the cap; collection
+happens inside it.
+
 
 ### Heavy computation inside iterations
 
@@ -612,6 +620,15 @@ instructions, and check what it names before relying on it.
 
 Interactive `agent-group-discuss` and `deep-research-workflow` sessions use the
 same form when they stop at a context boundary.
+
+When the headless `drive` stops and no regular `handoff.md` is at least as new
+as the last ledger row, the host writes `host_handoff.md` in the same two-part
+form from the loop's records alone, with no model call: the newest ledger rows,
+the open negative-space rows, the banked candidates with their claim and
+evidence ids, the cited proof artifacts marked self-reported, and the stop
+reason. `recovery.md` then carries the line
+`- Host handoff (written from records, no model call): host_handoff.md`. Read
+the file like any other earlier record.
 
 ## Truly Autonomous Execution
 
