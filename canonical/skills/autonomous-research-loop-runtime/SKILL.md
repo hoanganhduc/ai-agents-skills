@@ -843,11 +843,13 @@ label taken from host records only:
 
 No pointer says verified, and words inside an artifact never change a label.
 A pointer's lineage is its approach id, else its campaign id, else `loop`.
-Each lineage gets one pointer, checked work first and then the newest; the
-brief subject's lineage gets none (the plan's approach in the target brief, the
-candidate's in the review brief; the strategy brief compares every approach and
-leaves none out). Only the newest 64 ledger rows are considered, at most six
-pointer lines in at most 4,096 UTF-8 bytes are shown, and the rest are counted.
+The formal stamp's lineage is `loop`, since no record ties it to an approach.
+Each lineage gets one pointer: the formal stamp first in `loop`, then checked
+work, then the newest. The brief subject's lineage gets none (the plan's
+approach in the target brief, the candidate's in the review brief; the strategy
+brief compares every approach and leaves none out). Only the newest 64 ledger
+rows are considered, at most six pointer lines in at most 4,096 UTF-8 bytes are
+shown, and the rest are counted.
 The section says that no iteration worker runs while the host builds a brief,
 so no pointer is held back as still being written.
 

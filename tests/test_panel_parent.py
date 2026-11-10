@@ -3108,6 +3108,65 @@ class BriefPointerTests(unittest.TestCase):
                 self.assertTrue(formal.endswith("; freshness unchecked"), formal)
                 self.assertEqual(calls, [])
 
+    def test_the_formal_stamp_is_the_one_pointer_of_lineage_loop(self) -> None:
+        """A formal stamp and a ledger row with no approach or campaign share lineage loop, and only the stamp is shown.
+
+        On the base of this fix the stamp bypassed the per-lineage choice, so
+        such a row gave a second "lineage loop" pointer. That other lineages
+        keep their pointer, that a subject in lineage loop leaves out both, and
+        that the row takes lineage loop when the stamp is not at
+        sorry_free_artifact are regression checks.
+        """
+
+        def no_scan(name: str, payload: dict) -> dict:
+            return {"ok": False, "report": {}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_formal_stamp(root, digest="a" * 64)
+            PanelParentUnitTests._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": 1, "evidence_ids": ["legacy-claim"]},
+                    {"iteration": 2, "approach_id": "A2", "evidence_ids": ["route-claim"]},
+                ],
+            )
+
+            lines = pp.brief_pointer_lines(
+                root, exclude_lineage=None, max_chars=10_000, environ={}, formal_scan_runner=no_scan
+            )
+
+            pointers = self._pointer_lines(lines)
+            loop = [line for line in pointers if "; lineage loop; " in line]
+            self.assertEqual(len(loop), 1, lines)
+            self.assertTrue(loop[0].startswith("- [formal_checked] "), loop)
+            self.assertEqual(pointers[0], loop[0])
+            self.assertNotIn("legacy-claim", "\n".join(lines))
+            self.assertNotIn("further pointers omitted", "\n".join(lines))
+            self.assertTrue(any("lineage A2" in line for line in pointers), lines)
+
+            with self.subTest("regression check: a subject in lineage loop leaves out both"):
+                lines = pp.brief_pointer_lines(
+                    root, exclude_lineage="loop", max_chars=10_000, environ={}, formal_scan_runner=no_scan
+                )
+                self.assertFalse(any("lineage loop" in line for line in lines), lines)
+                self.assertEqual(len(self._pointer_lines(lines)), 1, lines)
+
+            stamp_path = root / "formal" / "terminal_state.json"
+            stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+            stamp_path.write_text(
+                json.dumps({**stamp, "terminal_state": "open_ledger"}), encoding="utf-8"
+            )
+            with self.subTest("regression check: without a certified stamp the row takes lineage loop"):
+                pointers = self._pointer_lines(
+                    pp.brief_pointer_lines(
+                        root, exclude_lineage=None, max_chars=10_000, environ={}, formal_scan_runner=no_scan
+                    )
+                )
+                (loop,) = [line for line in pointers if "; lineage loop; " in line]
+                self.assertTrue(loop.startswith("- [unchecked] "), loop)
+                self.assertIn("proof_artifacts/legacy-claim.json", loop)
+
     def test_pointer_section_caps_lines_bytes_and_withholds_sensitive_lines(self) -> None:
         """At most six pointer lines in at most 4,096 UTF-8 bytes; a sensitive line is withheld by kind."""
 

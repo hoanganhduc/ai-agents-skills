@@ -4774,12 +4774,14 @@ def brief_pointer_lines(
     re-scanned (``formal_scan_runner``, by default the gate's) and compared
     over the stamp's scope; everything else is "freshness unchecked".
 
-    Lineage is approach_id, else campaign_id, else "loop". Each lineage gets
-    one pointer, checked work first and newer before older, and
-    ``exclude_lineage``, the brief subject's own, gets none. At most
-    POINTER_MAX_LINES lines are shown, the section fits max_chars characters
-    and POINTER_MAX_BYTES UTF-8 bytes, a line panel_payload_sensitive_findings
-    flags is withheld and counted by kind, and what does not fit is counted.
+    Lineage is approach_id, else campaign_id, else "loop"; the formal stamp,
+    which no record ties to an approach, has lineage "loop". Each lineage gets
+    one pointer, the formal stamp first in "loop", then checked work and newer
+    before older, and ``exclude_lineage``, the brief subject's own, gets none.
+    At most POINTER_MAX_LINES lines are shown, the section fits max_chars
+    characters and POINTER_MAX_BYTES UTF-8 bytes, a line
+    panel_payload_sensitive_findings flags is withheld and counted by kind, and
+    what does not fit is counted.
     """
 
     try:
@@ -4789,7 +4791,9 @@ def brief_pointer_lines(
         from . import goal_focus as gf  # type: ignore
         from . import negative_space as ns  # type: ignore
     unreadable = False
-    candidates: list[tuple[int, int, str, Mapping[str, Any], list[str]]] = []
+    # One choice per lineage. No record ties the formal stamp to an approach,
+    # so it takes lineage "loop" and ranks first there.
+    chosen: dict[str, tuple[int, int, str, Mapping[str, Any], list[str]]] = {}
     try:
         stamp = _formal_stamp(run_dir)
     except (PanelArtifactError, UnicodeDecodeError):
@@ -4799,16 +4803,15 @@ def brief_pointer_lines(
         and stamp.get("terminal_state") == "sorry_free_artifact"
         and exclude_lineage != "loop"
     ):
-        candidates.append((0, -1, "formal_checked", stamp, []))
+        chosen["loop"] = (0, -1, "formal_checked", stamp, [])
     try:
         rows = _iteration_rows_newest_first(run_dir, POINTER_LEDGER_WINDOW)
     except PanelArtifactError:
         rows, unreadable = [], True
-    chosen: dict[str, tuple[int, int, str, Mapping[str, Any], list[str]]] = {}
     for order, row in enumerate(rows):
         lineage = _pointer_lineage(row)
         current = chosen.get(lineage)
-        if lineage == exclude_lineage or (current is not None and current[0] == 1):
+        if lineage == exclude_lineage or (current is not None and current[0] <= 1):
             continue
         candidate_id = row.get("candidate_id")
         if (
@@ -4828,8 +4831,7 @@ def brief_pointer_lines(
             refs = _proof_artifact_refs(run_dir, row)
             if refs:
                 chosen[lineage] = (2, order, "proof_artifact", row, refs)
-    candidates.extend(chosen.values())
-    candidates.sort(key=lambda item: (item[0], item[1]))
+    candidates = sorted(chosen.values(), key=lambda item: (item[0], item[1]))
     if not candidates and not unreadable:
         return []
 
