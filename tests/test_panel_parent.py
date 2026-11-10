@@ -2442,6 +2442,59 @@ class PanelParentUnitTests(unittest.TestCase):
                     self.assertIn("proof_artifacts/route-b.json", brief)
                     self.assertNotIn("route-a", brief)
 
+    def test_target_and_review_briefs_withhold_sensitive_rows(self) -> None:
+        """Rows an external-call check refuses are withheld from the target and review briefs and counted by kind.
+
+        Regression check: I17 already withheld an email, a dotted Lean
+        hypothesis name and a phone-shaped run of numbers in both briefs, but
+        only the strategy brief's test held these rows. Each brief still
+        builds, passes assert_panel_prompt_safe and quotes none of them.
+        """
+        # Built without a literal address so sanitize-check stays clean.
+        email = "ana" + chr(64) + "example.org"
+        lean_name = "hp" + chr(64) + "Nat.Prime.two_le"
+        candidate = {"candidate_id": "cand-a", "approach_id": "approach-a"}
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_strategy_authority(run_dir)
+            iter_dir = run_dir / "iterations" / "iter001"
+            iter_dir.mkdir(parents=True)
+            (run_dir / "iteration_candidate.json").write_text(
+                json.dumps(candidate), encoding="utf-8"
+            )
+            rows = [
+                self._negative_space_row("ns-clean", mechanism_text="CLEAN_MECHANISM"),
+                self._negative_space_row(
+                    "ns-mail", mechanism_text=f"ask {email} about the bound"
+                ),
+                self._negative_space_row(
+                    "ns-lean", failure_summary=f"{lean_name} does not apply"
+                ),
+                self._negative_space_row(
+                    "ns-digits", reopen_condition="the orders 256 512 1024 all fail"
+                ),
+            ]
+            self._write_negative_space(
+                run_dir, "".join(json.dumps(row) + "\n" for row in rows)
+            )
+
+            briefs = {
+                "target": pp.build_target_brief(run_dir),
+                "review": pp.build_review_brief(run_dir, iter_dir),
+            }
+
+            for name, brief in briefs.items():
+                with self.subTest(brief=name):
+                    pp.assert_panel_prompt_safe(brief, environ={})
+                    self.assertIn("CLEAN_MECHANISM", brief)
+                    self.assertIn(
+                        "\n2 rows withheld: pii:email\n1 row withheld: pii:phone\n", brief
+                    )
+                    for needle in (
+                        email, lean_name, "256 512 1024", "ns-mail", "ns-lean", "ns-digits"
+                    ):
+                        self.assertNotIn(needle, brief)
+
     def test_new_sections_use_only_remaining_budget(self) -> None:
         """With 600 characters left after reviewed content, every brief still builds within max_chars.
 
