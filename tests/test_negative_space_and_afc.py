@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -311,6 +312,299 @@ class NegativeSpaceUnitTest(unittest.TestCase):
             self.assertEqual(
                 ns.approach_blocked_by_negative_space(root, "approach-b"), ""
             )
+
+
+class NegativeSpaceWriterTests(unittest.TestCase):
+    """Who wrote a row decides whether it blocks; long rows are cut only where rendered."""
+
+    @staticmethod
+    def _row(
+        entry_id: str,
+        *,
+        approach_id: str = "approach-a",
+        mechanism: str = "fixed point",
+        **fields: object,
+    ) -> dict:
+        # Extra fields are set on the built row rather than passed to
+        # build_entry, so a value build_entry would refuse still reaches the
+        # function under test.
+        row = ns.build_entry(
+            kind="dead_end",
+            mechanism_text=mechanism,
+            failure_summary="failed",
+            reopen_condition="new mechanism",
+            approach_id=approach_id,
+            evidence_ids=["E1"],
+            entry_id=entry_id,
+        )
+        row.update(fields)
+        return row
+
+    def test_worker_row_is_advisory_while_host_and_legacy_rows_block(self) -> None:
+        """A worker's dead-end row never makes its approach ineligible, open or dangling.
+
+        The row without a writer (as every row on disk was written before the
+        writer field) and the host row are regression checks: both blocked by
+        approach id before the change and still do. A writer that is anything
+        other than exactly "worker" blocks as well.
+        """
+        worker = {"writer": "worker", "review_status": "unreviewed"}
+        dangling = {
+            "status": "superseded",
+            "superseded_by": "ns-missing",
+            "closed_at": "2026-11-10T00:00:00Z",
+        }
+        cases = {
+            "worker row": ([self._row("ns-1", **worker)], ""),
+            "worker row, dangling supersession": (
+                [self._row("ns-1", **worker, **dangling)],
+                "",
+            ),
+            "row without writer (regression check)": (
+                [self._row("ns-1")],
+                "negative_space_open:ns-1",
+            ),
+            "host row (regression check)": (
+                [self._row("ns-1", writer="host")],
+                "negative_space_open:ns-1",
+            ),
+            "writer that is not exactly worker": (
+                [self._row("ns-1", writer=["worker"], review_status="unreviewed")],
+                "negative_space_open:ns-1",
+            ),
+            "host row, dangling supersession": (
+                [self._row("ns-1", writer="host", **dangling)],
+                "negative_space_dangling_supersession:ns-1",
+            ),
+        }
+        for label, (rows, expected) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                ns.rewrite_ledger(root, rows)
+                self.assertEqual(
+                    ns.approach_blocked_by_negative_space(root, "approach-a"), expected
+                )
+                eligible, _ = gf._eligible_approaches(
+                    _registry_with_approaches(), run_dir=root
+                )
+                self.assertEqual(
+                    "approach-a" in {row["id"] for row in eligible}, expected == ""
+                )
+
+    def test_duplicate_open_fingerprint_errors_only_between_host_rows(self) -> None:
+        """Two open host rows with one mechanism on one approach are an error; a worker row makes it a warning.
+
+        The host-and-host and legacy-and-host cases are regression checks: they
+        were errors before the change.
+        """
+        worker = {"writer": "worker", "review_status": "unreviewed"}
+        fingerprint = ns.mechanism_fingerprint("fixed point")
+        cases = {
+            "host and host (regression check)": ({"writer": "host"}, {"writer": "host"}, True),
+            "row without writer and host (regression check)": ({}, {"writer": "host"}, True),
+            "host and worker": ({"writer": "host"}, worker, False),
+            "worker and worker": (worker, worker, False),
+        }
+        for label, (first, second, is_error) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                ns.rewrite_ledger(
+                    root,
+                    [
+                        self._row("ns-1", **first),
+                        self._row("ns-2", mechanism="  Fixed   POINT ", **second),
+                    ],
+                )
+                report = ns.validate_negative_space(root)
+                errors = [
+                    item
+                    for item in report["errors"]
+                    if "duplicate open mechanism_fingerprint" in item
+                ]
+                warnings = [
+                    item
+                    for item in report["warnings"]
+                    if "duplicate open mechanism_fingerprint" in item
+                ]
+                if is_error:
+                    self.assertEqual(
+                        errors,
+                        [
+                            "duplicate open mechanism_fingerprint for approach "
+                            f"approach-a: {fingerprint}"
+                        ],
+                    )
+                    self.assertEqual(warnings, [])
+                else:
+                    self.assertEqual(report["status"], "ok", report["errors"])
+                    self.assertEqual(errors, [])
+                    self.assertEqual(
+                        warnings,
+                        [
+                            "duplicate open mechanism_fingerprint for approach "
+                            f"approach-a involving a worker row: {fingerprint}"
+                        ],
+                    )
+
+    def test_validate_entry_refuses_bad_writer_review_and_basis(self) -> None:
+        """Each row field takes only its listed values; a value that is not a string is refused, never raised on.
+
+        The "valid rows" subtest is a regression check: those rows had no
+        errors before the fields were checked either.
+        """
+        cases = {
+            "writer admin": ({"writer": "admin"}, "writer is invalid"),
+            "writer as a list": ({"writer": ["worker"]}, "writer is invalid"),
+            "writer as null": ({"writer": None}, "writer is invalid"),
+            "worker row without review_status": (
+                {"writer": "worker"},
+                "worker rows require review_status",
+            ),
+            "review_status as a list": (
+                {"writer": "worker", "review_status": ["reviewed"]},
+                "review_status is invalid",
+            ),
+            "checker_basis host_checked": (
+                {"checker_basis": "host_checked"},
+                "checker_basis is invalid",
+            ),
+            "checker_basis as an object": (
+                {"checker_basis": {"basis": "self_reported"}},
+                "checker_basis is invalid",
+            ),
+        }
+        for label, (fields, message) in cases.items():
+            with self.subTest(label):
+                self.assertIn(message, ns.validate_entry(self._row("ns-1", **fields)))
+        with self.subTest("valid rows"):
+            self.assertEqual(ns.validate_entry(self._row("ns-1")), [])
+            self.assertEqual(
+                ns.validate_entry(
+                    self._row(
+                        "ns-1",
+                        writer="worker",
+                        review_status="reviewed",
+                        checker_basis="self_reported",
+                    )
+                ),
+                [],
+            )
+        with self.subTest("build_entry stores the fields only when given"):
+            common = {
+                "kind": "falsified_hypothesis",
+                "mechanism_text": "m",
+                "failure_summary": "f",
+                "reopen_condition": "r",
+                "evidence_ids": ["E1"],
+            }
+            plain = ns.build_entry(**common)
+            self.assertFalse({"writer", "review_status", "checker_basis"} & set(plain))
+            worker = ns.build_entry(
+                **common,
+                writer="worker",
+                review_status="unreviewed",
+                checker_basis="self_reported",
+            )
+            self.assertEqual(
+                (worker["writer"], worker["review_status"], worker["checker_basis"]),
+                ("worker", "unreviewed", "self_reported"),
+            )
+            for bad in (
+                {"writer": "admin"},
+                {"writer": "worker"},
+                {"writer": "host", "checker_basis": "host_checked"},
+            ):
+                with self.assertRaises(ValueError):
+                    ns.build_entry(**common, **bad)
+
+    def test_long_row_keeps_fingerprint_and_renders_cut_marker(self) -> None:
+        """The cut marker exists only in rendered text; storage and fingerprints keep _clean's value.
+
+        A 12,000-character mechanism is stored as its first 10,000 characters
+        with the fingerprint of that text, as before the change (a regression
+        check: a marker added inside _clean would change both). Rendering cuts
+        each field to 200 characters with a visible marker and shows every line
+        break inside a field as the two characters \\n, so a row is one line.
+        """
+        mechanism = "Colour-step " * 999 + "Colour-step-"
+        self.assertEqual(len(mechanism), 12_000)
+        row = ns.build_entry(
+            kind="dead_end",
+            mechanism_text=mechanism,
+            failure_summary="failed",
+            reopen_condition="new mechanism",
+            approach_id="approach-a",
+            evidence_ids=["E1"],
+        )
+        stored = mechanism[:10_000]
+        self.assertEqual(stored, stored.strip())
+        normalized = " ".join(stored.lower().split())
+        self.assertEqual(row["mechanism_text"], stored)
+        self.assertEqual(
+            row["mechanism_fingerprint"],
+            "sha256:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        )
+
+        line = ns.render_row_line(row)
+        self.assertTrue(line.startswith("| "), line)
+        self.assertEqual(len(line.splitlines()), 1)
+        self.assertIn(stored[:200] + " [cut: 9800 characters omitted]", line)
+        self.assertEqual(ns.clip_for_render("short"), "short")
+        self.assertEqual(
+            ns.clip_for_render("x" * 205), "x" * 200 + " [cut: 5 characters omitted]"
+        )
+
+        broken = dict(
+            row,
+            mechanism_text="first\nsecond\r\nthird\rfourth fifth\x85sixth",
+            writer="worker",
+            review_status="unreviewed",
+        )
+        line = ns.render_row_line(broken)
+        self.assertEqual(len(line.splitlines()), 1)
+        self.assertIn(
+            "mechanism: first\\nsecond\\nthird\\nfourth\\nfifth\\nsixth", line
+        )
+        self.assertIn("writer worker", line)
+        self.assertIn("review unreviewed", line)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ns.append_entries(root, [row])
+            summary = ns.summarize_open(root)
+            self.assertEqual(len(summary), 1)
+            self.assertEqual(
+                summary[0]["mechanism_text"],
+                stored[:200] + " [cut: 9800 characters omitted]",
+            )
+            self.assertEqual(
+                ns.load_negative_space(root)[0]["mechanism_text"], stored
+            )
+
+    def test_a_ledger_line_json_cannot_decode_is_reported_as_invalid_json(self) -> None:
+        """json raises RecursionError on deep nesting; the reader reports it as invalid JSON.
+
+        A RecursionError escaped every caller that handles a bad ledger as a
+        ValueError, so validation and the eligibility check crashed. An
+        integer longer than the digit limit already raised ValueError, so that
+        case is a regression check of the error type.
+        """
+        cases = {
+            "deep nesting": ("[" * 100_000 + "]" * 100_000, "invalid JSON on negative_space line 1"),
+            "integer past the digit limit (regression check)": ('{"n": ' + "1" * 5_000 + "}", ""),
+        }
+        for label, (payload, message) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                path = ns.negative_space_path(root)
+                path.parent.mkdir(parents=True)
+                path.write_text(payload + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    ns.load_negative_space(root)
+                report = ns.validate_negative_space(root)
+                self.assertEqual(report["status"], "error")
+                with self.assertRaises(ValueError):
+                    gf._eligible_approaches(_registry_with_approaches(), run_dir=root)
 
 
 class AntiFalseConsensusUnitTest(unittest.TestCase):

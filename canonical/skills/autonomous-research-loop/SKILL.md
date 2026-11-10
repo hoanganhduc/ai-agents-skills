@@ -296,7 +296,7 @@ negative-space ledger:
 | `approach_registry.json` | Campaigns, approaches, estimates, dependencies, blockers, and reopen conditions. |
 | `current_plan.json` | The one active campaign/approach, bounded next action, target obligations, scope lock, falsifier, compute policy, and revision pins. |
 | `direction_decisions.jsonl` | Append-only initialization, migration, selection, revision, and outcome provenance. |
-| `.goal_focus/negative_space.jsonl` | Append-only `negative_space.v1` failed explorations / blocked routes; never banks claims. Open rows make an approach ineligible and are permanent for the life of the loop — no automated reopen exists, so continue under a new `approach_id`. |
+| `.goal_focus/negative_space.jsonl` | Append-only `negative_space.v1` failed explorations / blocked routes; never banks claims. Open host rows make an approach ineligible and are permanent for the life of the loop; worker rows (`writer: worker`, the worker's own dead-end records from `negative-space add` or append-iteration's `--dead-end-*` flags) are advisory and leave it eligible. An approach that repeats a dead mechanism is flagged `duplicate_of_dead_mechanism`, not excluded. There is no reopen verb: retry under a new `approach_id` with a changed mechanism; reopening a blocked id still needs a different-family review. |
 
 `loop_state.goal`, `loop_state.success_criteria`,
 `loop_state.next_preferred_path`, `loop_state.goal_focus_projection`, and the

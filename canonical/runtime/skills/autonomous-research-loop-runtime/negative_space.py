@@ -4,6 +4,13 @@ Failed explorations are append-only, queryable, and never bank positive claims.
 Open rows are permanent for the life of the loop: `can_reopen_with_mechanism`
 and `supersession_rows` below define the reopen predicate but have no operator
 entry point, so callers must continue under a new approach id instead.
+
+A row may say who wrote it. Host rows (``writer`` "host", or no writer, as on
+every row written before the field existed) make their approach ineligible. A
+worker's own dead-end record (``writer`` exactly "worker") is advisory: it is
+listed and rendered with its review status but never excludes an approach.
+Stored text keeps ``_clean``'s value, so comparisons and fingerprints never
+change; a cut is marked only where a row is rendered.
 """
 
 from __future__ import annotations
@@ -29,6 +36,14 @@ NEGATIVE_SPACE_KINDS = frozenset(
     }
 )
 NEGATIVE_SPACE_STATUSES = frozenset({"open", "superseded"})
+# Optional row fields. An absent writer means host. review_status is required
+# on a worker row; checker_basis says how far a declared refutation was checked.
+NEGATIVE_SPACE_WRITERS = frozenset({"host", "worker"})
+NEGATIVE_SPACE_REVIEW_STATUSES = frozenset({"unreviewed", "reviewed"})
+NEGATIVE_SPACE_CHECKER_BASES = frozenset({"self_reported"})
+# Characters each text field keeps when a row is rendered; the rest is cut
+# with a visible marker.
+RENDER_FIELD_LIMIT = 200
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
@@ -67,15 +82,25 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
     if _stat.S_ISLNK(info.st_mode) or not _stat.S_ISREG(info.st_mode):
         raise ValueError(f"negative space path is not a regular file: {path}")
+    return parse_rows(path.read_text(encoding="utf-8"))
+
+
+def parse_rows(raw: str) -> list[dict[str, Any]]:
+    """Parse ledger text into rows; any line that is not a JSON object is a ValueError.
+
+    json raises a plain ValueError past the integer digit limit and
+    RecursionError on deep nesting; both are reported as invalid JSON, so a
+    caller that handles a bad ledger as a ValueError never sees another type.
+    """
+
     rows: list[dict[str, Any]] = []
-    raw = path.read_text(encoding="utf-8")
     for index, line in enumerate(raw.splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             continue
         try:
             value = json.loads(stripped)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             raise ValueError(f"invalid JSON on negative_space line {index}: {exc}") from exc
         if not isinstance(value, dict):
             raise ValueError(f"negative_space line {index} must be a JSON object")
@@ -95,7 +120,19 @@ def open_entries(
     approach_id: str | None = None,
     campaign_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    rows = load_negative_space(run_dir)
+    return filter_open(
+        load_negative_space(run_dir), approach_id=approach_id, campaign_id=campaign_id
+    )
+
+
+def filter_open(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    approach_id: str | None = None,
+    campaign_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """The open rows among ``rows``, optionally for one approach or campaign, in ledger order."""
+
     out: list[dict[str, Any]] = []
     for row in rows:
         if _clean(row.get("status")).lower() != "open":
@@ -114,6 +151,26 @@ def open_mechanism_fingerprints(run_dir: str | Path, approach_id: str) -> set[st
         for row in open_entries(run_dir, approach_id=approach_id)
         if _clean(row.get("mechanism_fingerprint"))
     }
+
+
+def open_duplicate_entry_id(
+    rows: Sequence[Mapping[str, Any]], *, approach_id: str | None, fingerprint: str
+) -> str:
+    """The entry_id of an open row with this approach and mechanism fingerprint, or "".
+
+    Approach ids compare after ``_clean``, so a row without an approach
+    matches another row without one.
+    """
+
+    wanted_approach = _clean(approach_id)
+    wanted = _clean(fingerprint)
+    for row in filter_open(rows):
+        if (
+            _clean(row.get("approach_id")) == wanted_approach
+            and _clean(row.get("mechanism_fingerprint")) == wanted
+        ):
+            return _clean(row.get("entry_id")) or "<no entry_id>"
+    return ""
 
 
 def dangling_supersessions(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -150,6 +207,10 @@ def approach_blocked_by_negative_space(run_dir: str | Path, approach_id: str) ->
     second case is what keeps an unresolvable retirement from handing the loop
     back an approach that was refuted on the evidence: the retirement has to
     name a row that exists before the approach is attemptable again.
+
+    A worker row (``writer`` exactly "worker") is advisory and covers nothing,
+    open or dangling: a worker's own dead-end record never makes an approach
+    ineligible. Any other writer value, or none, counts as a host row.
     """
 
     rows = load_negative_space(run_dir)
@@ -159,6 +220,7 @@ def approach_blocked_by_negative_space(run_dir: str | Path, approach_id: str) ->
         for row in rows
         if _clean(row.get("status")).lower() == "open"
         and _clean(row.get("approach_id")) == wanted
+        and row.get("writer") != "worker"
     ]
     entry_ids = sorted(_clean(r.get("entry_id")) for r in open_rows if _clean(r.get("entry_id")))
     if entry_ids:
@@ -166,7 +228,9 @@ def approach_blocked_by_negative_space(run_dir: str | Path, approach_id: str) ->
     dangling = sorted(
         _clean(r.get("entry_id"))
         for r in dangling_supersessions(rows)
-        if _clean(r.get("approach_id")) == wanted and _clean(r.get("entry_id"))
+        if _clean(r.get("approach_id")) == wanted
+        and _clean(r.get("entry_id"))
+        and r.get("writer") != "worker"
     )
     if dangling:
         return "negative_space_dangling_supersession:" + ",".join(dangling[:5])
@@ -192,13 +256,30 @@ def build_entry(
     status: str = "open",
     closed_at: str | None = None,
     superseded_by: str | None = None,
+    writer: str | None = None,
+    review_status: str | None = None,
+    checker_basis: str | None = None,
 ) -> dict[str, Any]:
+    """Build one validated row. writer, review_status and checker_basis are stored only when given."""
+
     kind_clean = _clean(kind).lower()
     if kind_clean not in NEGATIVE_SPACE_KINDS:
         raise ValueError(f"invalid negative_space kind: {kind!r}")
     status_clean = _clean(status).lower()
     if status_clean not in NEGATIVE_SPACE_STATUSES:
         raise ValueError(f"invalid negative_space status: {status!r}")
+    optional = {
+        name: value
+        for name, value in (
+            ("writer", writer),
+            ("review_status", review_status),
+            ("checker_basis", checker_basis),
+        )
+        if value is not None
+    }
+    optional_errors = _optional_field_errors(optional)
+    if optional_errors:
+        raise ValueError("; ".join(optional_errors))
     mechanism = _clean(mechanism_text)
     if not mechanism:
         raise ValueError("mechanism_text is required")
@@ -241,7 +322,30 @@ def build_entry(
         "reopen_requires_new_mechanism": True,
         "superseded_by": _clean(superseded_by) or None,
         "registry_revision_at_write": int(registry_revision_at_write or 0),
+        **optional,
     }
+
+
+def _optional_field_errors(row: Mapping[str, Any]) -> list[str]:
+    """Check writer, review_status and checker_basis where the row has the key.
+
+    A value must be one of its listed strings; anything else, null or a list
+    included, is refused before any set membership test.
+    """
+
+    errors: list[str] = []
+    for name, allowed in (
+        ("writer", NEGATIVE_SPACE_WRITERS),
+        ("review_status", NEGATIVE_SPACE_REVIEW_STATUSES),
+        ("checker_basis", NEGATIVE_SPACE_CHECKER_BASES),
+    ):
+        if name in row:
+            value = row.get(name)
+            if not isinstance(value, str) or value not in allowed:
+                errors.append(f"{name} is invalid")
+    if row.get("writer") == "worker" and "review_status" not in row:
+        errors.append("worker rows require review_status")
+    return errors
 
 
 def validate_entry(row: Mapping[str, Any]) -> list[str]:
@@ -280,6 +384,7 @@ def validate_entry(row: Mapping[str, Any]) -> list[str]:
             errors.append("superseded rows require superseded_by")
         if not _clean(row.get("closed_at")):
             errors.append("superseded rows require closed_at")
+    errors.extend(_optional_field_errors(row))
     return errors
 
 
@@ -335,8 +440,10 @@ def validate_negative_space(
                     ):
                         pass  # uniqueness checked below
     for aid, fps in open_mech.items():
-        # Detect duplicate open fingerprints for same approach
-        counts: dict[str, int] = {}
+        # Detect duplicate open fingerprints for same approach. Two host rows
+        # (any writer but exactly "worker") are an error; a duplicate that
+        # involves an advisory worker row is only a warning.
+        counts: dict[str, list[int]] = {}
         for row in rows:
             if (
                 _clean(row.get("status")).lower() == "open"
@@ -344,11 +451,17 @@ def validate_negative_space(
             ):
                 fp = _clean(row.get("mechanism_fingerprint"))
                 if fp:
-                    counts[fp] = counts.get(fp, 0) + 1
-        for fp, count in counts.items():
-            if count > 1:
+                    tally = counts.setdefault(fp, [0, 0])
+                    tally[1 if row.get("writer") == "worker" else 0] += 1
+        for fp, (host_count, worker_count) in counts.items():
+            if host_count > 1:
                 errors.append(
                     f"duplicate open mechanism_fingerprint for approach {aid}: {fp}"
+                )
+            elif host_count + worker_count > 1:
+                warnings.append(
+                    f"duplicate open mechanism_fingerprint for approach {aid} "
+                    f"involving a worker row: {fp}"
                 )
 
     # validate_entry only sees one row, so it can check that superseded_by is
@@ -535,6 +648,9 @@ def entry_for_blocked_approach(
     result_review_fingerprint: str | None = None,
     registry_revision: int = 0,
     kind: str = "blocked_route",
+    writer: str | None = None,
+    review_status: str | None = None,
+    checker_basis: str | None = None,
 ) -> dict[str, Any]:
     return build_entry(
         kind=kind,
@@ -550,22 +666,90 @@ def entry_for_blocked_approach(
         candidate_fingerprint=candidate_fingerprint,
         result_review_fingerprint=result_review_fingerprint,
         registry_revision_at_write=registry_revision,
+        writer=writer,
+        review_status=review_status,
+        checker_basis=checker_basis,
     )
 
 
+def clip_for_render(value: Any, limit: int = RENDER_FIELD_LIMIT) -> str:
+    """The value as text, cut to ``limit`` characters with a visible marker.
+
+    For rendering only. Stored rows, comparisons and fingerprints keep
+    ``_clean``'s value, so a long row keeps the fingerprint it was written with.
+    """
+
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]} [cut: {len(text) - limit} characters omitted]"
+
+
+def _one_line(text: str) -> str:
+    # Every line break str.splitlines() recognizes becomes the two characters
+    # \n, so a field can never start a line of its own in rendered output.
+    return "\\n".join(text.splitlines())
+
+
+def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> str:
+    """Render one row as a single line starting with "| ".
+
+    Each text field is cut to ``limit`` characters with a visible marker, then
+    its line breaks are shown as \\n. The writer, review status and checker
+    basis appear only when the row has them.
+    """
+
+    def field(value: Any) -> str:
+        return _one_line(clip_for_render(value, limit))
+
+    parts = [f"entry {field(row.get('entry_id'))}", f"kind {field(row.get('kind'))}"]
+    if field(row.get("approach_id")):
+        parts.append(f"approach {field(row.get('approach_id'))}")
+    elif field(row.get("campaign_id")):
+        parts.append(f"campaign {field(row.get('campaign_id'))}")
+    for name, label in (
+        ("writer", "writer"),
+        ("review_status", "review"),
+        ("checker_basis", "checker"),
+    ):
+        if name in row:
+            parts.append(f"{label} {field(row.get(name))}")
+    parts.append(f"mechanism: {field(row.get('mechanism_text'))}")
+    parts.append(f"failure: {field(row.get('failure_summary'))}")
+    parts.append(f"reopen when: {field(row.get('reopen_condition'))}")
+    evidence = row.get("evidence_ids")
+    evidence_ids = (
+        [_clean(item) for item in evidence if _clean(item)]
+        if isinstance(evidence, list)
+        else []
+    )
+    if evidence_ids:
+        parts.append(f"evidence: {field(', '.join(evidence_ids))}")
+    else:
+        absent = field(row.get("evidence_absent_reason"))
+        parts.append("evidence: none" + (f" ({absent})" if absent else ""))
+    return "| " + "; ".join(parts)
+
+
 def summarize_open(run_dir: str | Path, *, limit: int = 20) -> list[dict[str, str]]:
-    """Compact open-row summary for status / strategy review prompts."""
+    """Compact open-row summary for status / strategy review prompts.
+
+    Text fields are cut with a visible marker; writer, review status and
+    checker basis are included when the row has them.
+    """
 
     rows = open_entries(run_dir)
     out: list[dict[str, str]] = []
     for row in rows[: max(0, limit)]:
-        out.append(
-            {
-                "entry_id": _clean(row.get("entry_id")),
-                "approach_id": _clean(row.get("approach_id")),
-                "kind": _clean(row.get("kind")),
-                "mechanism_text": _clean(row.get("mechanism_text"), limit=200),
-                "failure_summary": _clean(row.get("failure_summary"), limit=200),
-            }
-        )
+        summary = {
+            "entry_id": _clean(row.get("entry_id")),
+            "approach_id": _clean(row.get("approach_id")),
+            "kind": _clean(row.get("kind")),
+            "mechanism_text": clip_for_render(row.get("mechanism_text")),
+            "failure_summary": clip_for_render(row.get("failure_summary")),
+        }
+        for name in ("writer", "review_status", "checker_basis"):
+            if name in row:
+                summary[name] = clip_for_render(row.get(name))
+        out.append(summary)
     return out

@@ -99,6 +99,9 @@ MODE_AUTHORITY_ERROR = (
     "the exact plan postimage"
 )
 APPROACH_STATUSES = frozenset({"eligible", "parked", "blocked", "closed", "succeeded"})
+# Migration writes this when a legacy campaign has no mechanism text. It is not
+# a mechanism, so dead-mechanism matching skips it.
+LEGACY_MECHANISM_PLACEHOLDER = "legacy campaign; mechanism not yet normalized"
 CAMPAIGN_STATUSES = frozenset(
     {"eligible", "active", "open", "parked", "blocked", "closed", "succeeded"}
 )
@@ -1258,6 +1261,9 @@ def _validate_registry(registry: Mapping[str, Any], errors: list[str], warnings:
         errors.append("approach_registry campaigns must be an object")
         return
     approach_ids: set[str] = set()
+    # Eligible approaches whose mechanism dead_mechanism_warnings cannot
+    # compare; reported once, as a count, after the loop.
+    without_mechanism = 0
     for campaign_id, raw_campaign in campaigns.items():
         if not isinstance(raw_campaign, dict):
             errors.append(f"campaign {campaign_id!r} must be an object")
@@ -1282,6 +1288,8 @@ def _validate_registry(registry: Mapping[str, Any], errors: list[str], warnings:
                 errors.append(f"approach {approach_id} campaign_id disagrees with its campaign key")
             if raw.get("status", "eligible") not in APPROACH_STATUSES:
                 errors.append(f"approach {approach_id} has invalid status")
+            if raw.get("status", "eligible") == "eligible" and not _approach_mechanism_fingerprint(raw):
+                without_mechanism += 1
             if raw.get("status") in {"blocked", "closed"} and not _clean_text(
                 raw.get("reopen_condition")
             ):
@@ -1307,6 +1315,11 @@ def _validate_registry(registry: Mapping[str, Any], errors: list[str], warnings:
                     _interval(estimate, field=f"approach {approach_id} estimate {factor}")
                 except ValueError as exc:
                     errors.append(str(exc))
+    if without_mechanism:
+        warnings.append(
+            f"eligible approaches without mechanism text: {without_mechanism} "
+            "(duplicate_of_dead_mechanism cannot compare them)"
+        )
 
 
 def _validate_plan(
@@ -1734,15 +1747,93 @@ def rank_approaches(
     )
 
 
+def _approach_mechanism_fingerprint(approach: Mapping[str, Any]) -> str:
+    """The fingerprint of an approach's mechanism text, or "" when it has none to compare.
+
+    Empty text and the migration placeholder are not mechanisms, so they never
+    match each other.
+    """
+
+    text = approach.get("mechanism")
+    if not isinstance(text, str):
+        return ""
+    fingerprint = ns.mechanism_fingerprint(text)
+    if fingerprint in {
+        ns.mechanism_fingerprint(""),
+        ns.mechanism_fingerprint(LEGACY_MECHANISM_PLACEHOLDER),
+    }:
+        return ""
+    return fingerprint
+
+
+def dead_mechanism_warnings(
+    registry: Mapping[str, Any], *, run_dir: str | Path | None = None
+) -> list[dict[str, str]]:
+    """Name each approach whose mechanism repeats a dead one; eligibility never changes.
+
+    An approach that is not blocked or closed is reported as
+    ``duplicate_of_dead_mechanism:<id>`` when its mechanism fingerprint equals
+    that of a blocked or closed approach (``<id>`` is that approach) or, given
+    ``run_dir``, of an open negative-space row (``<id>`` is the row's
+    entry_id). Retrying a dead route under a new approach id needs a changed
+    mechanism; this report makes an unchanged one visible without excluding it.
+
+    The report is advisory, so a ledger that cannot be read only drops the row
+    comparison; validation reports the ledger itself.
+    """
+
+    rows = _approach_rows(registry)
+    dead: dict[str, set[str]] = {}
+    for _, approach_id, approach in rows:
+        if _clean_text(approach.get("status") or "eligible").lower() in {"blocked", "closed"}:
+            fingerprint = _approach_mechanism_fingerprint(approach)
+            if fingerprint:
+                dead.setdefault(fingerprint, set()).add(approach_id)
+    open_rows: dict[str, set[str]] = {}
+    if run_dir is not None:
+        try:
+            ledger_rows = ns.open_entries(run_dir)
+        except (OSError, ValueError):
+            ledger_rows = []
+        for row in ledger_rows:
+            fingerprint = _clean_text(row.get("mechanism_fingerprint"))
+            entry_id = _clean_text(row.get("entry_id"))
+            if fingerprint and entry_id:
+                open_rows.setdefault(fingerprint, set()).add(entry_id)
+    warnings: list[dict[str, str]] = []
+    for _, approach_id, approach in sorted(rows, key=lambda item: item[1]):
+        if _clean_text(approach.get("status") or "eligible").lower() in {"blocked", "closed"}:
+            continue
+        fingerprint = _approach_mechanism_fingerprint(approach)
+        if not fingerprint:
+            continue
+        for dead_id in [
+            *sorted(dead.get(fingerprint, set()) - {approach_id}),
+            *sorted(open_rows.get(fingerprint, set())),
+        ]:
+            warnings.append(
+                {
+                    "approach_id": approach_id,
+                    "warning": f"duplicate_of_dead_mechanism:{dead_id}",
+                }
+            )
+    return warnings
+
+
 def select_direction(
     registry: Mapping[str, Any],
     *,
     max_portfolio: int = 3,
     run_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Select a dominant exploitation path or a bounded informative experiment."""
+    """Select a dominant exploitation path or a bounded informative experiment.
+
+    ``mechanism_warnings`` reports approaches that repeat a dead mechanism
+    (see ``dead_mechanism_warnings``); it never changes eligibility.
+    """
 
     eligible, excluded = _eligible_approaches(registry, run_dir=run_dir)
+    mechanism_warnings = dead_mechanism_warnings(registry, run_dir=run_dir)
     scores = [score_approach(approach) for approach in eligible]
     by_id = {str(approach["id"]): approach for approach in eligible}
     scores.sort(key=lambda row: (-row["conservative"], -row["optimistic"], row["approach_id"]))
@@ -1756,6 +1847,7 @@ def select_direction(
             "portfolio": [],
             "scores": [],
             "excluded": excluded,
+            "mechanism_warnings": mechanism_warnings,
             "generated_at": utc_now(),
         }
     first = scores[0]
@@ -1798,6 +1890,7 @@ def select_direction(
         "portfolio": diverse,
         "scores": scores,
         "excluded": excluded,
+        "mechanism_warnings": mechanism_warnings,
         "generated_at": utc_now(),
     }
 
@@ -3423,7 +3516,7 @@ def _migration_documents(
                     "id": approach_id,
                     "campaign_id": cid,
                     "status": status,
-                    "mechanism": _clean_text(legacy.get("mechanism")) or "legacy campaign; mechanism not yet normalized",
+                    "mechanism": _clean_text(legacy.get("mechanism")) or LEGACY_MECHANISM_PLACEHOLDER,
                     "objective": objective,
                     "next_action": next_action,
                     "target_obligation_ids": [],
@@ -5633,16 +5726,23 @@ def _negative_space_entry_for_finalize(
     registry: Mapping[str, Any],
     accepted: bool,
 ) -> dict[str, Any] | None:
-    """Build a negative-space row when finalization permanently blocks a route.
+    """Build the negative-space row a finalization writes, if any.
 
-    Triggers (reject path only):
+    Triggers on rejection:
     - record.block_approach is true, or
     - record.negative_space is a mapping with mechanism details, or
-    - the approach is blocked/closed in the postimage registry
+    - the approach is blocked/closed in the postimage registry.
+    On acceptance only record.negative_space triggers a row.
+
+    The row is a host row, which makes the approach ineligible, when the
+    postimage registry blocks or closes the approach or when a rejection sets
+    block_approach. Otherwise it is the worker's own dead-end record: a worker
+    row, advisory, that leaves the approach eligible. A rejected worker row is
+    unreviewed; an accepted one is reviewed only when its evidence passes
+    ``_dead_end_evidence_reviewed``. A checker_basis in record.negative_space
+    is copied. The registry is never changed for the row.
     """
 
-    if accepted:
-        return None
     approach_id = _clean_text(
         record.get("approach_id") or candidate.get("approach_id")
     )
@@ -5658,25 +5758,37 @@ def _negative_space_entry_for_finalize(
     explicit = record.get("negative_space")
     if not isinstance(explicit, Mapping):
         explicit = {}
-    block = (
-        record.get("block_approach") is True
-        or bool(explicit)
-        or approach_status in {"blocked", "closed"}
-    )
+    registry_blocks = approach_status in {"blocked", "closed"}
+    if accepted:
+        block = bool(explicit)
+        host_row = registry_blocks
+    else:
+        block = (
+            record.get("block_approach") is True
+            or bool(explicit)
+            or registry_blocks
+        )
+        host_row = registry_blocks or record.get("block_approach") is True
     if not block or not approach_id:
         return None
-    mechanism = _clean_text(
-        explicit.get("mechanism_text")
-        or record.get("failure_summary")
-        or record.get("stop_reason")
-        or review.get("summary")
-        or f"rejected candidate on approach {approach_id}"
-    )
-    failure = _clean_text(
-        explicit.get("failure_summary")
-        or record.get("stop_reason")
-        or "result_rejected"
-    )
+    if accepted:
+        # An accepted result's dead end must say what failed: the record's own
+        # stop reason and the review summary describe the banked result.
+        mechanism = _clean_text(explicit.get("mechanism_text"))
+        failure = _clean_text(explicit.get("failure_summary"))
+    else:
+        mechanism = _clean_text(
+            explicit.get("mechanism_text")
+            or record.get("failure_summary")
+            or record.get("stop_reason")
+            or review.get("summary")
+            or f"rejected candidate on approach {approach_id}"
+        )
+        failure = _clean_text(
+            explicit.get("failure_summary")
+            or record.get("stop_reason")
+            or "result_rejected"
+        )
     reopen = _clean_text(
         explicit.get("reopen_condition")
         or (approach.get("reopen_condition") if isinstance(approach, dict) else "")
@@ -5688,6 +5800,12 @@ def _negative_space_entry_for_finalize(
         if _clean_text(x)
     ]
     review_fp = _object_fingerprint(dict(review)) if isinstance(review, Mapping) else ""
+    if host_row:
+        review_status = None
+    elif accepted and _dead_end_evidence_reviewed(review, record, evidence_ids):
+        review_status = "reviewed"
+    else:
+        review_status = "unreviewed"
     return ns.entry_for_blocked_approach(
         approach_id=approach_id,
         campaign_id=campaign_id or None,
@@ -5699,7 +5817,11 @@ def _negative_space_entry_for_finalize(
             None
             if evidence_ids
             else _clean_text(explicit.get("evidence_absent_reason"))
-            or "rejected_candidate_without_staged_evidence_ids"
+            or (
+                "accepted_candidate_without_dead_end_evidence_ids"
+                if accepted
+                else "rejected_candidate_without_staged_evidence_ids"
+            )
         ),
         iteration_id=str(record.get("iteration") or ""),
         candidate_fingerprint=_clean_text(
@@ -5709,7 +5831,54 @@ def _negative_space_entry_for_finalize(
         result_review_fingerprint=review_fp or None,
         registry_revision=_positive_int(registry.get("registry_revision")),
         kind=_clean_text(explicit.get("kind")) or "blocked_route",
+        writer="host" if host_row else "worker",
+        review_status=review_status,
+        checker_basis=explicit.get("checker_basis"),
     )
+
+
+def _dead_end_evidence_reviewed(
+    review: Mapping[str, Any], record: Mapping[str, Any], evidence_ids: Sequence[str]
+) -> bool:
+    """Whether every reviewer cited each dead-end evidence id in support.
+
+    True only when the ids are non-empty, every one is staged evidence of the
+    record, and every provider review (the review itself when it carries no
+    ``provider_reviews``) cites each of them in a supported claim or an
+    accepted obligation.
+    """
+
+    wanted = {_clean_text(item) for item in evidence_ids if _clean_text(item)}
+    if not wanted or not wanted <= _record_evidence_ids(record):
+        return False
+    provider_reviews = review.get("provider_reviews")
+    payloads = (
+        [payload for payload in provider_reviews.values() if isinstance(payload, Mapping)]
+        if isinstance(provider_reviews, Mapping)
+        else [review]
+    )
+    if not payloads:
+        return False
+    supported = {"supported", "accept", "accepted", "pass"}
+    for payload in payloads:
+        cited: set[str] = set()
+        for key, verdict_fields in (
+            ("claim_reviews", ("status", "verdict")),
+            ("obligation_reviews", ("verdict", "status")),
+        ):
+            rows = payload.get(key)
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, Mapping):
+                    continue
+                verdict = _clean_text(
+                    row.get(verdict_fields[0]) or row.get(verdict_fields[1])
+                ).lower()
+                refs = row.get("evidence_refs")
+                if verdict in supported and isinstance(refs, list):
+                    cited.update(_clean_text(ref) for ref in refs if _clean_text(ref))
+        if not wanted <= cited:
+            return False
+    return True
 
 
 def _default_formal_reverifier(

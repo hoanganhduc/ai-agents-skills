@@ -43,6 +43,17 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
 ```
 
+Record a dead end in a legacy or monitor loop, and list the open ones (see
+[Negative space](#negative-space-dead-ends)):
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space add --dir research/run --kind dead_end --mechanism "..." --failure "..." --reopen-condition "..." --evidence-id E1
+```
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space list --dir research/run --limit 20
+```
+
 Initialize a new goal-focused loop in enforce mode (the default for new v2
 state), or select an explicit compatibility mode:
 
@@ -691,6 +702,61 @@ current-runtime drivers check it before and after registration and remove a
 raced registration before refusing to start. A safely parsed claim owned by a
 dead local PID may be reclaimed. Quiesce a live driver at an iteration boundary,
 apply, reconcile, validate, and only then restart.
+
+### Negative space (dead ends)
+
+`.goal_focus/negative_space.jsonl` holds `negative_space.v1` rows, one per
+failed route. A row records who wrote it. A host row (`writer: host`, or no
+writer, as on rows written before the field existed) makes its approach
+ineligible. A worker row (`writer: worker`) is the worker's own record: it is
+advisory, carries `review_status` `unreviewed` or `reviewed`, and never
+excludes an approach. Two open host rows with the same mechanism fingerprint on
+one approach fail validation; a duplicate that involves a worker row is a
+warning.
+
+- `negative-space add` records one worker row in a legacy or monitor loop. It
+  is refused in enforce mode (`negative_space_add_refused_in_enforce`), and
+  refused without writing when an open row already has the same approach and
+  mechanism fingerprint (`negative_space_duplicate_open_row`).
+- `append-iteration --dead-end-kind <kind> --dead-end-mechanism "…"
+  --dead-end-failure "…" --dead-end-reopen-condition "…"` records a dead end
+  with the iteration; the four flags come together
+  (`negative_space_dead_end_flags_incomplete`) and the evidence is the
+  iteration's `--evidence-id` list, so at least one is needed (in a legacy or
+  monitor loop, `negative-space add --evidence-absent-reason` records a dead
+  end without evidence). In legacy and monitor loops the worker row
+  lands in the same commit as the iteration, linked by
+  `negative_space_entry_id`. In enforce mode it travels with the staged
+  candidate as `record.negative_space`, and finalize writes it in the same
+  commit as the bank or the rejection: a worker row, `reviewed` only when every
+  reviewer cites each of its evidence ids in a supported claim or an accepted
+  obligation, and a host row only when the registry blocks or closes the
+  approach (or a rejection sets `block_approach`). The registry is not changed
+  for the row.
+- A `falsified_hypothesis` row, from either path, must cite an `--evidence-id`
+  naming a sagemath or python-verifier proof artifact that
+  `validate-proof-artifact` accepts, and takes no `--evidence-absent-reason`
+  (`negative_space_falsified_hypothesis_needs_artifact`). That check reads the
+  artifact's metadata and the presence of its proof file; `checker.status:
+  passed` says the declared checker finished, not that the hypothesis is false,
+  and nothing re-runs the tool. The row records `checker_basis: self_reported`.
+- `negative-space list` prints the open rows newest first, one `| ` line each,
+  optionally for one `--approach-id`. Each text field is cut at 200 characters
+  with `[cut: N characters omitted]`, line breaks inside a field show as `\n`,
+  and rows past `--limit` are counted as `N further open entries omitted`. Cuts
+  are made only when a row is rendered; the stored row and its fingerprint are
+  unchanged.
+
+Mechanism matching is warn-first. An approach whose mechanism fingerprint (case
+and spacing normalized) equals that of a blocked or closed approach, or of an
+open row, is reported as `duplicate_of_dead_mechanism:<id>` (the approach id or
+the row's entry_id) in the selection's `mechanism_warnings`, in `goal-focus
+replan --dry-run` and in `goal-focus status`, which also counts
+`omitted_open_entries`; the approach stays eligible. Empty mechanism text and
+the migration placeholder never match, and registry validation warns once with
+the number of eligible approaches that have no mechanism text. To retry a dead
+route, register a new approach id with a changed mechanism; reopening a blocked
+id still needs a different-family review, and there is no reopen verb.
 
 ### Legacy `goal_priority.v1` compatibility
 

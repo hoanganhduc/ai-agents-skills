@@ -9775,3 +9775,538 @@ class ContainmentBoundaryAdvertisesOnlyWhatItReadsTests(unittest.TestCase):
         )
         spawn = source.index("rc, timed_out, cleanup_error = run_primary_subprocess(")
         self.assertLess(revalidate, spawn)
+
+
+class NegativeSpaceCommandTests(unittest.TestCase):
+    """negative-space add and list, the dead-end flags of append-iteration, and declared refutations."""
+
+    DEAD_END_FLAGS = (
+        "--dead-end-kind",
+        "dead_end",
+        "--dead-end-mechanism",
+        "Induction on the number of colours",
+        "--dead-end-failure",
+        "the inductive step loses a colour at n = 3",
+        "--dead-end-reopen-condition",
+        "a different invariant for the inductive step",
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.provider_fixture = _ProviderAttestationFixture()
+        self.addCleanup(self.provider_fixture.cleanup)
+        patcher = mock.patch.dict(
+            os.environ, self.provider_fixture.environment, clear=False
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _ledger(run_dir: Path) -> Path:
+        return run_dir / ".goal_focus" / "negative_space.jsonl"
+
+    def _rows(self, run_dir: Path) -> list[dict[str, Any]]:
+        path = self._ledger(run_dir)
+        if not path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def _add(
+        run_dir: Path,
+        *extra: str,
+        kind: str = "dead_end",
+        mechanism: str = "induction on the number of colours",
+    ) -> subprocess.CompletedProcess[str]:
+        return run_helper(
+            "negative-space",
+            "add",
+            "--dir",
+            str(run_dir),
+            "--kind",
+            kind,
+            "--mechanism",
+            mechanism,
+            "--failure",
+            "the inductive step loses a colour",
+            "--reopen-condition",
+            "a different invariant",
+            *extra,
+            check=False,
+        )
+
+    @staticmethod
+    def _append(run_dir: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+        return run_helper(
+            "append-iteration",
+            "--dir",
+            str(run_dir),
+            "--mode",
+            "bounded-research",
+            "--objective",
+            "try the inductive route",
+            "--decision",
+            "continue",
+            *extra,
+            check=False,
+        )
+
+    def test_negative_space_add_and_list(self) -> None:
+        """add writes one worker row, refusing enforce mode and a duplicate without writing; list is newest first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+
+            added = self._add(run_dir, "--approach-id", "approach-a", "--evidence-id", "E1")
+            self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
+            body = json.loads(added.stdout)
+            rows = self._rows(run_dir)
+            self.assertEqual(len(rows), 1, rows)
+            row = rows[0]
+            self.assertEqual(
+                (row["status"], row["writer"], row["review_status"], row["approach_id"]),
+                ("open", "worker", "unreviewed", "approach-a"),
+            )
+            self.assertEqual(body["entry"]["entry_id"], row["entry_id"])
+
+            before = self._ledger(run_dir).read_bytes()
+            duplicate = self._add(
+                run_dir,
+                "--approach-id",
+                "approach-a",
+                "--evidence-id",
+                "E2",
+                mechanism="  Induction ON the number of colours ",
+            )
+            self.assertEqual(duplicate.returncode, 1, duplicate.stdout)
+            refusal = json.loads(duplicate.stdout)
+            self.assertEqual(refusal["code"], "negative_space_duplicate_open_row")
+            self.assertIn(row["entry_id"], refusal["error"])
+            self.assertEqual(self._ledger(run_dir).read_bytes(), before)
+
+            for index in range(4):
+                result = self._add(
+                    run_dir,
+                    "--approach-id",
+                    "approach-b" if index % 2 else "approach-a",
+                    "--evidence-absent-reason",
+                    "no artifact was kept",
+                    kind="evidence_gap",
+                    mechanism=f"mechanism {index}",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout)
+            listed = run_helper(
+                "negative-space", "list", "--dir", str(run_dir), "--limit", "2", check=False
+            )
+            self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+            body = json.loads(listed.stdout)
+            self.assertEqual(len(body["entries"]), 2)
+            self.assertIn("3 further open entries omitted", listed.stdout)
+            self.assertEqual(body["open_count"], 5)
+            self.assertIn("mechanism: mechanism 3", body["entries"][0])
+            self.assertIn("mechanism: mechanism 2", body["entries"][1])
+            self.assertTrue(all(entry.startswith("| ") for entry in body["entries"]))
+            scoped = json.loads(
+                run_helper(
+                    "negative-space",
+                    "list",
+                    "--dir",
+                    str(run_dir),
+                    "--approach-id",
+                    "approach-b",
+                ).stdout
+            )
+            self.assertEqual(scoped["open_count"], 2)
+            self.assertEqual(len(scoped["entries"]), 2)
+            self.assertNotIn("omitted", scoped)
+            for command in ("list", "add"):
+                elsewhere = run_helper(
+                    "negative-space",
+                    command,
+                    "--dir",
+                    tmp,
+                    *(
+                        ()
+                        if command == "list"
+                        else (
+                            "--kind",
+                            "dead_end",
+                            "--mechanism",
+                            "m",
+                            "--failure",
+                            "f",
+                            "--reopen-condition",
+                            "r",
+                            "--evidence-id",
+                            "E1",
+                        )
+                    ),
+                    check=False,
+                )
+                self.assertEqual(elsewhere.returncode, 1, elsewhere.stdout)
+                self.assertIn("not a loop directory", json.loads(elsewhere.stdout)["error"])
+            self.assertFalse((Path(tmp) / ".goal_focus").exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "enforced"
+            run_helper(
+                "init",
+                "--dir",
+                str(run_dir),
+                "--goal",
+                "integrate autonomous research loop",
+                "--success-criteria",
+                "ledger validates",
+                "--goal-focus-mode",
+                "enforce",
+            )
+            ledger = self._ledger(run_dir)
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            ledger.write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
+            before = ledger.read_bytes()
+            refused = self._add(run_dir, "--approach-id", "approach-z", "--evidence-id", "E1")
+            self.assertEqual(refused.returncode, 1, refused.stdout)
+            self.assertEqual(
+                json.loads(refused.stdout)["code"], "negative_space_add_refused_in_enforce"
+            )
+            self.assertEqual(ledger.read_bytes(), before)
+
+    def test_dead_end_flags_on_append_iteration(self) -> None:
+        """The four dead-end flags come together and record a worker row with the iteration.
+
+        In a legacy loop the row lands in the iteration's commit; in enforce
+        mode it is staged as record.negative_space. That a request without the
+        optional fields still validates, and that an unknown field is still
+        refused, are regression checks.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=4)
+            iterations = run_dir / "iterations.jsonl"
+
+            partial = self._append(
+                run_dir, "--evidence-id", "E1", *self.DEAD_END_FLAGS[:4]
+            )
+            self.assertEqual(partial.returncode, 1, partial.stdout + partial.stderr)
+            self.assertEqual(
+                json.loads(partial.stdout)["code"],
+                "negative_space_dead_end_flags_incomplete",
+            )
+            self.assertEqual(iterations.read_text(encoding="utf-8"), "")
+            self.assertFalse(self._ledger(run_dir).exists())
+
+            # A worker under host mediation writes one submission per dispatch;
+            # incomplete flags are refused before that write, not by the host.
+            mediated = arl.build_parser().parse_args(
+                [
+                    "append-iteration",
+                    "--dir",
+                    str(run_dir),
+                    "--mode",
+                    "bounded-research",
+                    "--objective",
+                    "try the inductive route",
+                    "--decision",
+                    "continue",
+                    *self.DEAD_END_FLAGS[:6],
+                ]
+            )
+            with mock.patch.dict(
+                os.environ, {"AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION": "1"}
+            ):
+                with self.assertRaises(arl.GuardError) as caught:
+                    arl.append_iteration(mediated)
+            self.assertEqual(
+                caught.exception.payload["code"], "negative_space_dead_end_flags_incomplete"
+            )
+
+            argv = [
+                "append-iteration",
+                "--dir",
+                str(run_dir),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "try the inductive route",
+                "--decision",
+                "continue",
+                "--evidence-id",
+                "E1",
+                *self.DEAD_END_FLAGS,
+            ]
+            preview = arl.append_iteration(arl.build_parser().parse_args([*argv, "--dry-run"]))
+            self.assertEqual(preview["would_append_negative_space"]["writer"], "worker")
+            self.assertFalse(self._ledger(run_dir).exists())
+
+            with mock.patch.object(
+                arl, "commit_transaction", wraps=arl.commit_transaction
+            ) as commit:
+                result = arl.append_iteration(arl.build_parser().parse_args(argv))
+            self.assertEqual(result["status"], "ok", result)
+            self.assertEqual(commit.call_count, 1)
+            written = commit.call_args.kwargs
+            self.assertIn("iterations.jsonl", written["text_files"])
+            self.assertIn(".goal_focus/negative_space.jsonl", written["jsonl_appends"])
+            rows = self._rows(run_dir)
+            self.assertEqual(len(rows), 1, rows)
+            self.assertEqual(
+                (rows[0]["writer"], rows[0]["review_status"], rows[0]["iteration_id"]),
+                ("worker", "unreviewed", "1"),
+            )
+            self.assertEqual(rows[0]["evidence_ids"], ["E1"])
+            record = json.loads(iterations.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(record["negative_space_entry_id"], rows[0]["entry_id"])
+
+            duplicate = self._append(run_dir, "--evidence-id", "E2", *self.DEAD_END_FLAGS)
+            self.assertEqual(duplicate.returncode, 1, duplicate.stdout)
+            self.assertEqual(
+                json.loads(duplicate.stdout)["code"], "negative_space_duplicate_open_row"
+            )
+            self.assertEqual(len(iterations.read_text(encoding="utf-8").splitlines()), 1)
+
+        with self.subTest("submission requests"):
+            args = arl.build_parser().parse_args(argv[:-8])
+            request = arl._legacy_request(args)
+            self.assertFalse(set(arl.ITERATION_SUBMISSION_OPTIONAL_FIELDS) & set(request))
+            # Regression check: a request written before the optional fields
+            # existed still validates.
+            self.assertEqual(arl._validated_iteration_submission_request(request), request)
+            flagged = arl._legacy_request(arl.build_parser().parse_args(argv))
+            self.assertEqual(
+                flagged["dead_end_mechanism"], "Induction on the number of colours"
+            )
+            self.assertEqual(arl._validated_iteration_submission_request(flagged), flagged)
+            for bad in (["dead_end"], None, 7):
+                with self.assertRaises(ValueError):
+                    arl._validated_iteration_submission_request({**flagged, "dead_end_kind": bad})
+            # Regression check: an unknown field is still refused.
+            with self.assertRaises(ValueError):
+                arl._validated_iteration_submission_request({**request, "dead_end_note": "x"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=3)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            RuntimeGoalFocusIntegrationTests._activate_single_direction(arl, gf, loop)
+            dispatch = gf.prepare_iteration_dispatch(
+                loop,
+                executor_provider="claude",
+                executor_family="anthropic",
+                executor_attestation=_provider_attestation("claude", loop),
+                started_at="2026-07-29T12:00:00Z",
+            )["dispatch"]
+            write_text_evidence(loop, dispatch, "dead-end-evidence")
+            args = arl.build_parser().parse_args(
+                [
+                    "append-iteration",
+                    "--dir",
+                    str(loop),
+                    "--mode",
+                    "bounded-research",
+                    "--objective",
+                    "try the inductive route",
+                    "--decision",
+                    "revise",
+                    "--claim-id",
+                    "dead-end-claim",
+                    "--evidence-id",
+                    "dead-end-evidence",
+                    "--compute-none",
+                    *self.DEAD_END_FLAGS,
+                ]
+            )
+            staged = arl.append_iteration(
+                args,
+                _host_control={
+                    "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                    "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                    "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                    "AAS_AUTOLOOP_ITERATION_STARTED_AT": "2026-07-29T12:00:00Z",
+                    "AAS_AUTOLOOP_RESOURCE_ATTESTATION": _primary_resource_attestation(),
+                },
+            )
+            self.assertEqual(staged["staging_status"], "staged", staged)
+            candidate = json.loads(
+                (loop / "iteration_candidate.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                candidate["record"]["negative_space"],
+                {
+                    "kind": "dead_end",
+                    "mechanism_text": "Induction on the number of colours",
+                    "failure_summary": "the inductive step loses a colour at n = 3",
+                    "reopen_condition": "a different invariant for the inductive step",
+                    "evidence_ids": ["dead-end-evidence"],
+                },
+            )
+            self.assertFalse(self._ledger(loop).exists())
+
+    def test_falsified_hypothesis_is_artifact_declared_and_self_reported(self) -> None:
+        """A refutation row cites a sagemath or python-verifier artifact, is self-reported, and re-runs nothing."""
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+            source = Path(tmp) / "search.sage"
+            # The file holds no counterexample: the artifact only declares one.
+            source.write_text("# searched graphs up to 8 vertices\n", encoding="utf-8")
+            for evidence_id, artifact_type in (("lean-proof", "lean"), ("sage-search", "sagemath")):
+                staged = run_helper(
+                    "stage-proof",
+                    "--dir",
+                    str(run_dir),
+                    "--id",
+                    evidence_id,
+                    "--file",
+                    str(source),
+                    "--artifact-type",
+                    artifact_type,
+                    "--target",
+                    "every planar graph on at most 8 vertices is 4-colourable",
+                    "--checker-name",
+                    "sage",
+                    "--checker-status",
+                    "passed",
+                )
+                self.assertEqual(json.loads(staged.stdout)["status"], "ok")
+
+            refusals = {
+                "no artifact": ("--evidence-id", "missing-artifact"),
+                "an absent reason": (
+                    "--evidence-id",
+                    "sage-search",
+                    "--evidence-absent-reason",
+                    "not kept",
+                ),
+                "a lean artifact": ("--evidence-id", "lean-proof"),
+            }
+            for label, extra in refusals.items():
+                with self.subTest(label):
+                    refused = self._add(run_dir, *extra, kind="falsified_hypothesis")
+                    self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                    self.assertEqual(
+                        json.loads(refused.stdout)["code"],
+                        "negative_space_falsified_hypothesis_needs_artifact",
+                    )
+            with self.subTest("dead-end flags"):
+                flags = list(self.DEAD_END_FLAGS)
+                flags[1] = "falsified_hypothesis"
+                refused = self._append(run_dir, "--evidence-id", "missing-artifact", *flags)
+                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                self.assertEqual(
+                    json.loads(refused.stdout)["code"],
+                    "negative_space_falsified_hypothesis_needs_artifact",
+                )
+                self.assertEqual(
+                    (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
+                )
+            self.assertEqual(self._rows(run_dir), [])
+
+            out = io.StringIO()
+            with mock.patch.object(
+                arl.subprocess, "run", side_effect=AssertionError("a checker was re-run")
+            ) as rerun, contextlib.redirect_stdout(out), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                code = arl.main(
+                    [
+                        "negative-space",
+                        "add",
+                        "--dir",
+                        str(run_dir),
+                        "--kind",
+                        "falsified_hypothesis",
+                        "--mechanism",
+                        "every planar graph on at most 8 vertices is 3-colourable",
+                        "--failure",
+                        "the declared search reports K4 as a counterexample",
+                        "--reopen-condition",
+                        "a stronger hypothesis",
+                        "--evidence-id",
+                        "sage-search",
+                    ]
+                )
+            self.assertEqual(code, 0, out.getvalue())
+            rerun.assert_not_called()
+            rows = self._rows(run_dir)
+            self.assertEqual(len(rows), 1, rows)
+            self.assertEqual(
+                (rows[0]["kind"], rows[0]["writer"], rows[0]["review_status"], rows[0]["checker_basis"]),
+                ("falsified_hypothesis", "worker", "unreviewed", "self_reported"),
+            )
+            self.assertEqual(rows[0]["evidence_ids"], ["sage-search"])
+
+    def test_goal_focus_status_reports_dead_mechanisms_and_omitted_rows(self) -> None:
+        """goal-focus status carries mechanism_warnings and counts the open rows past the ten it shows.
+
+        open_count and the ten open_entries are regression checks: status
+        reported both before.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(run_dir, max_iterations=3)
+            init_args.goal_focus_mode = "monitor"
+            arl.init_loop(init_args)
+            registry = gf.load_approach_registry(run_dir)
+            registry["campaigns"] = {
+                "C1": {
+                    "id": "C1",
+                    "status": "eligible",
+                    "approaches": {
+                        "A": {
+                            "status": "blocked",
+                            "mechanism": "spectral bound",
+                            "reopen_condition": "a new eigenvalue estimate",
+                        },
+                        "B": {"status": "eligible", "mechanism": "Spectral  Bound"},
+                    },
+                }
+            }
+            (run_dir / "approach_registry.json").write_text(
+                json.dumps(registry, indent=2) + "\n", encoding="utf-8"
+            )
+            rows = []
+            for index in range(12):
+                row = gf.ns.build_entry(
+                    kind="evidence_gap",
+                    mechanism_text=f"mechanism {index}",
+                    failure_summary="no evidence kept",
+                    reopen_condition="new evidence",
+                    approach_id="A",
+                    evidence_absent_reason="nothing was kept",
+                )
+                rows.append(row)
+            gf.ns.rewrite_ledger(run_dir, rows)
+
+            status = arl.goal_focus_status_command(argparse.Namespace(dir=str(run_dir)))
+
+            block = status["negative_space"]
+            self.assertTrue(block["available"], block)
+            self.assertEqual(block["open_count"], 12)
+            self.assertEqual(len(block["open_entries"]), 10)
+            self.assertEqual(block["omitted_open_entries"], 2)
+            self.assertEqual(
+                block["mechanism_warnings"],
+                [{"approach_id": "B", "warning": "duplicate_of_dead_mechanism:A"}],
+            )

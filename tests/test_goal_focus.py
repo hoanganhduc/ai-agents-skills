@@ -4793,5 +4793,350 @@ class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
             self.assertEqual(recheck["policy"]["pin_source"], "caller")
 
 
+class GoalFocusNegativeSpaceWriterTests(_AttestedGoalFocusTestCase):
+    """Dead mechanisms are flagged, never excluded; worker dead-end rows stay advisory."""
+
+    DEAD_END = {
+        "kind": "dead_end",
+        "mechanism_text": "induction on the number of colours",
+        "failure_summary": "the inductive step loses a colour at n = 3",
+        "reopen_condition": "a different invariant for the inductive step",
+    }
+
+    @staticmethod
+    def _worker_row(entry_id: str, mechanism: str, approach_id: str = "A1") -> dict:
+        row = gf.ns.build_entry(
+            kind="dead_end",
+            mechanism_text=mechanism,
+            failure_summary="the route failed",
+            reopen_condition="a changed mechanism",
+            approach_id=approach_id,
+            campaign_id="C1",
+            evidence_ids=["E1"],
+            entry_id=entry_id,
+        )
+        # Set directly: the writer fields are what the test is about, and
+        # build_entry on the base refuses them as unknown arguments.
+        row.update({"writer": "worker", "review_status": "unreviewed"})
+        return row
+
+    def test_dead_mechanism_under_new_approach_id_warns_and_stays_eligible(self) -> None:
+        """An approach repeating a dead mechanism carries duplicate_of_dead_mechanism and stays eligible.
+
+        The eligible set is a regression check: the report never changed it.
+        """
+        registry = {
+            "schema_version": gf.APPROACH_REGISTRY_SCHEMA,
+            "registry_revision": 2,
+            "campaigns": {
+                "C1": {
+                    "id": "C1",
+                    "status": "eligible",
+                    "approaches": {
+                        "A": {
+                            "status": "blocked",
+                            "mechanism": "Induction on the number of colours",
+                            "reopen_condition": "a new invariant",
+                        },
+                        "C": {
+                            "status": "closed",
+                            "mechanism": "induction on the  number of COLOURS",
+                            "reopen_condition": "a new invariant",
+                        },
+                        "B": {
+                            "status": "eligible",
+                            "mechanism": "  INDUCTION   on the number of colours ",
+                        },
+                        "D": {"status": "eligible", "mechanism": "discharging with weights"},
+                        "E": {
+                            "status": "eligible",
+                            "mechanism": "legacy campaign; mechanism not yet normalized",
+                        },
+                        "F": {
+                            "status": "closed",
+                            "mechanism": "Legacy campaign;  mechanism not yet normalized",
+                            "reopen_condition": "new reviewed mechanism",
+                        },
+                        "G": {"status": "eligible", "mechanism": "spectral bound"},
+                        "H": {"status": "eligible", "mechanism": ""},
+                        "I": {"status": "closed", "mechanism": "", "reopen_condition": "x"},
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gf.ns.rewrite_ledger(root, [self._worker_row("ns-spectral", "Spectral  Bound", "X-old")])
+
+            selection = gf.select_direction(registry, run_dir=root)
+
+            self.assertEqual(
+                selection["mechanism_warnings"],
+                [
+                    {"approach_id": "B", "warning": "duplicate_of_dead_mechanism:A"},
+                    {"approach_id": "B", "warning": "duplicate_of_dead_mechanism:C"},
+                    {"approach_id": "G", "warning": "duplicate_of_dead_mechanism:ns-spectral"},
+                ],
+            )
+            self.assertEqual(
+                gf.dead_mechanism_warnings(registry, run_dir=root),
+                selection["mechanism_warnings"],
+            )
+            eligible = {row["approach_id"] for row in selection["scores"]}
+            self.assertEqual(eligible, {"B", "D", "E", "G", "H"})
+            self.assertEqual(
+                gf.dead_mechanism_warnings(registry),
+                selection["mechanism_warnings"][:2],
+            )
+
+    def test_an_unreadable_ledger_never_turns_the_mechanism_report_into_a_crash(self) -> None:
+        """An unreadable ledger drops only the row comparison of the advisory report.
+
+        With no approach to dispatch, selection never read the ledger, so its
+        no_eligible_direction result is a regression check. The registry
+        comparison still reports B, and validation reports the ledger itself.
+        """
+        registry = {
+            "schema_version": gf.APPROACH_REGISTRY_SCHEMA,
+            "registry_revision": 2,
+            "campaigns": {
+                "C1": {
+                    "id": "C1",
+                    "status": "eligible",
+                    "approaches": {
+                        "A": {
+                            "status": "blocked",
+                            "mechanism": "spectral bound",
+                            "reopen_condition": "x",
+                        },
+                        "B": {"status": "parked", "mechanism": "Spectral Bound"},
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = gf.ns.negative_space_path(root)
+            ledger.parent.mkdir(parents=True)
+            ledger.write_text("{not json\n", encoding="utf-8")
+
+            selection = gf.select_direction(registry, run_dir=root)
+
+            self.assertEqual(selection["status"], "no_eligible_direction")
+            self.assertEqual(
+                selection["mechanism_warnings"],
+                [{"approach_id": "B", "warning": "duplicate_of_dead_mechanism:A"}],
+            )
+            self.assertEqual(gf.ns.validate_negative_space(root)["status"], "error")
+
+    def test_registry_validation_counts_eligible_approaches_without_mechanism_text(self) -> None:
+        """One aggregated warning counts the eligible approaches the mechanism match cannot compare.
+
+        That the registry has no errors is a regression check.
+        """
+        registry = {
+            "schema_version": gf.APPROACH_REGISTRY_SCHEMA,
+            "registry_revision": 2,
+            "campaigns": {
+                "C1": {
+                    "id": "C1",
+                    "status": "eligible",
+                    "approaches": {
+                        "A": {"status": "eligible", "mechanism": "spectral bound"},
+                        "B": {"status": "eligible"},
+                        "C": {
+                            "status": "eligible",
+                            "mechanism": "legacy campaign; mechanism not yet normalized",
+                        },
+                        "D": {"status": "eligible", "mechanism": ["not", "text"]},
+                        "E": {"status": "blocked", "reopen_condition": "x"},
+                        "F": {"status": "parked"},
+                    },
+                }
+            },
+        }
+        errors: list[str] = []
+        warnings: list[str] = []
+        gf._validate_registry(registry, errors, warnings)
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [item for item in warnings if "mechanism text" in item],
+            [
+                "eligible approaches without mechanism text: 3 "
+                "(duplicate_of_dead_mechanism cannot compare them)"
+            ],
+        )
+
+    def test_worker_rows_then_enforce_still_dispatch(self) -> None:
+        """Two duplicate worker rows recorded under monitor neither fail enforce validation nor block dispatch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="monitor")
+            registry = _install_approaches(
+                root,
+                {
+                    "A1": {
+                        "campaign_id": "C1",
+                        "status": "eligible",
+                        "mechanism": "induction on the number of colours",
+                        "objective": "Discharge the terminal obligation",
+                        "target_obligation_ids": ["GOAL-SC-1"],
+                        "next_action": "Prove the bounded bridge lemma.",
+                        "scope_lock": "full_goal",
+                        "estimates": {"goal_resolution": {"lower": 2, "upper": 3}},
+                    }
+                },
+            )
+            gf.ns.rewrite_ledger(
+                root,
+                [
+                    self._worker_row("ns-1", "induction on the number of colours"),
+                    self._worker_row("ns-2", "Induction on the number of colours"),
+                ],
+            )
+            gf.set_enforcement_mode(root, mode="enforce")
+
+            validation = gf.validate_goal_focus(root, require_enabled=True)
+            self.assertEqual(validation["errors"], [], validation)
+            fingerprint = gf.ns.mechanism_fingerprint("induction on the number of colours")
+            self.assertEqual(
+                [item for item in validation["warnings"] if "duplicate open" in item],
+                [
+                    "duplicate open mechanism_fingerprint for approach A1 "
+                    f"involving a worker row: {fingerprint}"
+                ],
+            )
+
+            selection = gf.select_direction(registry, run_dir=root)
+            self.assertEqual(selection["selected_approach_id"], "A1")
+            gf.commit_selected_direction(
+                root, selection, _strategy_review(root, selection), "test_activation"
+            )
+            gate = gf.pre_dispatch_gate(root)
+            self.assertTrue(gate["ok"], gate)
+            self.assertEqual(gate["action"], "dispatch", gate)
+
+    def test_accepted_candidate_with_dead_end_banks_and_leaves_open_worker_row(self) -> None:
+        """An accepted candidate banks and its dead end lands as one open worker row in the same commit.
+
+        The row is reviewed only when every reviewer cites each of its
+        evidence ids in support; it never makes the candidate's approach
+        ineligible, and the registry is left as it was. The bank itself (the
+        accepted status, an unchanged registry, a valid Goal Focus state) is a
+        regression check.
+        """
+        cited = [
+            {
+                "claim_id": "CLAIM-TEST",
+                "status": "supported",
+                "evidence_refs": ["result.json"],
+                "reason": "The result file supports the claim.",
+            }
+        ]
+        cases = {
+            "dead-end evidence cited in support": ({}, "reviewed"),
+            "dead-end evidence not cited": ({"claim_reviews": cited}, "unreviewed"),
+        }
+        for label, (overrides, review_status) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                staged = _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": "banked result",
+                        "evidence_ids": ["result.json", "dead-end.json"],
+                        "negative_space": {**self.DEAD_END, "evidence_ids": ["dead-end.json"]},
+                    },
+                )
+                registry_before = (root / gf.APPROACH_REGISTRY_FILE).read_bytes()
+
+                result = gf.finalize_candidate(
+                    root, accepted=True, review=_bound_review(staged, **overrides)
+                )
+
+                self.assertEqual(result["status"], "accepted")
+                rows = gf.ns.load_negative_space(root)
+                self.assertEqual(len(rows), 1, rows)
+                row = rows[0]
+                self.assertEqual(
+                    (row["status"], row.get("writer"), row.get("review_status")),
+                    ("open", "worker", review_status),
+                )
+                self.assertEqual(row["approach_id"], "A1")
+                self.assertEqual(row["evidence_ids"], ["dead-end.json"])
+                self.assertEqual(result["record"]["negative_space_entry_id"], row["entry_id"])
+                self.assertEqual(
+                    gf._read_iteration_rows(root)[-1]["negative_space_entry_id"],
+                    row["entry_id"],
+                )
+                self.assertIn(gf.ns.NEGATIVE_SPACE_REL.as_posix(), result["transaction"]["targets"])
+                self.assertIn(gf.ITERATION_LEDGER_FILE, result["transaction"]["targets"])
+                self.assertEqual((root / gf.APPROACH_REGISTRY_FILE).read_bytes(), registry_before)
+                registry = gf.load_approach_registry(root)
+                self.assertEqual(
+                    gf._approach_ineligibility(registry, "C1", "A1", run_dir=root), ""
+                )
+                validation = gf.validate_goal_focus(root, require_enabled=True)
+                self.assertEqual(validation["errors"], [], validation)
+
+    def test_rejected_dead_end_is_worker_row_unless_registry_blocks(self) -> None:
+        """A rejected dead end is an advisory worker row; a registry that blocks the approach makes it a host row.
+
+        With the registry blocking, the approach's exclusion (status:blocked,
+        and the row blocking by approach id) is a regression check.
+        """
+        for registry_blocks in (False, True):
+            with self.subTest(registry_blocks=registry_blocks), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                staged = _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": "the route failed",
+                        "evidence_ids": ["dead-end.json"],
+                        "negative_space": {**self.DEAD_END, "evidence_ids": ["dead-end.json"]},
+                    },
+                )
+                postimage = None
+                if registry_blocks:
+                    postimage = gf.load_approach_registry(root)
+                    approach = postimage["campaigns"]["C1"]["approaches"]["A1"]
+                    approach["status"] = "blocked"
+                    approach["reopen_condition"] = "a different invariant"
+
+                gf.finalize_candidate(
+                    root,
+                    accepted=False,
+                    review=_bound_review(staged, status="failed", reason="the route failed"),
+                    registry_postimage=postimage,
+                )
+
+                rows = gf.ns.load_negative_space(root)
+                self.assertEqual(len(rows), 1, rows)
+                row = rows[0]
+                registry = gf.load_approach_registry(root)
+                reason = gf._approach_ineligibility(registry, "C1", "A1", run_dir=root)
+                if registry_blocks:
+                    self.assertEqual(row.get("writer"), "host")
+                    self.assertNotIn("review_status", row)
+                    self.assertEqual(reason, "status:blocked")
+                    self.assertTrue(
+                        gf.ns.approach_blocked_by_negative_space(root, "A1").startswith(
+                            "negative_space_open:"
+                        )
+                    )
+                else:
+                    self.assertEqual(
+                        (row.get("writer"), row.get("review_status")),
+                        ("worker", "unreviewed"),
+                    )
+                    self.assertEqual(reason, "")
+
+
 if __name__ == "__main__":
     unittest.main()

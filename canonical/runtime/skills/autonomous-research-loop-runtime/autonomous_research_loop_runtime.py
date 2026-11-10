@@ -89,6 +89,7 @@ try:
         normalize_compute_job_ref,
     )
     import goal_focus as goal_focus_v2  # type: ignore
+    import negative_space  # type: ignore
     import notify_v2  # type: ignore
     from state_transaction import (  # type: ignore
         ITERATION_LEDGER_FILE,
@@ -167,6 +168,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         normalize_compute_job_ref,
     )
     from . import goal_focus as goal_focus_v2  # type: ignore
+    from . import negative_space  # type: ignore
     from . import notify_v2  # type: ignore
     from .state_transaction import (  # type: ignore
         ITERATION_LEDGER_FILE,
@@ -291,6 +293,16 @@ ITERATION_SUBMISSION_BOOL_FIELDS = frozenset(
 ITERATION_SUBMISSION_INT_FIELDS = frozenset(
     {"tokens", "wall_time_seconds"}
 )
+# String fields a request carries only when set. Leaving them out when unset
+# keeps a request written before they existed valid and equal to its replay.
+ITERATION_SUBMISSION_OPTIONAL_FIELDS = (
+    "dead_end_kind",
+    "dead_end_mechanism",
+    "dead_end_failure",
+    "dead_end_reopen_condition",
+)
+# A falsified_hypothesis row must cite a proof artifact of one of these types.
+REFUTATION_ARTIFACT_TYPES = frozenset({"sagemath", "python-verifier"})
 
 
 def utc_now() -> str:
@@ -1485,12 +1497,19 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
 def _validated_iteration_submission_request(
     request: object,
 ) -> dict[str, Any]:
-    """Validate the exact untrusted worker-to-host request schema."""
+    """Validate the exact untrusted worker-to-host request schema.
+
+    Every field of ITERATION_SUBMISSION_ARG_FIELDS is required; a field of
+    ITERATION_SUBMISSION_OPTIONAL_FIELDS may be absent and is a string when
+    present. Any other field is refused.
+    """
 
     if not isinstance(request, dict):
         raise ValueError("iteration submission request must be a JSON object")
     expected = set(ITERATION_SUBMISSION_ARG_FIELDS)
-    if set(request) != expected:
+    if not expected <= set(request) <= expected | set(
+        ITERATION_SUBMISSION_OPTIONAL_FIELDS
+    ):
         raise ValueError("iteration submission request has unexpected or missing fields")
     validated: dict[str, Any] = {}
     for name in ITERATION_SUBMISSION_ARG_FIELDS:
@@ -1526,18 +1545,35 @@ def _validated_iteration_submission_request(
                 f"iteration submission field {name} must be a string"
             )
         validated[name] = copy.deepcopy(value)
+    for name in ITERATION_SUBMISSION_OPTIONAL_FIELDS:
+        if name in request:
+            if not isinstance(request[name], str):
+                raise ValueError(
+                    f"iteration submission field {name} must be a string when present"
+                )
+            validated[name] = request[name]
     evidence_ids = parse_many(validated.get("evidence_id"))
     if ITERATION_SUBMISSION_FILENAME in evidence_ids:
         raise ValueError("the reserved iteration submission cannot be used as evidence")
     return validated
 
 
-def _iteration_submission_payload(args: argparse.Namespace) -> dict[str, Any]:
+def _submission_request_fields(args: argparse.Namespace) -> dict[str, Any]:
+    """The request fields of ``args``: every required one, and each optional one that is set."""
+
     request = {
         name: copy.deepcopy(getattr(args, name, None))
         for name in ITERATION_SUBMISSION_ARG_FIELDS
     }
-    request = _validated_iteration_submission_request(request)
+    for name in ITERATION_SUBMISSION_OPTIONAL_FIELDS:
+        value = getattr(args, name, None)
+        if value is not None:
+            request[name] = copy.deepcopy(value)
+    return request
+
+
+def _iteration_submission_payload(args: argparse.Namespace) -> dict[str, Any]:
+    request = _validated_iteration_submission_request(_submission_request_fields(args))
     run_id = safe_registry_run_id(os.environ.get("AAS_AUTOLOOP_RUN_ID"))
     dispatch_id = safe_registry_run_id(
         os.environ.get("AAS_AUTOLOOP_DISPATCH_ID")
@@ -1901,9 +1937,7 @@ LEGACY_VERIFICATION_PENDING = "formal/legacy_verification_pending.json"
 
 
 def _legacy_request(args: argparse.Namespace) -> dict[str, Any]:
-    return _validated_iteration_submission_request({
-        name: copy.deepcopy(getattr(args, name, None)) for name in ITERATION_SUBMISSION_ARG_FIELDS
-    })
+    return _validated_iteration_submission_request(_submission_request_fields(args))
 
 
 def _legacy_policy_binding(run_dir: Path) -> dict[str, Any]:
@@ -2056,6 +2090,142 @@ def _require_legacy_host_reverification(run_dir: Path, *, dry_run: bool = False)
     )
 
 
+def _dead_end_flags(args: argparse.Namespace) -> dict[str, str] | None:
+    """The dead-end flags of append-iteration: all four, or None when none is given."""
+
+    given = {
+        name: getattr(args, name)
+        for name in ITERATION_SUBMISSION_OPTIONAL_FIELDS
+        if getattr(args, name, None) is not None
+    }
+    if not given:
+        return None
+    for name, value in given.items():
+        if not isinstance(value, str):
+            raise ValueError(f"--{name.replace('_', '-')} must be a string")
+    missing = [
+        f"--{name.replace('_', '-')}"
+        for name in ITERATION_SUBMISSION_OPTIONAL_FIELDS
+        if name not in given
+    ]
+    if missing:
+        raise GuardError(
+            "the dead-end flags record one negative-space row and are given together "
+            "(--dead-end-kind, --dead-end-mechanism, --dead-end-failure, "
+            "--dead-end-reopen-condition); missing: " + ", ".join(missing),
+            code="negative_space_dead_end_flags_incomplete",
+        )
+    return given
+
+
+def _refutation_artifact_ids(run_dir: Path, evidence_ids: list[str]) -> list[str]:
+    """Evidence ids naming a sagemath or python-verifier proof artifact that validates.
+
+    validate_proof_artifact checks the artifact's metadata and that its proof
+    file exists. A checker status of passed says the declared checker ran to
+    completion, not that it refuted the hypothesis, and nothing here re-runs
+    it. An artifact that cannot be read or parsed counts as absent.
+    """
+
+    accepted: list[str] = []
+    for evidence_id in evidence_ids:
+        try:
+            if validate_proof_artifact(run_dir, evidence_id):
+                continue
+            artifact_type = read_json(proof_artifact_path(run_dir, evidence_id)).get(
+                "artifact_type"
+            )
+        except (OSError, ValueError, TypeError, RecursionError):
+            continue
+        if isinstance(artifact_type, str) and artifact_type in REFUTATION_ARTIFACT_TYPES:
+            accepted.append(evidence_id)
+    return accepted
+
+
+def _worker_negative_space_row(
+    run_dir: Path,
+    *,
+    kind: str,
+    mechanism: str,
+    failure: str,
+    reopen_condition: str,
+    approach_id: str,
+    campaign_id: str,
+    evidence_ids: list[str],
+    evidence_absent_reason: str = "",
+    iteration_id: str | None = None,
+) -> dict[str, Any]:
+    """Build and validate one advisory worker row before anything is written.
+
+    A falsified_hypothesis row cites the artifact that declares the refutation:
+    an evidence id naming a sagemath or python-verifier proof artifact that
+    validate_proof_artifact accepts, with no evidence_absent_reason. The worker
+    declared that artifact, so the row records checker_basis self_reported.
+    """
+
+    checker_basis = None
+    if str(kind or "").strip().lower() == "falsified_hypothesis":
+        if str(evidence_absent_reason or "").strip():
+            raise GuardError(
+                "a falsified_hypothesis row cites its refutation artifact and takes "
+                "no --evidence-absent-reason",
+                code="negative_space_falsified_hypothesis_needs_artifact",
+            )
+        if not _refutation_artifact_ids(run_dir, evidence_ids):
+            raise GuardError(
+                "a falsified_hypothesis row needs an --evidence-id naming a sagemath "
+                f"or python-verifier proof artifact ({PROOF_ARTIFACT_DIRNAME}/<id>.json) "
+                "that validate-proof-artifact accepts; stage-proof records one",
+                code="negative_space_falsified_hypothesis_needs_artifact",
+            )
+        checker_basis = "self_reported"
+    return negative_space.build_entry(
+        kind=kind,
+        mechanism_text=mechanism,
+        failure_summary=failure,
+        reopen_condition=reopen_condition,
+        approach_id=approach_id or None,
+        campaign_id=campaign_id or None,
+        evidence_ids=evidence_ids,
+        evidence_absent_reason=evidence_absent_reason or None,
+        iteration_id=iteration_id,
+        writer="worker",
+        review_status="unreviewed",
+        checker_basis=checker_basis,
+    )
+
+
+def _negative_space_snapshot(run_dir: Path) -> tuple[list[dict[str, Any]], str | None]:
+    """The ledger's rows and the sha256 of the bytes they were parsed from.
+
+    One bounded read that follows no link; the digest guards the commit that
+    appends to the ledger. A missing ledger gives no rows and no digest.
+    """
+
+    try:
+        text = _read_regular_text(run_dir / negative_space.NEGATIVE_SPACE_REL)
+    except FileNotFoundError:
+        return [], None
+    return negative_space.parse_rows(text), hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _refuse_duplicate_open_row(
+    rows: list[dict[str, Any]], row: Mapping[str, Any]
+) -> None:
+    duplicate = negative_space.open_duplicate_entry_id(
+        rows,
+        approach_id=row.get("approach_id"),
+        fingerprint=str(row.get("mechanism_fingerprint") or ""),
+    )
+    if duplicate:
+        raise GuardError(
+            f"open negative-space row {duplicate} already records this mechanism for "
+            f"approach {row.get('approach_id') or '<none>'}; nothing was written",
+            code="negative_space_duplicate_open_row",
+            duplicate_entry_id=duplicate,
+        )
+
+
 def append_iteration(
     args: argparse.Namespace,
     *,
@@ -2071,6 +2241,9 @@ def append_iteration(
                 "submission (AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION=1): guards run "
                 "host-side on the real submission; submit without --dry-run"
             )
+        # The one submission per dispatch cannot be rewritten, so refuse
+        # incomplete dead-end flags before writing it; the host checks the row.
+        _dead_end_flags(args)
         return _write_worker_iteration_submission(args)
     control = os.environ if _host_control is None else _host_control
     run_dir = Path(args.dir).expanduser().resolve()
@@ -2127,6 +2300,7 @@ def append_iteration(
         raise ValueError(f"decision must be one of {sorted(VALID_DECISIONS)}")
     if args.mode not in VALID_MODES:
         raise ValueError(f"mode must be one of {sorted(VALID_MODES)}")
+    dead_end = _dead_end_flags(args)
 
     # Every preimage is hashed as it is read. The iteration number below is
     # derived from these bytes, and the commit at the end of this function
@@ -2171,6 +2345,33 @@ def append_iteration(
             "Goal-Focus enforce mode requires at least one staged --evidence-id "
             "for material claim review"
         )
+    # The dead-end row is built, checked and compared with the open rows here,
+    # before any write. Its approach is the plan's when Goal Focus runs; the
+    # ledger digest guards the legacy commit below.
+    dead_end_row: dict[str, Any] | None = None
+    negative_space_digest: str | None = None
+    if dead_end is not None:
+        focus_plan = (
+            goal_focus_v2.load_current_plan(run_dir, required=enforced_goal_focus)
+            if goal_focus_is_enabled(run_dir)
+            else {}
+        )
+        focus_plan = focus_plan if isinstance(focus_plan, dict) else {}
+        dead_end_row = _worker_negative_space_row(
+            run_dir,
+            kind=dead_end["dead_end_kind"],
+            mechanism=dead_end["dead_end_mechanism"],
+            failure=dead_end["dead_end_failure"],
+            reopen_condition=dead_end["dead_end_reopen_condition"],
+            approach_id=str(focus_plan.get("approach_id") or "").strip(),
+            campaign_id=str(
+                focus_plan.get("campaign_id") or getattr(args, "campaign_id", None) or ""
+            ).strip(),
+            evidence_ids=evidence_ids,
+            iteration_id=str(number),
+        )
+        ledger_rows, negative_space_digest = _negative_space_snapshot(run_dir)
+        _refuse_duplicate_open_row(ledger_rows, dead_end_row)
     host_reverification: dict[str, Any] | None = None
     formal_terminal_claim: dict[str, Any] = {}
     if args.decision == "stop" and remaining_after_append > 0:
@@ -2374,6 +2575,24 @@ def append_iteration(
         "work_finished_at": now,
         "compute": compute_execution,
     }
+    if dead_end_row is not None:
+        if enforced_goal_focus:
+            # Staged with the candidate: finalize writes the row in the same
+            # commit as the bank or the rejection.
+            record["negative_space"] = {
+                field: dead_end_row[field]
+                for field in (
+                    "kind",
+                    "mechanism_text",
+                    "failure_summary",
+                    "reopen_condition",
+                    "evidence_ids",
+                    "checker_basis",
+                )
+                if field in dead_end_row
+            }
+        else:
+            record["negative_space_entry_id"] = dead_end_row["entry_id"]
 
     if goal_focus_is_enabled(run_dir):
         plan = goal_focus_v2.load_current_plan(
@@ -2437,7 +2656,7 @@ def append_iteration(
             }
     if getattr(args, "dry_run", False):
         # Every guard above has passed; stop before the first write.
-        return {
+        preview = {
             "status": "ok",
             "action": "append-iteration",
             "dry_run": True,
@@ -2448,6 +2667,9 @@ def append_iteration(
             "would_append": record,
             "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
         }
+        if dead_end_row is not None:
+            preview["would_append_negative_space"] = dead_end_row
+        return preview
     state["last_iteration"] = number
     state["updated_at"] = now
     state["status"] = "blocked" if args.decision == "blocked" else "stopped" if args.decision == "stop" else "running"
@@ -2486,6 +2708,24 @@ def append_iteration(
     # the iteration number was decided. A concurrent appender that banked first
     # changes them, so this commit is refused rather than writing a duplicate
     # iteration number into the ledger.
+    #
+    # A dead-end row lands in the same commit, guarded by the digest of the
+    # negative-space ledger its duplicate check read (or by its absence).
+    expected_absent = [SENTINEL_STOP, SENTINEL_PAUSE] if legacy_pending is not None else []
+    expected_hashes = {
+        ITERATION_LEDGER_FILE: ledger_hash,
+        paths["state"].name: state_hash,
+        paths["budget"].name: budget_hash,
+        **({LEGACY_VERIFICATION_PENDING: legacy_pending[1]} if legacy_pending is not None else {}),
+    }
+    jsonl_appends: dict[str, list[dict[str, Any]]] = {}
+    if dead_end_row is not None:
+        negative_space_rel = negative_space.NEGATIVE_SPACE_REL.as_posix()
+        jsonl_appends[negative_space_rel] = [dead_end_row]
+        if negative_space_digest is None:
+            expected_absent.append(negative_space_rel)
+        else:
+            expected_hashes[negative_space_rel] = negative_space_digest
     try:
         commit_transaction(
             run_dir,
@@ -2499,14 +2739,10 @@ def append_iteration(
                 paths["state"].name: state,
                 paths["budget"].name: budget,
             },
+            jsonl_appends=jsonl_appends,
             deletes=[LEGACY_VERIFICATION_PENDING] if legacy_pending is not None else [],
-            expected_absent=[SENTINEL_STOP, SENTINEL_PAUSE] if legacy_pending is not None else [],
-            expected_hashes={
-                ITERATION_LEDGER_FILE: ledger_hash,
-                paths["state"].name: state_hash,
-                paths["budget"].name: budget_hash,
-                **({LEGACY_VERIFICATION_PENDING: legacy_pending[1]} if legacy_pending is not None else {}),
-            },
+            expected_absent=expected_absent,
+            expected_hashes=expected_hashes,
         )
     except RevisionConflict as exc:
         raise ValueError(
@@ -13274,8 +13510,14 @@ def nonnegative_float(value: str) -> float:
     return parsed
 
 
-def _goal_focus_negative_space_status(run_dir: Path) -> dict[str, Any]:
-    """Compact negative-space summary for goal-focus status (never bank authority)."""
+def _goal_focus_negative_space_status(
+    run_dir: Path, registry: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Compact negative-space summary for goal-focus status (never bank authority).
+
+    ``mechanism_warnings`` names the registry approaches that repeat a dead
+    mechanism; ``omitted_open_entries`` counts the open rows past the ten shown.
+    """
 
     try:
         import negative_space as ns_mod
@@ -13287,16 +13529,98 @@ def _goal_focus_negative_space_status(run_dir: Path) -> dict[str, Any]:
     try:
         report = ns_mod.validate_negative_space(run_dir, enforce=False)
         open_rows = ns_mod.summarize_open(run_dir, limit=10)
+        open_count = int(report.get("open_count") or 0)
         return {
             "available": True,
-            "open_count": int(report.get("open_count") or 0),
+            "open_count": open_count,
             "path": report.get("path"),
             "open_entries": open_rows,
+            "omitted_open_entries": max(0, open_count - len(open_rows)),
+            "mechanism_warnings": goal_focus_v2.dead_mechanism_warnings(
+                registry if isinstance(registry, Mapping) else {}, run_dir=run_dir
+            ),
             "errors": list(report.get("errors") or []),
             "warnings": list(report.get("warnings") or []),
         }
     except Exception as exc:  # noqa: BLE001 - status must stay diagnostic
         return {"available": False, "open_count": 0, "error": str(exc)}
+
+
+def negative_space_add_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Record one advisory worker row in a legacy or monitor loop.
+
+    Refused in Goal Focus enforce mode, where a dead end reaches the ledger
+    only with a host review: the dead-end flags of append-iteration stage it
+    with the candidate, and finalize writes it.
+    """
+
+    run_dir = Path(args.dir).expanduser().resolve()
+    if not loop_paths(run_dir)["state"].is_file():
+        raise ValueError(f"--dir is not a loop directory (no loop_state.json): {run_dir}")
+    recover_transactions(run_dir)
+    if goal_focus_is_enforced(run_dir):
+        raise GuardError(
+            "negative-space add is refused in Goal Focus enforce mode: pass the "
+            "--dead-end-* flags to append-iteration so the row reaches the host review",
+            code="negative_space_add_refused_in_enforce",
+        )
+    row = _worker_negative_space_row(
+        run_dir,
+        kind=args.kind,
+        mechanism=args.mechanism,
+        failure=args.failure,
+        reopen_condition=args.reopen_condition,
+        approach_id=str(args.approach_id or "").strip(),
+        campaign_id=str(args.campaign_id or "").strip(),
+        evidence_ids=parse_many(args.evidence_id),
+        evidence_absent_reason=str(args.evidence_absent_reason or "").strip(),
+    )
+    rows, digest = _negative_space_snapshot(run_dir)
+    _refuse_duplicate_open_row(rows, row)
+    ledger = negative_space.NEGATIVE_SPACE_REL.as_posix()
+    try:
+        commit_transaction(
+            run_dir,
+            jsonl_appends={ledger: [row]},
+            expected_hashes={ledger: digest} if digest is not None else {},
+            expected_absent=[ledger] if digest is None else [],
+        )
+    except RevisionConflict as exc:
+        raise ValueError(
+            "cannot add the negative-space row because the ledger changed while it "
+            f"was being prepared: {exc}"
+        ) from exc
+    return {
+        "status": "ok",
+        "action": "negative-space-add",
+        "dir": str(run_dir),
+        "entry": row,
+    }
+
+
+def negative_space_list_command(args: argparse.Namespace) -> dict[str, Any]:
+    """List open rows, newest first, one rendered line each."""
+
+    run_dir = Path(args.dir).expanduser().resolve()
+    if not loop_paths(run_dir)["state"].is_file():
+        # A mistyped --dir would otherwise read as a loop with no dead ends.
+        raise ValueError(f"--dir is not a loop directory (no loop_state.json): {run_dir}")
+    rows, _digest = _negative_space_snapshot(run_dir)
+    approach_id = str(args.approach_id or "").strip()
+    open_rows = negative_space.filter_open(rows, approach_id=approach_id or None)
+    shown = open_rows[::-1][: max(0, int(args.limit))]
+    omitted = len(open_rows) - len(shown)
+    result: dict[str, Any] = {
+        "status": "ok",
+        "action": "negative-space-list",
+        "dir": str(run_dir),
+        "open_count": len(open_rows),
+        "entries": [negative_space.render_row_line(row) for row in shown],
+        "omitted_open_entries": omitted,
+    }
+    if omitted:
+        result["omitted"] = f"{omitted} further open entries omitted"
+    return result
 
 
 def goal_focus_status_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -13392,7 +13716,9 @@ def goal_focus_status_command(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "replan_triggers": triggers,
         "validation": validation,
-        "negative_space": _goal_focus_negative_space_status(run_dir),
+        "negative_space": _goal_focus_negative_space_status(
+            run_dir, bundle.get("registry")
+        ),
     }
 
 
@@ -14118,6 +14444,61 @@ def build_parser() -> argparse.ArgumentParser:
     replan_mode.add_argument("--apply", action="store_true")
     goal_focus_replan.set_defaults(func=goal_focus_replan_command)
 
+    negative_space_cmd = subparsers.add_parser(
+        "negative-space",
+        help="record or list dead ends in the loop's negative-space ledger",
+    )
+    negative_space_sub = negative_space_cmd.add_subparsers(
+        dest="negative_space_command", required=True
+    )
+    negative_space_add = negative_space_sub.add_parser(
+        "add",
+        help=(
+            "record one advisory worker row (refused in Goal Focus enforce mode, "
+            "where append-iteration's --dead-end-* flags carry it to host review)"
+        ),
+    )
+    negative_space_add.add_argument("--dir", required=True, help="loop directory")
+    negative_space_add.add_argument(
+        "--kind", choices=sorted(negative_space.NEGATIVE_SPACE_KINDS), required=True
+    )
+    negative_space_add.add_argument(
+        "--mechanism", required=True, help="the mechanism that was tried"
+    )
+    negative_space_add.add_argument(
+        "--failure", required=True, help="why it failed"
+    )
+    negative_space_add.add_argument(
+        "--reopen-condition",
+        required=True,
+        help="what would justify trying it again (a changed mechanism)",
+    )
+    negative_space_add.add_argument("--approach-id", default="")
+    negative_space_add.add_argument("--campaign-id", default="")
+    negative_space_add.add_argument(
+        "--evidence-id",
+        action="append",
+        help=(
+            "evidence for the failure (repeatable); falsified_hypothesis needs one "
+            f"naming a sagemath or python-verifier {PROOF_ARTIFACT_DIRNAME}/<id>.json"
+        ),
+    )
+    negative_space_add.add_argument(
+        "--evidence-absent-reason",
+        default="",
+        help="why no evidence id exists (not accepted for falsified_hypothesis)",
+    )
+    negative_space_add.set_defaults(func=negative_space_add_command)
+    negative_space_list = negative_space_sub.add_parser(
+        "list", help="list open negative-space rows, newest first, one line each"
+    )
+    negative_space_list.add_argument("--dir", required=True, help="loop directory")
+    negative_space_list.add_argument("--limit", type=positive_int, default=20)
+    negative_space_list.add_argument(
+        "--approach-id", default="", help="list only this approach's rows"
+    )
+    negative_space_list.set_defaults(func=negative_space_list_command)
+
     append_epilog = (
         "early-stop evidence contract (decision=stop before max_iterations):\n"
         f"  accepted stop_reason values: {', '.join(sorted(SUCCESS_STOP_REASONS))}\n"
@@ -14288,6 +14669,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--executor-provider",
         default="",
         help="executor provider; drive normally supplies this automatically",
+    )
+    append.add_argument(
+        "--dead-end-kind",
+        choices=sorted(negative_space.NEGATIVE_SPACE_KINDS),
+        default=None,
+        help=(
+            "record a dead end with this iteration (all four --dead-end-* flags or "
+            "none; evidence comes from --evidence-id): an advisory worker row, "
+            "written with the iteration, or staged for host review in enforce mode"
+        ),
+    )
+    append.add_argument(
+        "--dead-end-mechanism", default=None, help="the mechanism that failed"
+    )
+    append.add_argument(
+        "--dead-end-failure", default=None, help="why the mechanism failed"
+    )
+    append.add_argument(
+        "--dead-end-reopen-condition",
+        default=None,
+        help="what would justify trying it again (a changed mechanism)",
     )
     append.add_argument(
         "--dry-run",
