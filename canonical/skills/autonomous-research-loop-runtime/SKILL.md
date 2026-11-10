@@ -877,8 +877,11 @@ cut with `[cut: N characters omitted]`, and hidden characters are dropped and
 counted. `recovery.md` gains the line
 `- Host handoff (written from records, no model call): host_handoff.md` once,
 and `init`, `append-iteration` and `retract-iteration` keep it while the file
-exists. The drive result and its `drive_stop` event report `host_handoff`:
-`written`, `skipped` or `failed`. `validate` does not read the file.
+exists. A negative-space ledger or `recovery.md` that is not a regular file,
+such as a link or a FIFO, is reported as unreadable and never waited on;
+`negative-space add` and `list` refuse such a ledger the same way. The drive
+result and its `drive_stop` event report `host_handoff`: `written`, `skipped`
+or `failed`. `validate` does not read the file.
 
 **Success basis.** Every success stop records `success_basis`
 `{basis, checked_at}`, taken from the row's own fields only:

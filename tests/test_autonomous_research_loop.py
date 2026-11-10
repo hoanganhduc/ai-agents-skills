@@ -11779,6 +11779,112 @@ class LoopEndingsTests(unittest.TestCase):
                 self.assertNotIn("ns-OUTSIDE", text)
                 self.assertIn("could not be read safely, so its rows are not listed", text)
 
+    def _without_blocking(self, fifo: Path, call: Any) -> Any:
+        """``call()``'s result, run in a thread that may wait at most 20 seconds on ``fifo``.
+
+        A reader stuck opening the FIFO is released by opening its writing
+        end, and the test fails instead of hanging the suite.
+        """
+
+        outcome: dict[str, Any] = {}
+
+        def run() -> None:
+            try:
+                outcome["result"] = call()
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the test thread
+                outcome["error"] = exc
+
+        reader = threading.Thread(target=run, daemon=True)
+        reader.start()
+        reader.join(timeout=20)
+        if reader.is_alive():
+            with contextlib.suppress(OSError):
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            reader.join(timeout=5)
+            self.fail(f"a FIFO at {fifo.name} blocked the reader")
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["result"]
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs need POSIX")
+    def test_a_fifo_ledger_or_recovery_file_never_blocks_a_reader(self) -> None:
+        """A FIFO at .goal_focus/negative_space.jsonl or recovery.md is refused as unreadable, never waited on.
+
+        write_host_handoff still writes host_handoff.md, noting that the
+        negative-space ledger could not be read safely, or says in place of
+        the pointer that recovery.md could not be read safely;
+        negative-space list and add return their structured failure. Each
+        call runs under a timeout (a thread, or run_helper's subprocess), so
+        a regression fails here instead of hanging the suite.
+        """
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_loop(loop, max_iterations=3)
+            ns_path = loop / ".goal_focus" / "negative_space.jsonl"
+            ns_path.parent.mkdir()
+            os.mkfifo(ns_path, 0o600)
+
+            with self.subTest("host handoff with a FIFO ledger"):
+                outcome = self._without_blocking(
+                    ns_path, lambda: arl.write_host_handoff(loop, reason="runtime_error")
+                )
+                self.assertEqual(outcome["status"], "written", outcome)
+                self.assertEqual(outcome["pointer"], "added")
+                text = (loop / "host_handoff.md").read_text(encoding="utf-8")
+                self.assertIn(
+                    "The negative-space ledger could not be read safely, so its rows are not listed.",
+                    _markdown_section(text, "### Tried and failed, and why"),
+                )
+            for command in ("list", "add"):
+                with self.subTest(command=command):
+                    completed = run_helper(
+                        "negative-space",
+                        command,
+                        "--dir",
+                        str(loop),
+                        *(
+                            ()
+                            if command == "list"
+                            else (
+                                "--kind",
+                                "dead_end",
+                                "--mechanism",
+                                "induction on the number of colours",
+                                "--failure",
+                                "the inductive step loses a colour",
+                                "--reopen-condition",
+                                "a different invariant",
+                                "--evidence-id",
+                                "E1",
+                            )
+                        ),
+                        check=False,
+                    )
+                    self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+                    failure = json.loads(completed.stdout)
+                    self.assertEqual(failure["status"], "failed")
+                    self.assertIn("unsafe", failure["error"])
+            self.assertTrue(stat.S_ISFIFO(os.lstat(ns_path).st_mode))
+
+            ns_path.unlink()
+            recovery = loop / "recovery.md"
+            recovery.unlink()
+            os.mkfifo(recovery, 0o600)
+            with self.subTest("host handoff with a FIFO recovery.md"):
+                outcome = self._without_blocking(
+                    recovery, lambda: arl.write_host_handoff(loop, reason="runtime_error")
+                )
+                self.assertEqual(
+                    outcome,
+                    {
+                        "status": "written",
+                        "file": "host_handoff.md",
+                        "pointer": "recovery.md could not be read safely",
+                    },
+                )
+            self.assertTrue(stat.S_ISFIFO(os.lstat(recovery).st_mode))
+
     def test_done_label_survives_an_unreadable_ledger_tip(self) -> None:
         """done still answers when the ledger tip cannot be decoded; it gives no success label then."""
         arl = self._runtime()

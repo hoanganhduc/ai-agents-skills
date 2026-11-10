@@ -337,7 +337,11 @@ def _open_directory_nofollow(path: Path) -> int:
 def _read_regular_text(
     path: Path, *, errors: str = "strict", max_bytes: int = 16_000_000
 ) -> str:
-    """Read one bounded regular runtime file without following a leaf link."""
+    """Read one bounded regular runtime file without following a leaf link.
+
+    The leaf is opened without waiting on a FIFO, so the regular-file check
+    that follows refuses one instead of blocking the reader.
+    """
 
     absolute = Path(os.path.abspath(path))
     if os.name == "nt":
@@ -350,7 +354,10 @@ def _read_regular_text(
         try:
             fd = os.open(
                 absolute.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=dir_fd,
             )
         finally:
