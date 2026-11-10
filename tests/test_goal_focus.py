@@ -5616,6 +5616,143 @@ class SpendRecordingTests(_AttestedGoalFocusTestCase):
                     staged = _stage_enforced_candidate(root, plan, record)
                     self.assertEqual(staged["status"], "staged")
 
+    def test_staged_spend_is_checked_before_review(self) -> None:
+        """validate_host_staged_candidate checks the staged budget_delta the way validate_loop_dir checks a stored row.
+
+        The candidate is edited on disk after staging, as only a same-UID
+        actor or a library caller could. A budget_delta that stores a status
+        and has a null amount, a stored unknown status, an unreported status
+        with an amount, or no status and a null usd is refused before review,
+        and finalize refuses it too with every file unchanged. A budget_delta
+        that stores no status and has a null tokens amount, as a candidate
+        staged before the statuses could, still validates and banks: that case
+        is a regression check, since nothing checked the staged spend before.
+        """
+        refused = {
+            "null tokens with a status": {
+                "tokens": None,
+                "tokens_recording_status": "explicit",
+                "usd_recording_status": "unreported",
+            },
+            "stored unknown": {
+                "tokens_recording_status": "unknown",
+                "usd_recording_status": "unreported",
+            },
+            "unreported with an amount": {
+                "tokens_recording_status": "unreported",
+                "usd": 0.5,
+                "usd_recording_status": "unreported",
+            },
+            "null usd without statuses": {"tokens": 0, "usd": None},
+        }
+        accepted = {"null tokens without statuses": {"tokens": None, "usd": 0.0}}
+        for label, spend in {**refused, **accepted}.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": "a bounded partial result",
+                        "evidence_ids": ["proof.json"],
+                        "budget_delta": {"iterations": 1, **self.UNREPORTED},
+                    },
+                )
+                candidate_path = root / gf.PENDING_CANDIDATE_FILE
+                candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+                candidate["record"]["budget_delta"] = {"iterations": 1, **spend}
+                _write_json(candidate_path, candidate)
+                review = _bound_review({"candidate": candidate})
+                if label in accepted:
+                    gf.validate_host_staged_candidate(root, candidate)
+                    result = gf.finalize_candidate(root, accepted=True, review=review)
+                    self.assertEqual(result["status"], "accepted", result)
+                    continue
+                with self.assertRaises(ValueError) as caught:
+                    gf.validate_host_staged_candidate(root, candidate)
+                self.assertIn("pending record budget_delta.", str(caught.exception))
+                names = ["budget.json", "iterations.jsonl", gf.PENDING_CANDIDATE_FILE]
+                before = _snapshot_files(root, names)
+                with self.assertRaises(ValueError) as caught:
+                    gf.finalize_candidate(root, accepted=True, review=review)
+                self.assertIn("pending record budget_delta.", str(caught.exception))
+                self.assertEqual(_snapshot_files(root, names), before)
+
+    def test_finalize_refuses_a_reviewed_record_whose_spend_differs(self) -> None:
+        """finalize refuses a supplied ledger_record whose budget_delta is not the staged one, in both lanes.
+
+        A different delta, the same amount written as a float, and a record
+        without budget_delta are each refused before anything is written. The
+        record the drive builds with _reviewed_ledger_record keeps the staged
+        budget_delta and still banks (regression check).
+        """
+        changes = {
+            "a different delta": lambda delta: {
+                "iterations": 1,
+                "tokens": None,
+                "usd": 0.5,
+                "usd_recording_status": "unknown",
+            },
+            "tokens as a float": lambda delta: {**delta, "tokens": 7.0},
+            "no budget_delta": None,
+        }
+        for disposition in ("accepted", "rejected"):
+            for label, change in [*changes.items(), ("the drive's own record", "keep")]:
+                with self.subTest(disposition=disposition, change=label), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    _initialize(root)
+                    plan = _activate(root)
+                    staged = _stage_enforced_candidate(
+                        root,
+                        plan,
+                        {
+                            "output": "a bounded partial result",
+                            "evidence_ids": ["proof.json"],
+                            "budget_delta": {
+                                "iterations": 1,
+                                "tokens": 7,
+                                "tokens_recording_status": "explicit",
+                                "usd_recording_status": "unreported",
+                            },
+                        },
+                    )
+                    review = (
+                        _bound_review(staged)
+                        if disposition == "accepted"
+                        else _bound_review(staged, status="failed", reason="gap")
+                    )
+                    ledger_record = rt._reviewed_ledger_record(staged["candidate"], review)
+                    if change == "keep":
+                        result = gf.finalize_candidate(
+                            root,
+                            accepted=disposition == "accepted",
+                            review=review,
+                            ledger_record=ledger_record,
+                        )
+                        self.assertEqual(result["status"], disposition, result)
+                        self.assertEqual(
+                            result["record"]["budget_delta"],
+                            staged["candidate"]["record"]["budget_delta"],
+                        )
+                        continue
+                    if change is None:
+                        del ledger_record["budget_delta"]
+                    else:
+                        ledger_record["budget_delta"] = change(ledger_record["budget_delta"])
+                    names = ["budget.json", "iterations.jsonl", gf.PENDING_CANDIDATE_FILE]
+                    before = _snapshot_files(root, names)
+                    with self.assertRaises(ValueError) as caught:
+                        gf.finalize_candidate(
+                            root,
+                            accepted=disposition == "accepted",
+                            review=review,
+                            ledger_record=ledger_record,
+                        )
+                    self.assertIn("budget_delta differs from the staged candidate", str(caught.exception))
+                    self.assertEqual(_snapshot_files(root, names), before)
+
     def test_finalize_banks_only_reported_amounts(self) -> None:
         """finalize adds nothing to budget.json for an amount the row leaves out, in both the accepted and the rejected lane.
 

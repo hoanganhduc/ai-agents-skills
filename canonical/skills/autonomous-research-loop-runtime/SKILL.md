@@ -923,8 +923,11 @@ message, and a tokens amount that is null or not a non-negative integer reads
 as unknown with a warning, never an error, so a ledger that validated before
 keeps validating. A host-mediated request carries `null` for an unreported
 amount, staging applies the full rule to every row before anything is staged,
-finalize adds nothing for an absent amount whether it accepts or rejects the
-candidate, and `retract-iteration` subtracts only what the row added.
+and before any review the host checks a pending candidate's `budget_delta` the
+way `validate` checks a row. Finalize refuses a reviewed ledger record whose
+`budget_delta` differs from the staged one, adds nothing for an absent amount
+whether it accepts or rejects the candidate, and `retract-iteration` subtracts
+only what the row added.
 
 **Caps.** "Caps are accounting over self-reported usage between iterations,
 not a spending limit." `done` compares the recorded `spent_tokens` and

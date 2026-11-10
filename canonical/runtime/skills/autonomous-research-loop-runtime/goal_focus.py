@@ -4975,6 +4975,13 @@ def validate_host_staged_candidate(
     except (OSError, ValueError) as exc:
         errors.append(str(exc))
         compute_check = {}
+    delta = record.get("budget_delta")
+    if isinstance(delta, Mapping):
+        # Finalize banks the staged spend as it is, so the rule a stored row
+        # gets, with its case for a row from before the statuses, is checked
+        # here, before any review.
+        spend_errors, _spend_warnings = spend_recording_findings(delta)
+        errors.extend(f"pending record {error}" for error in spend_errors)
     errors.extend(_staged_negative_space_errors(record))
     if errors:
         raise ValueError("; ".join(errors))
@@ -6497,6 +6504,23 @@ def finalize_candidate(
             )
 
     record = copy.deepcopy(dict(ledger_record or candidate.get("record") or {}))
+    # The staged spend was checked before review; a reviewed ledger record
+    # carries it unchanged, so the row banks only what was checked. The JSON
+    # text is compared, so 7, 7.0 and true stay different amounts.
+    staged_record = candidate.get("record")
+    staged_delta = (
+        staged_record.get("budget_delta") if isinstance(staged_record, Mapping) else None
+    )
+    try:
+        same_spend = json.dumps(record.get("budget_delta"), sort_keys=True) == json.dumps(
+            staged_delta, sort_keys=True
+        )
+    except (TypeError, ValueError, RecursionError):
+        same_spend = False
+    if not same_spend:
+        raise ValueError(
+            "the reviewed ledger record's budget_delta differs from the staged candidate's"
+        )
     if bound_review:
         source_candidate_fingerprint = candidate_fingerprint(candidate)
         if ledger_record is not None and _clean_text(
