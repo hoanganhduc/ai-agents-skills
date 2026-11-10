@@ -6084,6 +6084,28 @@ def _negative_space_entry_for_finalize(
     )
 
 
+def _open_host_entry_repeating(ledger: bytes | None, entry: Mapping[str, Any]) -> str:
+    """The entry_id of an open host row with ``entry``'s approach and mechanism fingerprint, or "".
+
+    A row with no writer counts as a host row. Ledger bytes that cannot be
+    decoded or parsed, or a matching row without an entry_id, give "", and
+    finalize then writes its row as before.
+    """
+
+    if ledger is None:
+        return ""
+    try:
+        rows = ns.parse_rows(ledger.decode("utf-8"))
+        duplicate = ns.open_duplicate_entry_id(
+            [row for row in rows if row.get("writer") != "worker"],
+            approach_id=entry.get("approach_id"),
+            fingerprint=str(entry.get("mechanism_fingerprint") or ""),
+        )
+    except (ValueError, RecursionError):
+        return ""
+    return "" if duplicate == "<no entry_id>" else duplicate
+
+
 def _dead_end_evidence_reviewed(
     review: Mapping[str, Any], record: Mapping[str, Any], evidence_ids: Sequence[str]
 ) -> bool:
@@ -6679,18 +6701,29 @@ def finalize_candidate(
     if ns_entry is not None:
         ns_rel = ns.NEGATIVE_SPACE_REL.as_posix()
         ns_path = root / ns.NEGATIVE_SPACE_REL
+        ns_bytes: bytes | None = None
         if _path_present_nofollow(ns_path):
             try:
-                expected_hashes[ns_rel] = hashlib.sha256(
-                    _read_regular_bytes(ns_path, max_bytes=16_000_000)
-                ).hexdigest()
+                ns_bytes = _read_regular_bytes(ns_path, max_bytes=16_000_000)
+                expected_hashes[ns_rel] = hashlib.sha256(ns_bytes).hexdigest()
             except (OSError, ValueError, TypeError):
                 # Fall back: let transaction create postimage without preimage hash.
                 pass
         else:
             expected_absent.append(ns_rel)
-        jsonl_appends[ns_rel] = [ns_entry]
-        record["negative_space_entry_id"] = ns_entry.get("entry_id")
+        open_host_entry = (
+            _open_host_entry_repeating(ns_bytes, ns_entry)
+            if ns_entry.get("writer") == "host"
+            else ""
+        )
+        if open_host_entry:
+            # Two open host rows with one approach and mechanism fingerprint
+            # fail validation, so the record links the open one instead; the
+            # preimage hash still guards what was read.
+            record["negative_space_entry_id"] = open_host_entry
+        else:
+            jsonl_appends[ns_rel] = [ns_entry]
+            record["negative_space_entry_id"] = ns_entry.get("entry_id")
 
     # Serialize only after every cross-ledger link is on the record. Rotate in
     # the same transaction that banks it: the shard and the fresh live file

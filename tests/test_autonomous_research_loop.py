@@ -9959,6 +9959,18 @@ class NegativeSpaceCommandTests(unittest.TestCase):
         ]
 
     @staticmethod
+    def _duplicate_warnings(result: dict[str, Any], entry_id: str) -> int:
+        """How many of the result's warnings name negative_space_duplicate_open_row and ``entry_id``."""
+
+        return sum(
+            1
+            for warning in result.get("warnings") or []
+            if isinstance(warning, str)
+            and warning.startswith("negative_space_duplicate_open_row")
+            and entry_id in warning
+        )
+
+    @staticmethod
     def _add(
         run_dir: Path,
         *extra: str,
@@ -10122,9 +10134,12 @@ class NegativeSpaceCommandTests(unittest.TestCase):
         """The four dead-end flags come together and record a worker row with the iteration.
 
         In a legacy loop the row lands in the iteration's commit; in enforce
-        mode it is staged as record.negative_space. That a request without the
-        optional fields still validates, and that an unknown field is still
-        refused, are regression checks.
+        mode it is staged as record.negative_space. A dead end that repeats an
+        open row is recorded, or staged, as the advisory worker row it is: the
+        output warns with negative_space_duplicate_open_row and the open row's
+        entry id, and validate warns about the duplicate without an error.
+        That a request without the optional fields still validates, and that
+        an unknown field is still refused, are regression checks.
         """
         runtime = HELPER.parent
         if str(runtime) not in sys.path:
@@ -10132,7 +10147,7 @@ class NegativeSpaceCommandTests(unittest.TestCase):
         import autonomous_research_loop_runtime as arl  # noqa: WPS
         import goal_focus as gf  # noqa: WPS
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with self.subTest("legacy loop"), tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
             init_loop(run_dir, max_iterations=4)
             iterations = run_dir / "iterations.jsonl"
@@ -10211,11 +10226,29 @@ class NegativeSpaceCommandTests(unittest.TestCase):
             self.assertEqual(record["negative_space_entry_id"], rows[0]["entry_id"])
 
             duplicate = self._append(run_dir, "--evidence-id", "E2", *self.DEAD_END_FLAGS)
-            self.assertEqual(duplicate.returncode, 1, duplicate.stdout)
+            self.assertEqual(duplicate.returncode, 0, duplicate.stdout + duplicate.stderr)
             self.assertEqual(
-                json.loads(duplicate.stdout)["code"], "negative_space_duplicate_open_row"
+                self._duplicate_warnings(json.loads(duplicate.stdout), rows[0]["entry_id"]),
+                1,
+                duplicate.stdout,
             )
-            self.assertEqual(len(iterations.read_text(encoding="utf-8").splitlines()), 1)
+            records = [
+                json.loads(line)
+                for line in iterations.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(records), 2)
+            both = self._rows(run_dir)
+            self.assertEqual(len(both), 2, both)
+            self.assertEqual(both[0], rows[0])
+            self.assertEqual(
+                (both[1]["writer"], both[1]["review_status"], both[1]["iteration_id"]),
+                ("worker", "unreviewed", "2"),
+            )
+            self.assertEqual(
+                both[1]["mechanism_fingerprint"], both[0]["mechanism_fingerprint"]
+            )
+            self.assertEqual(records[1]["negative_space_entry_id"], both[1]["entry_id"])
+            self.assertEqual(arl.validate_loop_dir(run_dir)["errors"], [])
 
         with self.subTest("submission requests"):
             args = arl.build_parser().parse_args(argv[:-8])
@@ -10236,7 +10269,7 @@ class NegativeSpaceCommandTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 arl._validated_iteration_submission_request({**request, "dead_end_note": "x"})
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with self.subTest("enforce staging"), tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
             init_args = arl.selftest_init_args(loop, max_iterations=3)
             init_args.goal_focus_mode = "enforce"
@@ -10250,6 +10283,21 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                 started_at="2026-07-29T12:00:00Z",
             )["dispatch"]
             write_text_evidence(loop, dispatch, "dead-end-evidence")
+            # An open worker row an earlier finalize left for the plan's
+            # approach, with the same mechanism up to case and spacing.
+            earlier = gf.ns.build_entry(
+                kind="dead_end",
+                mechanism_text="induction on the  number of COLOURS",
+                failure_summary="an earlier iteration's note",
+                reopen_condition="a different invariant",
+                approach_id="approach-a",
+                campaign_id="campaign-a",
+                evidence_ids=["E0"],
+                writer="worker",
+                review_status="unreviewed",
+            )
+            gf.ns.rewrite_ledger(loop, [earlier])
+            seeded = self._ledger(loop).read_bytes()
             args = arl.build_parser().parse_args(
                 [
                     "append-iteration",
@@ -10280,6 +10328,9 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                 },
             )
             self.assertEqual(staged["staging_status"], "staged", staged)
+            self.assertEqual(
+                self._duplicate_warnings(staged, earlier["entry_id"]), 1, staged["warnings"]
+            )
             candidate = json.loads(
                 (loop / "iteration_candidate.json").read_text(encoding="utf-8")
             )
@@ -10293,7 +10344,52 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                     "evidence_ids": ["dead-end-evidence"],
                 },
             )
-            self.assertFalse(self._ledger(loop).exists())
+            # Staging writes no row; finalize writes it with the bank.
+            self.assertEqual(self._ledger(loop).read_bytes(), seeded)
+
+        with self.subTest("monitor loop"), tempfile.TemporaryDirectory() as tmp:
+            # A monitor loop records the plan's approach on each row, so
+            # validate compares them: a repeat involving a worker row warns.
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=3)
+            init_args.goal_focus_mode = "monitor"
+            arl.init_loop(init_args)
+            RuntimeGoalFocusIntegrationTests._activate_single_direction(arl, gf, loop)
+            monitor_argv = [
+                "append-iteration",
+                "--dir",
+                str(loop),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "try the inductive route",
+                "--decision",
+                "continue",
+                "--evidence-id",
+                "E1",
+                *self.DEAD_END_FLAGS,
+            ]
+            first = arl.append_iteration(arl.build_parser().parse_args(monitor_argv))
+            self.assertEqual(first["status"], "ok", first)
+            [row] = self._rows(loop)
+            repeated = arl.append_iteration(arl.build_parser().parse_args(monitor_argv))
+            self.assertEqual(repeated["status"], "ok", repeated)
+            self.assertEqual(self._duplicate_warnings(repeated, row["entry_id"]), 1, repeated)
+            rows = self._rows(loop)
+            self.assertEqual(
+                [(item["approach_id"], item["writer"]) for item in rows],
+                [("approach-a", "worker"), ("approach-a", "worker")],
+            )
+            validation = arl.validate_loop_dir(loop)
+            self.assertEqual(validation["errors"], [], validation)
+            self.assertTrue(
+                any(
+                    "duplicate open mechanism_fingerprint for approach approach-a "
+                    "involving a worker row" in warning
+                    for warning in validation["warnings"]
+                ),
+                validation["warnings"],
+            )
 
     def test_falsified_hypothesis_is_artifact_declared_and_self_reported(self) -> None:
         """A refutation row cites a sagemath or python-verifier artifact, is self-reported, and re-runs nothing."""

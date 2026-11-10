@@ -735,8 +735,17 @@ warning.
   commit as the bank or the rejection: a worker row, `reviewed` only when every
   reviewer cites each of its evidence ids in a supported claim or an accepted
   obligation, and a host row only when the registry blocks or closes the
-  approach (or a rejection sets `block_approach`). The registry is not changed
-  for the row.
+  approach (or a rejection sets `block_approach`). A host row that would repeat
+  an open host row is not written; the record links the open one. The registry
+  is not changed for the row.
+- A dead end that repeats an open row (same approach and mechanism
+  fingerprint) is still recorded, or staged, as the advisory worker row it is:
+  the command's `warnings` carry `negative_space_duplicate_open_row` with the
+  open row's entry id, and `validate` warns about a duplicate on one approach
+  that involves a worker row. Only `negative-space add` refuses a duplicate.
+  `retract-iteration` leaves the dead-end row the retracted iteration wrote:
+  the row is history, and recording the same dead end again adds an advisory
+  duplicate with that warning.
 - A `falsified_hypothesis` row, from either path, must cite an `--evidence-id`
   naming a sagemath or python-verifier proof artifact that
   `validate-proof-artifact` accepts, and takes no `--evidence-absent-reason`

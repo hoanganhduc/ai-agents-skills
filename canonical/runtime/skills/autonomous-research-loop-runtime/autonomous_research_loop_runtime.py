@@ -2358,6 +2358,30 @@ def _refuse_duplicate_open_row(
         )
 
 
+def _duplicate_open_row_warnings(
+    rows: list[dict[str, Any]], row: Mapping[str, Any]
+) -> list[str]:
+    """A warning naming the open row that ``row`` repeats, or none.
+
+    append-iteration records a repeated dead end as the advisory worker row it
+    is; only negative-space add refuses one.
+    """
+
+    duplicate = negative_space.open_duplicate_entry_id(
+        rows,
+        approach_id=row.get("approach_id"),
+        fingerprint=str(row.get("mechanism_fingerprint") or ""),
+    )
+    if not duplicate:
+        return []
+    return [
+        f"negative_space_duplicate_open_row: open negative-space row {duplicate} "
+        "already records this mechanism for approach "
+        f"{row.get('approach_id') or '<none>'}; this dead end is recorded as an "
+        "advisory duplicate"
+    ]
+
+
 def _reported_spend(args: argparse.Namespace) -> dict[str, Any]:
     """The spend fields of a new row's budget_delta: each amount the worker reported, and one status per resource.
 
@@ -2497,9 +2521,11 @@ def append_iteration(
         )
     # The dead-end row is built, checked and compared with the open rows here,
     # before any write. Its approach is the plan's when Goal Focus runs; the
-    # ledger digest guards the legacy commit below.
+    # ledger digest guards the legacy commit below. A row that repeats an open
+    # one is still recorded, with a warning: only negative-space add refuses.
     dead_end_row: dict[str, Any] | None = None
     negative_space_digest: str | None = None
+    dead_end_warnings: list[str] = []
     if dead_end is not None:
         focus_plan = (
             goal_focus_v2.load_current_plan(run_dir, required=enforced_goal_focus)
@@ -2521,7 +2547,7 @@ def append_iteration(
             iteration_id=str(number),
         )
         ledger_rows, negative_space_digest = _negative_space_snapshot(run_dir)
-        _refuse_duplicate_open_row(ledger_rows, dead_end_row)
+        dead_end_warnings = _duplicate_open_row_warnings(ledger_rows, dead_end_row)
     host_reverification: dict[str, Any] | None = None
     formal_terminal_claim: dict[str, Any] = {}
     if args.decision == "stop" and remaining_after_append > 0:
@@ -2782,7 +2808,8 @@ def append_iteration(
                     "iteration": number,
                     "decision": args.decision,
                     "would_append": record,
-                    "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+                    "warnings": collect_goal_priority_warnings(run_dir, latest_record=record)
+                    + dead_end_warnings,
                 }
             staged = goal_focus_v2.stage_iteration_candidate(
                 run_dir,
@@ -2807,7 +2834,8 @@ def append_iteration(
                 "iteration": number,
                 "decision": args.decision,
                 "candidate": staged,
-                "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+                "warnings": collect_goal_priority_warnings(run_dir, latest_record=record)
+                + dead_end_warnings,
             }
     if getattr(args, "dry_run", False):
         # Every guard above has passed; stop before the first write.
@@ -2820,7 +2848,8 @@ def append_iteration(
             "iteration": number,
             "decision": args.decision,
             "would_append": record,
-            "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+            "warnings": collect_goal_priority_warnings(run_dir, latest_record=record)
+            + dead_end_warnings,
         }
         if dead_end_row is not None:
             preview["would_append_negative_space"] = dead_end_row
@@ -2870,7 +2899,7 @@ def append_iteration(
     # iteration number into the ledger.
     #
     # A dead-end row lands in the same commit, guarded by the digest of the
-    # negative-space ledger its duplicate check read (or by its absence).
+    # negative-space ledger its duplicate warning read (or by its absence).
     expected_absent = [SENTINEL_STOP, SENTINEL_PAUSE] if legacy_pending is not None else []
     expected_hashes = {
         ITERATION_LEDGER_FILE: ledger_hash,
@@ -2917,7 +2946,7 @@ def append_iteration(
         "dir": str(run_dir),
         "iteration": number,
         "decision": args.decision,
-        "warnings": gp_warnings,
+        "warnings": gp_warnings + dead_end_warnings,
     }
 
 

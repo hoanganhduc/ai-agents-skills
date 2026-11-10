@@ -5138,6 +5138,114 @@ class GoalFocusNegativeSpaceWriterTests(_AttestedGoalFocusTestCase):
                     )
                     self.assertEqual(reason, "")
 
+    def test_finalize_banks_a_dead_end_that_repeats_an_open_worker_row(self) -> None:
+        """A staged dead end that repeats an open worker row is banked and written as a second worker row.
+
+        Regression check: finalize never refused such a candidate. Accepted
+        or rejected, the ledger then holds both rows and validation warns
+        about the duplicate without an error.
+        """
+        for accepted in (True, False):
+            with self.subTest(accepted=accepted), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                staged = _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": "banked result" if accepted else "the route failed",
+                        "evidence_ids": ["result.json", "dead-end.json"],
+                        "negative_space": {**self.DEAD_END, "evidence_ids": ["dead-end.json"]},
+                    },
+                )
+                earlier = self._worker_row("ns-earlier", "Induction on the  number of COLOURS")
+                gf.ns.rewrite_ledger(root, [earlier])
+
+                result = gf.finalize_candidate(
+                    root,
+                    accepted=accepted,
+                    review=(
+                        _bound_review(staged)
+                        if accepted
+                        else _bound_review(staged, status="failed", reason="the route failed")
+                    ),
+                )
+
+                self.assertEqual(result["status"], "accepted" if accepted else "rejected")
+                rows = gf.ns.load_negative_space(root)
+                self.assertEqual(len(rows), 2, rows)
+                self.assertEqual(rows[0], earlier)
+                self.assertEqual(rows[1].get("writer"), "worker")
+                self.assertEqual(
+                    rows[1]["mechanism_fingerprint"], earlier["mechanism_fingerprint"]
+                )
+                self.assertEqual(result["record"]["negative_space_entry_id"], rows[1]["entry_id"])
+                validation = gf.validate_goal_focus(root, require_enabled=True)
+                self.assertEqual(validation["errors"], [], validation)
+                self.assertTrue(
+                    any("involving a worker row" in item for item in validation["warnings"]),
+                    validation["warnings"],
+                )
+
+    def test_finalize_links_an_open_host_row_instead_of_writing_a_second(self) -> None:
+        """A host row finalize would write that repeats an open host row is not written; the record links the open one.
+
+        Two open host rows with one approach and mechanism fingerprint fail
+        validation. The drive never reaches this (the registry it pins at
+        dispatch has the approach eligible, and the host append never sets
+        block_approach); a direct caller can, with a blocking registry
+        postimage or block_approach and a host row written after dispatch. A
+        row without a writer counts as a host row.
+        """
+        for label in ("registry blocks", "block_approach"):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                record: dict = {
+                    "output": "the route failed",
+                    "evidence_ids": ["dead-end.json"],
+                    "negative_space": {**self.DEAD_END, "evidence_ids": ["dead-end.json"]},
+                }
+                if label == "block_approach":
+                    record["block_approach"] = True
+                staged = _stage_enforced_candidate(root, plan, record)
+                open_host_row = gf.ns.build_entry(
+                    kind="dead_end",
+                    mechanism_text="Induction on the  number of COLOURS",
+                    failure_summary="an earlier host review refuted the route",
+                    reopen_condition="a different invariant",
+                    approach_id="A1",
+                    campaign_id="C1",
+                    evidence_ids=["E0"],
+                    entry_id="ns-open-host",
+                )
+                gf.ns.rewrite_ledger(root, [open_host_row])
+                postimage = None
+                if label == "registry blocks":
+                    postimage = gf.load_approach_registry(root)
+                    approach = postimage["campaigns"]["C1"]["approaches"]["A1"]
+                    approach["status"] = "blocked"
+                    approach["reopen_condition"] = "a different invariant"
+
+                result = gf.finalize_candidate(
+                    root,
+                    accepted=False,
+                    review=_bound_review(staged, status="failed", reason="the route failed"),
+                    registry_postimage=postimage,
+                )
+
+                self.assertEqual(result["status"], "rejected")
+                self.assertEqual(gf.ns.load_negative_space(root), [open_host_row])
+                self.assertEqual(result["record"]["negative_space_entry_id"], "ns-open-host")
+                self.assertEqual(
+                    gf._read_iteration_rows(root)[-1]["negative_space_entry_id"],
+                    "ns-open-host",
+                )
+                errors = gf.ns.validate_negative_space(root)["errors"]
+                self.assertEqual(errors, [], errors)
+
 
 
 class BankedReviewErrorsTests(_AttestedGoalFocusTestCase):
