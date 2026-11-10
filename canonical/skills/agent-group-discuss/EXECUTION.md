@@ -646,7 +646,11 @@ proved / heuristic / conjectural / unverified / disputed. Unanimous reviewer
 wording that omits open disputes is invalid synthesis. Unfinished items after
 the last round stay labeled (not silently upgraded). Prefer a weaker correct
 claim over a stronger claim with erased uncertainty. "Looks good to all roles"
-is not an uncertainty-clearing event.
+is not an uncertainty-clearing event. When a session stops at a context
+boundary, or these labels go into an ARL `STATE.md` or a deep-research claim,
+use the two-part handoff form and the label table under Recovery in
+`autonomous-research-loop`, which keeps each label beside the claim status it
+maps to.
 
 ## Bankable claims vs panel agreement
 

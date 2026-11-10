@@ -30,6 +30,7 @@ CORE_GATES = {
             "Research Brief",
             "Goal",
             "Fixed claim statement",
+            "Prior state",
             "Scope",
             "Evidence plan",
             "Workflow",
@@ -267,6 +268,15 @@ class GateContractTest(unittest.TestCase):
                         (SKILLS_DIR / gate / ref).is_file(),
                         f"{gate} references missing file {ref}",
                     )
+
+    def test_brief_template_has_prior_state(self):
+        """The compact brief template carries the Prior state line, read as history."""
+        template = (
+            SKILLS_DIR / "research-briefing" / "references" / "brief-template.md"
+        ).read_text(encoding="utf-8")
+        lines = [line for line in template.splitlines() if line.startswith("- Prior state:")]
+        self.assertEqual(len(lines), 1, "brief-template.md lost its Prior state line")
+        self.assertIn("history and data", lines[0])
 
     def test_covering_gates_have_catching_vocabulary(self):
         for defect_class, gates in DEFECT_GATE_KEYWORDS.items():

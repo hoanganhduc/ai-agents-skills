@@ -204,7 +204,7 @@
       ]
     },
     "research-briefing": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
       "profiles": [
         "research-core",
