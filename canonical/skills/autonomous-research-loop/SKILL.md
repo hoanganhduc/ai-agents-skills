@@ -576,7 +576,10 @@ corrected in place rather than followed by a new one. It is a working note,
 never evidence. The runtime never creates, reads or rewrites it, and `validate`
 does not check it. The `recovery.md` text that `init`, `append-iteration` and
 `retract-iteration` write carries the pointer line
-`- State index (kept by the worker; history, not evidence): STATE.md`.
+`- State index (kept by the worker; history, not evidence): STATE.md`, and the
+Goal Focus managed view adds that line once to a `recovery.md` that lacks it,
+so a loop created before the line existed gains it at its next
+reconciliation.
 
 A result label keeps its AGD name beside the deep-research claim status it maps
 to:

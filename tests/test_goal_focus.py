@@ -1078,6 +1078,75 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
 
             self.assertEqual(recovery.read_bytes(), raced)
 
+    def test_reconciliation_adds_the_state_index_pointer_once(self) -> None:
+        """An enforce loop whose recovery.md lacks the STATE.md pointer gains it once when the managed view is reconciled.
+
+        The dry run reports drift and writes nothing; apply appends exactly
+        the one line; a second reconciliation changes nothing; validation
+        passes; pre_dispatch_gate adds the line the same way; STATE.md keeps
+        its bytes. A recovery.md edit that races the reconciliation still
+        raises RevisionConflict and keeps the raced bytes. That a loop
+        created by init and activated keeps exactly one line is a regression
+        check, and the runtime writes the literal goal_focus defines.
+        """
+        pointer = "- State index (kept by the worker; history, not evidence): STATE.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            init_args = rt.selftest_init_args(root, max_iterations=5)
+            init_args.goal_focus_mode = "enforce"
+            rt.init_loop(init_args)
+            _activate(root)
+            recovery = root / "recovery.md"
+            lines = recovery.read_bytes().decode("utf-8").splitlines()
+            self.assertEqual(lines.count(pointer), 1, lines)
+            # An enforce loop created before the pointer existed: the same
+            # file without the line.
+            without = "".join(line + "\n" for line in lines if line != pointer).encode("utf-8")
+            with_pointer = without + pointer.encode("utf-8") + b"\n"
+            state_index = root / "STATE.md"
+            note = b"\xff\xfe a worker note, never read here\n"
+            state_index.write_bytes(note)
+
+            recovery.write_bytes(without)
+            dry_run = gf.reconcile_goal_focus(root)
+            self.assertEqual(
+                (dry_run["status"], dry_run["applied"], dry_run["recovery_changed"]),
+                ("drift", False, True),
+            )
+            self.assertEqual(recovery.read_bytes(), without)
+            applied = gf.reconcile_goal_focus(root, apply=True)
+            self.assertEqual((applied["status"], applied["applied"]), ("ok", True), applied)
+            self.assertEqual(recovery.read_bytes(), with_pointer)
+            again = gf.reconcile_goal_focus(root, apply=True)
+            self.assertEqual(
+                (again["status"], again["applied"], again["recovery_changed"]),
+                ("ok", False, False),
+            )
+            self.assertEqual(recovery.read_bytes(), with_pointer)
+            self.assertEqual(gf.validate_goal_focus(root, require_enabled=True)["errors"], [])
+
+            recovery.write_bytes(without)
+            gate = gf.pre_dispatch_gate(root)
+            self.assertIn("regenerated stale Goal-Focus managed views", gate["warnings"])
+            self.assertEqual(recovery.read_bytes(), with_pointer)
+
+            recovery.write_bytes(without)
+            raced = without + b"a concurrent edit\n"
+            real_commit = gf.commit_transaction
+
+            def change_before_commit(*args: object, **kwargs: object) -> dict:
+                recovery.write_bytes(raced)
+                return real_commit(*args, **kwargs)
+
+            with mock.patch.object(
+                gf, "commit_transaction", side_effect=change_before_commit
+            ), self.assertRaises(st.RevisionConflict):
+                gf.reconcile_goal_focus(root, apply=True)
+            self.assertEqual(recovery.read_bytes(), raced)
+            self.assertEqual(state_index.read_bytes(), note)
+            self.assertEqual(gf.STATE_INDEX_POINTER, pointer)
+            self.assertEqual(rt._recovery_pointer_lines(root)[0], gf.STATE_INDEX_POINTER)
+
     def test_active_direction_updates_plan_path_recovery_and_decision_together(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

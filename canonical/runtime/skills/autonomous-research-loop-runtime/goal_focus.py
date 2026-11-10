@@ -158,6 +158,11 @@ _BAND_VALUES = {
 }
 _MANAGED_START = "<!-- goal-focus-managed:start -->"
 _MANAGED_END = "<!-- goal-focus-managed:end -->"
+# The recovery.md line that points at STATE.md, the worker's own index of where
+# the work stands. The runtime writes it into the recovery.md text of init,
+# append and retract, and the managed view adds it once to a recovery.md that
+# lacks it. STATE.md itself is never read, created or rewritten here.
+STATE_INDEX_POINTER = "- State index (kept by the worker; history, not evidence): STATE.md"
 
 
 def utc_now() -> str:
@@ -2377,6 +2382,10 @@ def _managed_postimages(
         recovery_preimage,
         render_recovery_managed(contract, plan),
     )
+    if STATE_INDEX_POINTER not in recovery.splitlines():
+        # A loop created before the pointer existed gains it once; the
+        # caller's recovery.md preimage hash still guards the commit.
+        recovery += STATE_INDEX_POINTER + "\n"
     return state, recovery
 
 

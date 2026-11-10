@@ -1350,10 +1350,12 @@ def _recovery_pointer_lines(run_dir: Path) -> list[str]:
     They point at notes kept beside the loop files. STATE.md is named whether
     or not it exists: the worker creates and keeps it, while the runtime never
     creates, reads or rewrites it, and validate_loop_dir does not check it.
-    host_handoff.md is named while it is a regular file, so the pointer the
-    drive added when it wrote that file survives every later rewrite.
+    The line is goal_focus.STATE_INDEX_POINTER, which the Goal Focus managed
+    view also adds once to a recovery.md that lacks it. host_handoff.md is
+    named while it is a regular file, so the pointer the drive added when it
+    wrote that file survives every later rewrite.
     """
-    lines = ["- State index (kept by the worker; history, not evidence): STATE.md"]
+    lines = [goal_focus_v2.STATE_INDEX_POINTER]
     if _regular_file_nofollow(run_dir / HOST_HANDOFF_FILE) is not None:
         lines.append(HOST_HANDOFF_POINTER)
     return lines
