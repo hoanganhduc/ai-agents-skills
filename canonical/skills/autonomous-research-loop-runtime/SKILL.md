@@ -44,10 +44,14 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 ```
 
 Record a dead end in a legacy or monitor loop, and list the open ones (see
-[Negative space](#negative-space-dead-ends)):
+[Negative space](#negative-space-dead-ends)). Give the row its approach id, and
+its campaign id where the loop has campaigns: in a Goal Focus loop a row
+without approach or campaign ids is outside the registry scope of the
+iteration prompt and the briefs, while mechanism warnings and
+`host_handoff.md` still list it.
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space add --dir research/run --kind dead_end --mechanism "..." --failure "..." --reopen-condition "..." --evidence-id E1
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space add --dir research/run --approach-id approach-a --campaign-id campaign-a --kind dead_end --mechanism "..." --failure "..." --reopen-condition "..." --evidence-id E1
 ```
 
 ```bash
