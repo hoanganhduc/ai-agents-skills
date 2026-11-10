@@ -3690,7 +3690,9 @@ def failure_groups(
     iterations.jsonl, and ``pending``, an event about to be recorded. Each
     attempt counts once: progress events are deduplicated on the preceding
     drive_start timestamp, the event and its event_id, else candidate_id,
-    else drive_cycle, and each blocked row is one attempt. N is the
+    else drive_cycle, and each blocked row is one attempt unless an
+    iteration_rejected event in the window names its candidate_id, since
+    that rejection is the same attempt. N is the
     FAILURE_GROUP_RECENT_ATTEMPTS most recent attempts other than rejected and
     blocked ones; the advice holds when one worker_failure or
     host_review_error group has at least FAILURE_GROUP_ADVICE_MIN_ATTEMPTS of
@@ -3722,6 +3724,7 @@ def failure_groups(
 
     attempts: list[tuple[str, str]] = []
     seen: set[tuple[Any, ...]] = set()
+    rejected_candidates: set[str] = set()
     drive_start: str | None = None
     for event in events:
         if event.get("event") == "drive_start":
@@ -3731,6 +3734,10 @@ def failure_groups(
         group = _failure_attempt_group(event)
         if group is None:
             continue
+        if group[0] == "rejected":
+            candidate_id = event.get("candidate_id")
+            if isinstance(candidate_id, str) and candidate_id.strip():
+                rejected_candidates.add(candidate_id.strip())
         key = (drive_start, event["event"], _failure_attempt_identity(event))
         if key in seen:
             continue
@@ -3746,6 +3753,12 @@ def failure_groups(
         rows = []
     for row in rows:
         if row.get("decision") != "blocked":
+            continue
+        candidate_id = row.get("candidate_id")
+        if isinstance(candidate_id, str) and candidate_id.strip() in rejected_candidates:
+            # Finalize turns a rejection at the iteration budget limit into a
+            # blocked row; the iteration_rejected event in the window already
+            # counts that attempt.
             continue
         reason = row.get("stop_reason")
         attempts.append(

@@ -957,7 +957,11 @@ A class is one short lowercase token; anything else reads `unclassified`.
 Each attempt counts once: progress lines are deduplicated on the preceding
 `drive_start` timestamp, the event and its `event_id`, else `candidate_id`,
 else `drive_cycle`, and a blocked row is one attempt however many progress
-lines repeat its state. `n` counts the most recent attempts, at most 10,
+lines repeat its state. A rejection at the iteration budget limit, which
+finalize banks as a blocked row, counts once, as `rejected`: a blocked row is
+left out when an `iteration_rejected` event in the window names its
+`candidate_id`, and counts when no such event is read. `n` counts the most
+recent attempts, at most 10,
 leaving out `rejected` and `blocked` ones. When one `worker_failure` or
 `host_review_error` group holds at least 3 of them and at least half of `n`,
 `advice` names that group with the text "stop the loop, fix the cause, and

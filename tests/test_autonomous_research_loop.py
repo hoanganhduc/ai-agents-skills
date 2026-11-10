@@ -12572,6 +12572,64 @@ class FailureGroupTests(unittest.TestCase):
             self.assertEqual(summary["n"], 7)
             self.assertIsNone(summary["advice"])
 
+    def test_a_rejection_at_the_iteration_budget_limit_counts_once(self) -> None:
+        """A rejection that finalize turns into a blocked row is one attempt, counted from its iteration_rejected event.
+
+        At the iteration budget limit finalize banks a rejected candidate as
+        a blocked row (stop reason result_rejected_at_iteration_budget_limit)
+        and the drive records iteration_rejected for the same candidate_id;
+        the attempt is the rejection, and the row adds nothing. A blocked row
+        still counts when no iteration_rejected event names its candidate:
+        none was recorded, one names another candidate, or the event lies
+        outside the window that is read (regression part: such rows counted
+        before too).
+        """
+        arl = self._runtime()
+        reason = "result_rejected_at_iteration_budget_limit"
+        rejection = self._event(
+            "iteration_rejected",
+            event_id="arl-iteration_rejected-cand-1",
+            candidate_id="cand-1",
+            drive_cycle=1,
+        )
+        padding = [
+            self._event("iteration_ok", drive_cycle=n, text="x" * 1000) for n in range(300)
+        ]
+        cases = {
+            "the drive recorded the rejection": ([self._start(), rejection], "rejected"),
+            "no rejection was recorded": ([self._start()], "blocked"),
+            "the rejection names another candidate": (
+                [self._start(), {**rejection, "event_id": "arl-iteration_rejected-cand-9", "candidate_id": "cand-9"}],
+                "both",
+            ),
+            "the rejection lies outside the window": ([self._start(), rejection, *padding], "blocked"),
+        }
+        for label, (lines, counted) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = self._loop(arl, tmp, max_iterations=1)
+                row = iteration_record(1, "blocked", stop_reason=reason)
+                row.update(candidate_id="cand-1", bank_status="rejected")
+                write_iterations(loop, [row])
+                budget = read_loop_json(loop, "budget.json")
+                budget["spent_iterations"] = 1
+                write_loop_json(loop, "budget.json", budget)
+                path = self._log(loop, lines)
+                if label == "the rejection lies outside the window":
+                    self.assertGreater(path.stat().st_size, arl.FAILURE_GROUP_WINDOW_BYTES)
+                summary = self._groups(arl, loop)
+                expected = {
+                    "rejected": [{"kind": "rejected", "class": "result_rejected", "count": 1}],
+                    "blocked": [{"kind": "blocked", "class": reason, "count": 1}],
+                    "both": [
+                        {"kind": "blocked", "class": reason, "count": 1},
+                        {"kind": "rejected", "class": "result_rejected", "count": 1},
+                    ],
+                }[counted]
+                self.assertEqual(summary["groups"], expected)
+                self.assertEqual(summary["other_count"], 0)
+                self.assertEqual(summary["n"], 0)
+                self.assertIsNone(summary["advice"])
+
     def test_missing_staged_candidate_errors_group_by_event_id_stem(self) -> None:
         """Three missing-staged-candidate errors form one host_review_error group and give the advice.
 
