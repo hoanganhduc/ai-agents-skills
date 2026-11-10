@@ -11388,6 +11388,179 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                 [{"approach_id": "B", "warning": "duplicate_of_dead_mechanism:A"}],
             )
 
+    def test_a_reviewed_selection_compares_mechanisms_with_the_reviewed_registry(self) -> None:
+        """The selection a strategy review commits reports a dead mechanism no reviewer named, as goal-focus status does.
+
+        approach-a is blocked, approach-b repeats its mechanism under a new id,
+        and approach-c has another mechanism. The reviewer names only
+        approach-b, so the panel-adjusted registry that scores the selection
+        parks approach-a and approach-c. The mechanism_warnings stored in
+        current_plan.json's selection and in the select_direction row of
+        direction_decisions.jsonl still carry
+        duplicate_of_dead_mechanism:approach-a for approach-b, as goal-focus
+        status reports. The selection is a regression check: approach-b is
+        selected, with the status, mode, portfolio, scores and excluded
+        approaches that select_direction gives on the panel-adjusted registry.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+        import panel_parent  # noqa: WPS
+
+        def approach(approach_id: str, status: str, mechanism: str, **extra: Any) -> dict[str, Any]:
+            return {
+                "id": approach_id,
+                "campaign_id": "campaign-a",
+                "status": status,
+                "mechanism": mechanism,
+                "objective": "Run one bounded check.",
+                "next_action": "Execute the single test command.",
+                "scope_lock": "goal",
+                "target_obligation_ids": [],
+                "dependencies": [],
+                "diversity_tags": [approach_id],
+                "estimates": {"goal_resolution": {"lower": 2, "upper": 3}},
+                **extra,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=3)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            registry = gf.load_approach_registry(loop)
+            registry["registry_revision"] = 2
+            registry["campaigns"] = {
+                "campaign-a": {
+                    "id": "campaign-a",
+                    "status": "eligible",
+                    "approaches": {
+                        "approach-a": approach(
+                            "approach-a",
+                            "blocked",
+                            "induction on the number of colours",
+                            reopen_condition="a new invariant",
+                        ),
+                        "approach-b": approach(
+                            "approach-b",
+                            "eligible",
+                            "  INDUCTION on the number of   colours ",
+                        ),
+                        "approach-c": approach(
+                            "approach-c",
+                            "eligible",
+                            "discharging with weights",
+                            estimates={"goal_resolution": {"lower": 3, "upper": 4}},
+                        ),
+                    },
+                }
+            }
+            (loop / "approach_registry.json").write_text(
+                json.dumps(registry, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = gf.strategy_authority_snapshot(loop)
+            provider_advice = {
+                "schema_version": "strategy_advice.v1",
+                "decision": "select",
+                "recommended_approach_id": "approach-b",
+                "candidates": [
+                    {
+                        "approach_id": "approach-b",
+                        "campaign_id": "campaign-a",
+                        "rank": 1,
+                        "estimates": {
+                            factor: {"lower": 2, "upper": 3}
+                            for factor in panel_parent.ESTIMATE_FACTORS
+                        },
+                        "evidence_refs": [],
+                        "missing_evidence": [],
+                        "falsifier": "The bounded check fails.",
+                        "strongest_objection": "The route repeats a blocked mechanism.",
+                        "next_action": "Execute the single test command.",
+                    }
+                ],
+                "inspected_evidence": [],
+                "uninspected_evidence": [],
+                "reasoning_summary": "Only approach-b was reviewed.",
+            }
+            summary = {
+                "authority_snapshot": snapshot,
+                "primary_execution_attestation": _provider_attestation("claude", loop),
+                "provider_execution_attestations": {
+                    "codex": _provider_attestation("codex", loop)
+                },
+                "structured_synthesis": {
+                    "required_schema": "strategy_advice.v1",
+                    "primary_provider": "claude",
+                    "primary_family": _provider_attestation("claude", loop)["family"],
+                    "valid_providers": ["codex"],
+                    "different_family_valid_providers": ["codex"],
+                    "recommendation_counts": {"approach-b": 1},
+                    "decision_counts": {"select": 1},
+                    "dissent": False,
+                },
+                "results": {
+                    "codex": {
+                        "structured_valid": True,
+                        "structured_payload": provider_advice,
+                    }
+                },
+            }
+
+            strategy = arl._strategy_selection_from_panel(loop, summary)
+
+            self.assertEqual(strategy["status"], "ready", strategy)
+            selection = strategy["selection"]
+            gf.commit_selected_direction(
+                loop,
+                selection,
+                strategy["review"],
+                "test",
+                expected_plan_revision=1,
+            )
+            expected = [
+                {
+                    "approach_id": "approach-b",
+                    "warning": "duplicate_of_dead_mechanism:approach-a",
+                }
+            ]
+            plan = json.loads((loop / "current_plan.json").read_text(encoding="utf-8"))
+            self.assertEqual(plan["approach_id"], "approach-b")
+            self.assertEqual(plan["selection"]["mechanism_warnings"], expected)
+            decisions = [
+                json.loads(line)
+                for line in (loop / gf.DIRECTION_DECISIONS_FILE)
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            (decision,) = [
+                row for row in decisions if row.get("decision_type") == "select_direction"
+            ]
+            self.assertEqual(decision["selection"]["mechanism_warnings"], expected)
+            status = arl.goal_focus_status_command(argparse.Namespace(dir=str(loop)))
+            self.assertEqual(status["negative_space"]["mechanism_warnings"], expected)
+            adjusted, _mentioned = arl._panel_adjusted_registry(
+                snapshot["approach_registry"], arl._structured_panel_payloads(summary)
+            )
+            on_adjusted = gf.select_direction(adjusted, run_dir=loop)
+            kept = (
+                "status",
+                "selected_campaign_id",
+                "selected_approach_id",
+                "selection_mode",
+                "portfolio",
+                "scores",
+                "excluded",
+            )
+            self.assertEqual(
+                {key: selection[key] for key in kept},
+                {key: on_adjusted[key] for key in kept},
+            )
+
 
 class IterationPromptNegativeKnowledgeTests(unittest.TestCase):
     """The open dead ends reach the worker's prompt as data, filtered and bounded."""

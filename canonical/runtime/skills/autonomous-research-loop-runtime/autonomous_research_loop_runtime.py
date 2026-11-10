@@ -10815,6 +10815,13 @@ def _strategy_selection_from_panel(
     registry = copy.deepcopy(registry)
     adjusted, mentioned = _panel_adjusted_registry(registry, payloads)
     selection = goal_focus_v2.select_direction(adjusted, run_dir=run_dir)
+    # The adjusted registry parks every approach no reviewer named, blocked
+    # and closed ones included, so its mechanism comparison would miss them.
+    # The warnings compare the reviewed registry itself, as goal-focus status
+    # does; scoring and the selected approach stay the adjusted registry's.
+    selection["mechanism_warnings"] = goal_focus_v2.dead_mechanism_warnings(
+        registry, run_dir=run_dir
+    )
     selected_id = str(selection.get("selected_approach_id") or "")
     if selection.get("status") != "selected" or not selected_id or selected_id not in mentioned:
         return {

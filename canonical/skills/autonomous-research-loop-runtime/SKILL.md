@@ -790,10 +790,15 @@ and spacing normalized) equals that of a blocked or closed approach, or of an
 open row, is reported as `duplicate_of_dead_mechanism:<id>` (the approach id or
 the row's entry_id) in the selection's `mechanism_warnings`, in `goal-focus
 replan --dry-run` and in `goal-focus status`, which also counts
-`omitted_open_entries`; the approach stays eligible. Empty mechanism text, the
-migration placeholder and text that cannot be encoded as UTF-8 (a lone
-surrogate) never match, and registry validation warns once with the number of
-eligible approaches that have no mechanism text to compare. To retry a dead
+`omitted_open_entries`; the approach stays eligible. The selection a strategy
+review commits to `current_plan.json` and `direction_decisions.jsonl` is scored
+on the panel-adjusted registry, which parks every approach no reviewer named,
+but its `mechanism_warnings` compare the reviewed registry itself, as
+`goal-focus status` does, so a blocked or closed approach that no reviewer
+named still counts as dead. Empty mechanism text, the migration placeholder and
+text that cannot be encoded as UTF-8 (a lone surrogate) never match, and
+registry validation warns once with the number of eligible approaches that
+have no mechanism text to compare. To retry a dead
 route, register a new approach id with a changed mechanism; reopening a blocked
 id still needs a different-family review, and there is no reopen verb.
 
