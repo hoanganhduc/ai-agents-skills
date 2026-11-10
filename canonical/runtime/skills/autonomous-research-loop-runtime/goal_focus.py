@@ -4946,6 +4946,7 @@ def validate_host_staged_candidate(
     except (OSError, ValueError) as exc:
         errors.append(str(exc))
         compute_check = {}
+    errors.extend(_staged_negative_space_errors(record))
     if errors:
         raise ValueError("; ".join(errors))
     return {
@@ -4954,6 +4955,53 @@ def validate_host_staged_candidate(
         "evidence_ids": sorted(evidence_ids),
         "compute": compute_check,
     }
+
+
+def _staged_negative_space_errors(record: Mapping[str, Any]) -> list[str]:
+    """What keeps a staged record.negative_space from being written as staged.
+
+    The host builds the mapping from dead-end flags it has checked; this check
+    refuses, before review, a mapping that finalize would refuse after review
+    or would copy unchecked: one that is not an object, evidence_ids that are
+    not a list of strings, a kind or checker_basis the ledger does not accept,
+    and a falsified_hypothesis without checker_basis self_reported (the
+    worker's declared refutation). An absent or empty kind is finalize's
+    blocked_route.
+    """
+
+    explicit = record.get("negative_space")
+    if explicit is None:
+        return []
+    if not isinstance(explicit, Mapping):
+        return ["record.negative_space must be an object"]
+    errors: list[str] = []
+    evidence = explicit.get("evidence_ids")
+    if evidence is not None and (
+        not isinstance(evidence, list)
+        or not all(isinstance(item, str) for item in evidence)
+    ):
+        errors.append("record.negative_space evidence_ids must be a list of strings")
+    kind = explicit.get("kind")
+    kind_text = kind.strip().lower() if isinstance(kind, str) else ""
+    if kind is not None and (
+        not isinstance(kind, str)
+        or (kind_text and kind_text not in ns.NEGATIVE_SPACE_KINDS)
+    ):
+        errors.append(
+            "invalid negative_space kind: "
+            + (repr(kind[:100]) if isinstance(kind, str) else "not a string")
+        )
+    basis = explicit.get("checker_basis")
+    if basis is not None and (
+        not isinstance(basis, str) or basis not in ns.NEGATIVE_SPACE_CHECKER_BASES
+    ):
+        errors.append("record.negative_space checker_basis is invalid")
+    elif kind_text == "falsified_hypothesis" and basis != "self_reported":
+        errors.append(
+            "a falsified_hypothesis record.negative_space must carry checker_basis "
+            "self_reported (the worker's declared refutation)"
+        )
+    return errors
 
 
 def _reviewed_obligation_evidence(
@@ -6041,11 +6089,14 @@ def _negative_space_entry_for_finalize(
         or (approach.get("reopen_condition") if isinstance(approach, dict) else "")
         or "new mechanism required after independent review"
     )
-    evidence_ids = [
-        _clean_text(x)
-        for x in (explicit.get("evidence_ids") or record.get("evidence_ids") or [])
-        if _clean_text(x)
-    ]
+    raw_evidence = explicit.get("evidence_ids") or record.get("evidence_ids") or []
+    if not isinstance(raw_evidence, list) or not all(
+        isinstance(item, str) for item in raw_evidence
+    ):
+        # Staging validation refuses this before review; a direct caller gets
+        # a ValueError rather than a TypeError from iterating it.
+        raise ValueError("negative_space evidence_ids must be a list of strings")
+    evidence_ids = [_clean_text(x) for x in raw_evidence if _clean_text(x)]
     review_fp = _object_fingerprint(dict(review)) if isinstance(review, Mapping) else ""
     if host_row:
         review_status = None

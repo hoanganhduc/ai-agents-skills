@@ -737,10 +737,13 @@ warning.
   obligation, and a host row only when the registry blocks or closes the
   approach (or a rejection sets `block_approach`). A host row that would repeat
   an open host row is not written; the record links the open one. The registry
-  is not changed for the row. A worker under host mediation is refused an
-  invalid row (incomplete flags, a blank field, no evidence, or a
-  `falsified_hypothesis` without its artifact) before it writes its one
-  submission, and the host checks the row again.
+  is not changed for the row. Before review the host refuses a staged
+  `record.negative_space` that is not an object, whose evidence ids are not a
+  list of strings, whose kind or `checker_basis` the ledger does not accept, or
+  that is a `falsified_hypothesis` without `checker_basis: self_reported`. A
+  worker under host mediation is refused an invalid row (incomplete flags, a
+  blank field, no evidence, or a `falsified_hypothesis` without its artifact)
+  before it writes its one submission, and the host checks the row again.
 - A dead end that repeats an open row (same approach and mechanism
   fingerprint) is still recorded, or staged, as the advisory worker row it is:
   the command's `warnings` carry `negative_space_duplicate_open_row` with the

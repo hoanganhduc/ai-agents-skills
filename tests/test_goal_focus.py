@@ -5246,6 +5246,111 @@ class GoalFocusNegativeSpaceWriterTests(_AttestedGoalFocusTestCase):
                 errors = gf.ns.validate_negative_space(root)["errors"]
                 self.assertEqual(errors, [], errors)
 
+    def test_staged_negative_space_is_checked_before_review(self) -> None:
+        """validate_host_staged_candidate refuses a record.negative_space that finalize would refuse or trust.
+
+        A value that is not an object, evidence_ids that are not a list of
+        strings, a kind the ledger does not accept, a checker_basis it does
+        not accept and a falsified_hypothesis without checker_basis
+        self_reported are refused before review; finalize then refuses with a
+        ValueError, never a TypeError, and changes nothing. That the mapping
+        the host stages, and a falsified_hypothesis with checker_basis
+        self_reported, still validate are regression checks.
+        """
+        evidence = {"evidence_ids": ["dead-end.json"]}
+        refused = {
+            "not an object": ("induction failed", "record.negative_space must be an object"),
+            "evidence_ids true": (
+                {**self.DEAD_END, "evidence_ids": True},
+                "evidence_ids must be a list of strings",
+            ),
+            "evidence_ids holding a number": (
+                {**self.DEAD_END, "evidence_ids": ["dead-end.json", 7]},
+                "evidence_ids must be a list of strings",
+            ),
+            "invalid kind": (
+                {**self.DEAD_END, **evidence, "kind": "invented-kind"},
+                "invalid negative_space kind",
+            ),
+            "kind not a string": (
+                {**self.DEAD_END, **evidence, "kind": ["dead_end"]},
+                "invalid negative_space kind",
+            ),
+            "invalid checker_basis": (
+                {**self.DEAD_END, **evidence, "checker_basis": "host_checked"},
+                "checker_basis is invalid",
+            ),
+            "falsified_hypothesis without checker_basis": (
+                {**self.DEAD_END, **evidence, "kind": "falsified_hypothesis"},
+                "checker_basis self_reported",
+            ),
+        }
+        accepted_mappings = {
+            "the staged dead end": {**self.DEAD_END, **evidence},
+            "a declared refutation": {
+                **self.DEAD_END,
+                **evidence,
+                "kind": "falsified_hypothesis",
+                "checker_basis": "self_reported",
+            },
+        }
+        for label, mapping in [
+            *((key, value[0]) for key, value in refused.items()),
+            *accepted_mappings.items(),
+        ]:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _initialize(root)
+                plan = _activate(root)
+                staged = _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": "banked result",
+                        "evidence_ids": ["result.json", "dead-end.json"],
+                        "negative_space": mapping,
+                    },
+                )
+                if label in accepted_mappings:
+                    gf.validate_host_staged_candidate(root, staged["candidate"])
+                    continue
+                message = refused[label][1]
+                with self.assertRaises(ValueError) as caught:
+                    gf.validate_host_staged_candidate(root, staged["candidate"])
+                self.assertIn(message, str(caught.exception))
+                names = ["budget.json", "iterations.jsonl", gf.PENDING_CANDIDATE_FILE]
+                before = _snapshot_files(root, names)
+                with self.assertRaises(ValueError) as caught:
+                    gf.finalize_candidate(root, accepted=True, review=_bound_review(staged))
+                self.assertIn(message, str(caught.exception))
+                self.assertEqual(_snapshot_files(root, names), before)
+                self.assertFalse(gf.ns.negative_space_path(root).exists())
+
+    def test_finalize_dead_end_evidence_must_be_a_list_of_strings(self) -> None:
+        """The finalize row builder raises ValueError, never TypeError, for evidence_ids that are not a list of strings.
+
+        The staged mapping's evidence_ids and the record's, which a
+        rejection with block_approach falls back to, are both checked.
+        """
+        candidate = {"candidate_id": "cand-1", "approach_id": "A1", "campaign_id": "C1"}
+        records = {
+            "the mapping's evidence_ids": {
+                "negative_space": {**self.DEAD_END, "evidence_ids": True},
+            },
+            "the record's evidence_ids": {"block_approach": True, "evidence_ids": True},
+        }
+        for label, record in records.items():
+            with self.subTest(label):
+                with self.assertRaises(ValueError) as caught:
+                    gf._negative_space_entry_for_finalize(
+                        candidate=candidate,
+                        record=record,
+                        review={},
+                        registry={},
+                        accepted=False,
+                    )
+                self.assertIn("evidence_ids must be a list of strings", str(caught.exception))
+
 
 
 class BankedReviewErrorsTests(_AttestedGoalFocusTestCase):
