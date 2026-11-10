@@ -748,7 +748,10 @@ warning.
   worker under host mediation is refused an invalid row (incomplete flags, a
   blank field, no evidence, a mechanism that cannot be encoded as UTF-8, or a
   `falsified_hypothesis` without its artifact) before it writes its one
-  submission, and the host checks the row again.
+  submission, and the host checks the row again. Like the host, it looks for
+  that artifact in the loop the host dispatched, which the drive names in
+  `AUTOLOOP_DIR`, and in its own `--dir` only when `AUTOLOOP_DIR` is unset or
+  empty.
 - `negative-space add` and the dead-end flags refuse a mechanism that cannot be
   encoded as UTF-8, such as one holding a lone surrogate, since it has no
   fingerprint to compare; nothing is written

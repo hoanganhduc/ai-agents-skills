@@ -2436,11 +2436,15 @@ def append_iteration(
             )
         # The one submission per dispatch cannot be rewritten, so the worker
         # runs the host's row checks (all but the duplicate warning) before
-        # writing it; the host checks the row again.
+        # writing it; the host checks the row again. The request carries no
+        # directory: the host checks a refutation artifact in the run
+        # directory it dispatched, which the drive names in AUTOLOOP_DIR, so
+        # the worker looks there too, and in its --dir only without one.
         dead_end_flags = _dead_end_flags(args)
         if dead_end_flags is not None:
+            dispatched_dir = str(os.environ.get("AUTOLOOP_DIR") or "").strip()
             _worker_negative_space_row(
-                Path(args.dir).expanduser().resolve(),
+                Path(dispatched_dir or args.dir).expanduser().resolve(),
                 kind=dead_end_flags["dead_end_kind"],
                 mechanism=dead_end_flags["dead_end_mechanism"],
                 failure=dead_end_flags["dead_end_failure"],
