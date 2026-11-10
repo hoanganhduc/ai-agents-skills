@@ -10391,6 +10391,128 @@ class NegativeSpaceCommandTests(unittest.TestCase):
                 validation["warnings"],
             )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "a host-mediated submission is written and claimed through POSIX directory descriptors",
+    )
+    def test_mediated_worker_checks_the_dead_end_row_before_its_one_submission(self) -> None:
+        """Under host mediation the worker runs the host's row checks before it writes its one submission.
+
+        A blank or whitespace-only field and a falsified_hypothesis citing
+        plain evidence are refused with the host's errors and codes while no
+        submission exists, so the corrected resubmission is written and the
+        host stages it. The --dead-end-kind help states the artifact rule.
+        """
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+
+        def flags_with(index: int, value: str) -> list[str]:
+            flags = list(self.DEAD_END_FLAGS)
+            flags[index] = value
+            return flags
+
+        refusals = {
+            "blank mechanism": (flags_with(3, ""), "mechanism_text is required", None),
+            "whitespace failure": (flags_with(5, "   "), "failure_summary is required", None),
+            "falsified_hypothesis citing plain evidence": (
+                flags_with(1, "falsified_hypothesis"),
+                "proof artifact",
+                "negative_space_falsified_hypothesis_needs_artifact",
+            ),
+        }
+        for label, (flags, message, code) in refusals.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp) / "loop"
+                init_args = arl.selftest_init_args(loop, max_iterations=3)
+                init_args.goal_focus_mode = "enforce"
+                arl.init_loop(init_args)
+                RuntimeGoalFocusIntegrationTests._activate_single_direction(arl, gf, loop)
+                dispatch = gf.prepare_iteration_dispatch(
+                    loop,
+                    executor_provider="claude",
+                    executor_family="anthropic",
+                    executor_attestation=_provider_attestation("claude", loop),
+                    started_at="2026-07-29T12:00:00Z",
+                )["dispatch"]
+                # Plain evidence: no proof artifact declares a refutation.
+                write_text_evidence(loop, dispatch, "dead-end-evidence")
+                evidence_dir = Path(os.path.abspath(loop / str(dispatch["evidence_root"])))
+                submission = evidence_dir / arl.ITERATION_SUBMISSION_FILENAME
+                worker_environment = {
+                    "AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION": "1",
+                    "AAS_AUTOLOOP_EVIDENCE_DIR": str(evidence_dir),
+                    "AAS_AUTOLOOP_EVIDENCE_ROOT": str(evidence_dir),
+                    "AAS_AUTOLOOP_RUN_ID": "run-dead-end",
+                    "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                    "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                    "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                }
+
+                def submit(*dead_end: str) -> dict[str, Any]:
+                    args = arl.build_parser().parse_args(
+                        [
+                            "append-iteration",
+                            "--dir",
+                            str(loop),
+                            "--mode",
+                            "bounded-research",
+                            "--objective",
+                            "try the inductive route",
+                            "--decision",
+                            "revise",
+                            "--claim-id",
+                            "dead-end-claim",
+                            "--evidence-id",
+                            "dead-end-evidence",
+                            "--compute-none",
+                            *dead_end,
+                        ]
+                    )
+                    with mock.patch.dict(os.environ, worker_environment):
+                        return arl.append_iteration(args)
+
+                with self.assertRaises(ValueError) as caught:
+                    submit(*flags)
+                self.assertIn(message, str(caught.exception))
+                if code is not None:
+                    self.assertIsInstance(caught.exception, arl.GuardError)
+                    self.assertEqual(caught.exception.payload["code"], code)
+                self.assertFalse(submission.exists())
+
+                written = submit(*self.DEAD_END_FLAGS)
+                self.assertEqual(written["action"], "submit-iteration", written)
+                self.assertTrue(submission.is_file())
+                consumed = arl.consume_iteration_submission(
+                    loop,
+                    evidence_dir,
+                    expected_run_id="run-dead-end",
+                    expected_dispatch_id=dispatch["dispatch_id"],
+                    expected_candidate_id=dispatch["candidate_id"],
+                    expected_provider="claude",
+                    iteration_started_at="2026-07-29T12:00:00Z",
+                    resource_attestation=_primary_resource_attestation(),
+                )
+                self.assertEqual(consumed["staging_status"], "staged", consumed)
+                self.assertEqual(
+                    consumed["candidate"]["candidate"]["record"]["negative_space"][
+                        "mechanism_text"
+                    ],
+                    "Induction on the number of colours",
+                )
+
+        with self.subTest("--dead-end-kind help"):
+            shown = io.StringIO()
+            with contextlib.redirect_stdout(shown), self.assertRaises(SystemExit):
+                arl.build_parser().parse_args(["append-iteration", "--help"])
+            self.assertIn(
+                "falsified_hypothesis needs an --evidence-id naming a sagemath or "
+                "python-verifier",
+                " ".join(shown.getvalue().split()),
+            )
+
     def test_falsified_hypothesis_is_artifact_declared_and_self_reported(self) -> None:
         """A refutation row cites a sagemath or python-verifier artifact, is self-reported, and re-runs nothing."""
         runtime = HELPER.parent

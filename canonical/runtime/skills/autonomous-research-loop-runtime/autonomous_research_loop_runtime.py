@@ -2415,9 +2415,21 @@ def append_iteration(
                 "submission (AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION=1): guards run "
                 "host-side on the real submission; submit without --dry-run"
             )
-        # The one submission per dispatch cannot be rewritten, so refuse
-        # incomplete dead-end flags before writing it; the host checks the row.
-        _dead_end_flags(args)
+        # The one submission per dispatch cannot be rewritten, so the worker
+        # runs the host's row checks (all but the duplicate warning) before
+        # writing it; the host checks the row again.
+        dead_end_flags = _dead_end_flags(args)
+        if dead_end_flags is not None:
+            _worker_negative_space_row(
+                Path(args.dir).expanduser().resolve(),
+                kind=dead_end_flags["dead_end_kind"],
+                mechanism=dead_end_flags["dead_end_mechanism"],
+                failure=dead_end_flags["dead_end_failure"],
+                reopen_condition=dead_end_flags["dead_end_reopen_condition"],
+                approach_id="",
+                campaign_id="",
+                evidence_ids=parse_many(args.evidence_id),
+            )
         return _write_worker_iteration_submission(args)
     control = os.environ if _host_control is None else _host_control
     run_dir = Path(args.dir).expanduser().resolve()
@@ -15746,7 +15758,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "record a dead end with this iteration (all four --dead-end-* flags or "
             "none; evidence comes from --evidence-id): an advisory worker row, "
-            "written with the iteration, or staged for host review in enforce mode"
+            "written with the iteration, or staged for host review in enforce mode; "
+            "falsified_hypothesis needs an --evidence-id naming a sagemath or "
+            f"python-verifier {PROOF_ARTIFACT_DIRNAME}/<id>.json that "
+            "validate-proof-artifact accepts"
         ),
     )
     append.add_argument(
