@@ -174,6 +174,58 @@ class SafetyPatternTests(unittest.TestCase):
             self.assertEqual(payload["safety_status"], "failed", payload)
             self.assertIn(name, _details(payload, "unsafe_construct"), payload)
 
+    def test_pattern_tables_are_frozen_and_marked_advisory(self) -> None:
+        """The comment above the tables says they are frozen and advisory.
+
+        The key-set assertions are a regression check: they held before the
+        comment was added. They pin the current names, so a new pattern
+        cannot be added without changing this test.
+        """
+        lines = GATE_PY.read_text(encoding="utf-8").splitlines()
+        start = lines.index("PLACEHOLDER_PATTERNS = {")
+        comment: list[str] = []
+        for line in reversed(lines[:start]):
+            if not line.startswith("#"):
+                break
+            comment.insert(0, line.lstrip("#").strip())
+        text = " ".join(comment)
+        for phrase in ("frozen", "advisory preflight", "lake comparator", "regression"):
+            self.assertIn(phrase, text)
+        self.assertEqual(set(gate.PLACEHOLDER_PATTERNS), {"sorry", "admit", "sorryAx"})
+        self.assertEqual(
+            set(gate.TRUST_BASE_PATTERNS),
+            {
+                "axiom",
+                "unsafe",
+                "native_decide",
+                "decide_native",
+                "ofReduceBool",
+                "ofReduceNat",
+                "trustCompiler",
+                "reduceBool",
+                "reduceNat",
+            },
+        )
+        self.assertEqual(
+            set(gate.SAFETY_PATTERNS),
+            {
+                "#eval",
+                "#exit",
+                "#check_failure",
+                "#guard_msgs",
+                "IO.Process",
+                "run_cmd",
+                "run_tac",
+                "elab",
+                "elab_rules",
+                "by_elab",
+                "elaborator_attribute",
+                "initialize",
+                "@[extern]",
+                "foreign",
+            },
+        )
+
 
 class CommentStrippingTests(unittest.TestCase):
     def test_comments_and_string_literals_never_trigger(self) -> None:

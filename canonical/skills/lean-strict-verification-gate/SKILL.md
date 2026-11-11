@@ -242,6 +242,8 @@ Before any typecheck, the scanner blocks active:
 
 Final or claim-supporting artifacts also block on active `sorry`, `admit`, unsanctioned `axiom`, unknown trust base, or unreviewed generated proof text. Stubs may contain placeholders only when explicitly marked `artifact_stage = stub`.
 
+These pattern lists are frozen: they are an advisory preflight, a proof supports a claim only when a host-run `lake comparator` accepts it, and a newly found trick becomes a comparator regression case rather than a new pattern.
+
 ## Recommended templates
 
 When this skill is involved, consider these workflow templates (install via

@@ -19,6 +19,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 
+# The three pattern tables below are frozen. They are an advisory preflight for
+# `scan` and `verify`, not a security boundary: a Lean proof supports a claim
+# only when a host-run `lake comparator` accepts it against a frozen challenge.
+# Do not add patterns here; a newly found trick becomes a comparator regression
+# case instead.
 PLACEHOLDER_PATTERNS = {
     "sorry": re.compile(r"\bsorry\b"),
     "admit": re.compile(r"\badmit\b"),
