@@ -546,6 +546,34 @@ class BoundedCommandTests(unittest.TestCase):
         if Path("/proc").is_dir():
             self.assertFalse(Path("/proc", str(pid)).exists())
 
+    def test_an_explicit_environment_replaces_the_inherited_one(self) -> None:
+        """env= is the child's whole environment; without it the child inherits.
+
+        The inherited case is a regression check: it held before env= existed.
+        """
+        command = [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ.get('GATE_TEST_MARK', '<unset>'))",
+        ]
+        with mock.patch.dict(os.environ, {"GATE_TEST_MARK": "inherited"}):
+            inherited = gate.run_bounded_command(command, timeout=60, max_output_bytes=1024)
+            given = gate.run_bounded_command(
+                command,
+                timeout=60,
+                max_output_bytes=1024,
+                env={**os.environ, "GATE_TEST_MARK": "given"},
+            )
+            stripped = gate.run_bounded_command(
+                command,
+                timeout=60,
+                max_output_bytes=1024,
+                env={key: value for key, value in os.environ.items() if key != "GATE_TEST_MARK"},
+            )
+        self.assertEqual(inherited.stdout.strip(), "inherited")
+        self.assertEqual(given.stdout.strip(), "given")
+        self.assertEqual(stripped.stdout.strip(), "<unset>")
+
     def test_relative_tool_candidate_is_bound_to_an_absolute_path(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd().parent) as tmp:
             tool = Path(tmp) / "tool"

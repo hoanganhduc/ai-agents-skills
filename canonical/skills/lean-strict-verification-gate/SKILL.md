@@ -46,6 +46,9 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh doctor --probe
 ```
 
+Both forms also report whether this host can run `lake comparator`; see
+Comparator readiness below.
+
 Scan a Lean file without running Lean:
 
 ```bash
@@ -218,6 +221,60 @@ statement matches the informal claim; statement equivalence stays a review
 step.
 
 The helper never installs Lean, Lake, mathlib, npm packages, Python packages, credentials, services, or MCP servers. Missing Lean reports `tool_unavailable`.
+
+## Comparator readiness
+
+`lake comparator`, in Lean v4.35.0 and later, builds and exports a solution
+inside a `bwrap` sandbox and judges it with the same toolchain's `leanexport`
+and `leanchecker`. No verb of this gate runs it yet; `doctor` reports under
+`comparator` whether this host could:
+
+- `platform_supported`: Linux and not running as root. Any other host gives no
+  verdict.
+- `bwrap`: the sandbox binary, with `path` (the resolved file), `source`
+  (`env`, `local-opt` or `not-found`), `version`, `version_source`
+  (`directory` or `probe`), `supported`, `status` and `detail`. Only
+  bubblewrap 0.12.0 or later is `supported`, and `status` is `available` only
+  then.
+- `toolchains`: one row per `$ELAN_HOME/toolchains/leanprover--lean4---*`
+  directory, with `name` (such as `leanprover/lean4:v4.35.0`), `version`
+  (stable releases only), `supported` and `has_comparator` (`bin/` holds
+  `lake`, `lean`, `leanchecker` and `leanexport`). Only a stable release at
+  v4.35.0 or later is `supported`; release candidates and nightlies never
+  are. A listing that cannot be made gives no rows and `toolchains_error`.
+
+Plain `doctor` reads directory listings and runs nothing, so the `bwrap`
+version comes from its `bubblewrap-X.Y.Z` directory name. `doctor --probe`
+runs `bwrap --version`, which then decides the version, and for a supported
+`bwrap` it adds `sandbox_probe`: one run of
+`bwrap --ro-bind / / --unshare-all --die-with-parent -- /bin/true` with a
+5-second timeout and `PATH=/usr/bin:/bin` as the whole environment. Its
+`status` is `ok` when the sandbox started, `command_failed` when it did not
+(for example when unprivileged user namespaces are disabled), and
+`tool_unavailable` when nothing ran. An unexpected error in this section is
+reported in `comparator.error`; `doctor` still succeeds.
+
+The gate never looks for `bwrap` on `PATH`, where an older distribution
+`bwrap` may sit. `AAS_BWRAP` names the binary by absolute path; a relative
+name, a missing file or a file that is not executable is refused as
+`tool_unavailable`, with no fallback. When `AAS_BWRAP` is unset, the gate takes
+the highest version among `~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap`, the
+layout of a private bubblewrap build kept off `PATH`; other directory names
+are ignored.
+
+The toolchain a challenge names, such as `leanprover/lean4:v4.35.0`, is the
+directory `$ELAN_HOME/toolchains/leanprover--lean4---v4.35.0`: elan turns `/`
+into `--` and `:` into `---`. `ELAN_HOME` defaults to `~/.elan` and must be
+absolute. `AAS_LEAN_COMPARATOR_TOOLCHAIN` replaces that directory with an
+absolute one; `doctor` lists `$ELAN_HOME/toolchains` only and does not read
+it. Either way the directory is refused when it is the input under review or
+lies inside it, and its `bin/` must hold `lake`, `lean`, `leanchecker` and
+`leanexport` as regular files. The elan proxies in `$ELAN_HOME/bin` are never
+used, because a proxy follows the working directory's `lean-toolchain`. The
+toolchain attestation hashes those four binaries and every `lib/lean/*.so`
+(`bin/lean` and `bin/lake` are launchers for those libraries), then reads
+`lean --version` in the toolchain directory with only `PATH` and `LANG` set,
+so no `LEAN_*`, `ELAN_*` or `LAKE_*` variable can select another Lean.
 
 ## Challenge freeze
 

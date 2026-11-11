@@ -9,10 +9,17 @@ FIFO or a symlink skip elsewhere with a stated reason; that is why they live in
 this module rather than in ``test_lean_gate_scanner``, which is never
 skip-gated. The gate module and its path come from that module, so one copy of
 the gate is loaded.
+
+``ComparatorReadinessTests`` covers what the comparator will need from the
+host: the platform check, the pinned bwrap, the toolchain directory, its
+attestation, and the ``doctor`` fields. Fake HOME and ELAN_HOME trees stand in
+for the host, and tools that must never run leave a marker if they do. The
+sandbox preflight runs a fake bwrap and so needs Linux.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -121,6 +128,69 @@ def _release_fifo_reader(fifo: Path) -> None:
     except OSError:
         return
     os.close(descriptor)
+
+
+# What `lake comparator` takes from its toolchain, and the preflight argv after
+# the bwrap path.
+COMPARATOR_BINARIES = ("lake", "lean", "leanchecker", "leanexport")
+PREFLIGHT_ARGS = ["--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "--", "/bin/true"]
+# Variables that select a tool for the gate; each readiness test starts without them.
+_READINESS_VARIABLES = (
+    "AAS_BWRAP",
+    "AAS_LEAN_COMPARATOR_TOOLCHAIN",
+    "ELAN_HOME",
+    "AAS_LEAN",
+    "AAS_LAKE",
+    "AAS_LEAN4CHECKER",
+)
+
+
+@contextlib.contextmanager
+def _readiness_environment(home: Path, **values: str) -> Any:
+    """HOME and USERPROFILE point at ``home``; only ``values`` select tools."""
+
+    with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+        for name in _READINESS_VARIABLES:
+            os.environ.pop(name, None)
+        os.environ.update(values)
+        yield
+
+
+@contextlib.contextmanager
+def _working_directory(path: Path) -> Any:
+    """Run with ``path`` as the working directory, so a relative name could resolve there."""
+
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+def _write_tool(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _marker_tool(path: Path, marker: Path) -> Path:
+    """An executable that leaves ``marker`` behind if anything ever runs it."""
+
+    return _write_tool(path, f"#!/bin/sh\ntouch '{marker}'\nexit 99\n")
+
+
+def _toolchain_dir(directory: Path, binaries: tuple[str, ...] = COMPARATOR_BINARIES) -> Path:
+    """A toolchain directory whose bin/ holds ``binaries`` as plain files."""
+
+    for name in binaries:
+        _write_tool(directory / "bin" / gate.executable_name(name), f"#!/bin/sh\n# {name}\nexit 98\n")
+    return directory
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class ChallengeFreezeTests(unittest.TestCase):
@@ -670,6 +740,692 @@ class ChallengeFreezeTests(unittest.TestCase):
             self.assertFalse(os.path.lexists(usage_out))
         skill = SKILL_MD.read_text(encoding="utf-8")
         self.assertIn("run_lean_strict_verification_gate.sh challenge-freeze", skill)
+
+
+class ComparatorReadinessTests(unittest.TestCase):
+    def test_platform_needs_linux_and_a_non_root_user(self) -> None:
+        for platform, euid, expected in (
+            ("darwin", 1000, False),
+            ("win32", 1000, False),
+            ("linux", 0, False),
+            ("linux", 1000, True),
+        ):
+            with self.subTest(platform=platform, euid=euid), mock.patch.object(
+                gate.sys, "platform", platform
+            ), mock.patch.object(gate.os, "geteuid", return_value=euid, create=True):
+                self.assertIs(gate.comparator_platform_supported(), expected)
+
+    def test_bwrap_resolution_never_uses_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            home = base / "home"
+            home.mkdir()
+            marker = base / "executed"
+            path_dir = base / "on-path"
+            path_bwrap = _marker_tool(path_dir / "bwrap", marker)
+            pinned = _marker_tool(base / "opt" / "bubblewrap-0.12.0" / "bin" / "bwrap", marker)
+            unversioned = _marker_tool(base / "custom" / "bwrap", marker)
+            on_path = {"PATH": os.pathsep.join([str(path_dir), os.environ.get("PATH", "")])}
+
+            with _readiness_environment(home, AAS_BWRAP=str(pinned), **on_path):
+                chosen = gate.bwrap_status()
+            self.assertEqual(
+                chosen,
+                {
+                    "status": "available",
+                    "path": os.path.realpath(pinned),
+                    "source": "env",
+                    "version": "0.12.0",
+                    "version_source": "directory",
+                    "supported": True,
+                    "detail": "",
+                },
+            )
+
+            # Without a bubblewrap-X.Y.Z directory the version is unknown until probed.
+            with _readiness_environment(home, AAS_BWRAP=str(unversioned), **on_path):
+                unknown = gate.bwrap_status()
+            self.assertEqual(unknown["status"], "tool_unavailable", unknown)
+            self.assertEqual(unknown["path"], os.path.realpath(unversioned))
+            self.assertEqual(unknown["source"], "env")
+            self.assertIsNone(unknown["version"])
+            self.assertIsNone(unknown["version_source"])
+            self.assertFalse(unknown["supported"])
+            self.assertIn("--probe", unknown["detail"])
+
+            # The resolved file is reported, and only its own directory names a
+            # version: a symlink cannot borrow one.
+            alias = base / "alias" / "bwrap"
+            borrowed = base / "borrowed" / "bubblewrap-0.13.0" / "bin" / "bwrap"
+            alias.parent.mkdir()
+            borrowed.parent.mkdir(parents=True)
+            try:
+                alias.symlink_to(pinned)
+                borrowed.symlink_to(unversioned)
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                with _readiness_environment(home, AAS_BWRAP=str(alias), **on_path):
+                    aliased = gate.bwrap_status()
+                self.assertEqual(aliased, {**chosen, "path": os.path.realpath(pinned)})
+                with _readiness_environment(home, AAS_BWRAP=str(borrowed), **on_path):
+                    unborrowed = gate.bwrap_status()
+                self.assertEqual(unborrowed["path"], os.path.realpath(unversioned))
+                self.assertIsNone(unborrowed["version"], unborrowed)
+                self.assertFalse(unborrowed["supported"], unborrowed)
+
+            # Each refused value would otherwise reach a usable bwrap: the relative
+            # names resolve to one from the working directory, and the others sit
+            # where a supported version would be read from the directory name.
+            directory = base / "dirs" / "bubblewrap-0.12.0" / "bin" / "bwrap"
+            directory.mkdir(parents=True)
+            refused_values = {
+                "a bare name": "bwrap",
+                "a relative path": os.path.join("..", "on-path", "bwrap"),
+                "a missing file": str(base / "missing" / "bubblewrap-0.12.0" / "bin" / "bwrap"),
+                "a directory": str(directory),
+                "an over-long name": str(base / ("x" * 300) / "bwrap"),
+            }
+            if os.name == "posix":
+                not_executable = base / "plain" / "bubblewrap-0.12.0" / "bin" / "bwrap"
+                not_executable.parent.mkdir(parents=True)
+                not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+                not_executable.chmod(0o644)
+                refused_values["a file without the execute bit"] = str(not_executable)
+            for label, value in refused_values.items():
+                with self.subTest(AAS_BWRAP=label):
+                    with _readiness_environment(home, AAS_BWRAP=value, **on_path), _working_directory(
+                        path_dir
+                    ):
+                        refused = gate.bwrap_status()
+                    self.assertEqual(refused["status"], "tool_unavailable", refused)
+                    self.assertEqual(refused["source"], "env", refused)
+                    self.assertFalse(refused["supported"], refused)
+                    self.assertNotEqual(refused["path"], os.path.realpath(path_bwrap), refused)
+                    self.assertTrue(refused["detail"], refused)
+
+            # Unset, with an empty home: a bwrap on PATH or in the working
+            # directory is never a fallback.
+            with _readiness_environment(home, **on_path), _working_directory(path_dir):
+                missing = gate.bwrap_status()
+            self.assertEqual(
+                missing,
+                {
+                    "status": "tool_unavailable",
+                    "path": "",
+                    "source": "not-found",
+                    "version": None,
+                    "version_source": None,
+                    "supported": False,
+                    "detail": missing["detail"],
+                },
+            )
+            self.assertIn("AAS_BWRAP", missing["detail"])
+            self.assertFalse(marker.exists())
+
+    def test_bwrap_picks_the_newest_install_and_enforces_the_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            marker = base / "executed"
+            home = base / "home"
+            opt = home / ".local" / "opt"
+            for name in (
+                "bubblewrap-0.9.10",
+                "bubblewrap-0.11.0",
+                "bubblewrap-0.12.0",
+                "bubblewrap-0.13.1",
+                "bubblewrap-latest",
+                # Not X.Y.Z with ASCII digits and no leading zeros: ignored.
+                "bubblewrap-0.013.2",
+                "bubblewrap-0.٩٩.0",
+            ):
+                _marker_tool(opt / name / "bin" / "bwrap", marker)
+            (opt / "bubblewrap-0.14.0" / "bin").mkdir(parents=True)
+            (opt / "bubblewrap-0.15.0").write_text("not a directory\n", encoding="utf-8")
+            with _readiness_environment(home):
+                newest = gate.bwrap_status()
+            self.assertEqual(
+                newest,
+                {
+                    "status": "available",
+                    "path": os.path.realpath(opt / "bubblewrap-0.13.1" / "bin" / "bwrap"),
+                    "source": "local-opt",
+                    "version": "0.13.1",
+                    "version_source": "directory",
+                    "supported": True,
+                    "detail": "",
+                },
+            )
+
+            old_home = base / "old-home"
+            old = _marker_tool(
+                old_home / ".local" / "opt" / "bubblewrap-0.11.0" / "bin" / "bwrap", marker
+            )
+            with _readiness_environment(old_home):
+                floor = gate.bwrap_status()
+            self.assertEqual(floor["status"], "tool_unavailable", floor)
+            self.assertEqual(floor["path"], os.path.realpath(old))
+            self.assertEqual(floor["source"], "local-opt")
+            self.assertEqual(floor["version"], "0.11.0")
+            self.assertEqual(floor["version_source"], "directory")
+            self.assertFalse(floor["supported"])
+            self.assertIn("0.12.0", floor["detail"])
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "the sandbox preflight needs Linux namespaces, and the fake bwrap is a POSIX script",
+    )
+    def test_bwrap_preflight_with_a_fake_bwrap(self) -> None:
+        check = (
+            "import os\n"
+            "import sys\n"
+            f"if sys.argv[1:] != {PREFLIGHT_ARGS!r}:\n"
+            "    print('unexpected argv', sys.argv[1:], file=sys.stderr)\n"
+            "    sys.exit(3)\n"
+            "if os.environ.get('PATH') != '/usr/bin:/bin' or 'GATE_TEST_CANARY' in os.environ:\n"
+            "    print('unexpected environment', file=sys.stderr)\n"
+            "    sys.exit(4)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+
+            def fake(name: str, tail: str) -> Path:
+                directory = base / name
+                directory.mkdir()
+                return scanner._fake_tool(directory, "bwrap", tail)
+
+            passing = fake("pass", check + "sys.exit(0)\n")
+            failing = fake(
+                "fail",
+                check + "print('bwrap: setting up uid map: Permission denied', file=sys.stderr)\n"
+                "sys.exit(1)\n",
+            )
+            sleeper = fake("sleep", check + "import time\ntime.sleep(30)\n")
+            flood = fake("flood", check + "sys.stdout.write('x' * (100 * 1024))\nsys.exit(0)\n")
+            marker = base / "spawned"
+            recorder = fake(
+                "record",
+                f"open({str(marker)!r}, 'w', encoding='utf-8').close()\n",
+            )
+            not_executable = base / "plain" / "bwrap"
+            not_executable.parent.mkdir()
+            not_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            not_executable.chmod(0o644)
+            with mock.patch.object(
+                gate, "comparator_platform_supported", return_value=True
+            ), mock.patch.dict(os.environ, {"GATE_TEST_CANARY": "parent only"}):
+                ok = gate.bwrap_preflight(str(passing))
+                failed = gate.bwrap_preflight(str(failing))
+                slow = gate.bwrap_preflight(str(sleeper), timeout=0.5)
+                flooded = gate.bwrap_preflight(str(flood))
+                unusable = gate.bwrap_preflight(str(not_executable))
+                relative = gate.bwrap_preflight("bwrap")
+                # ./bwrap names the passing fake; it is refused all the same.
+                with _working_directory(passing.parent):
+                    dotted = gate.bwrap_preflight("./bwrap")
+            self.assertEqual(
+                ok,
+                {
+                    "status": "ok",
+                    "command": [str(passing), *PREFLIGHT_ARGS],
+                    "returncode": 0,
+                    "stderr": "",
+                    "detail": "",
+                },
+            )
+            self.assertEqual(failed["status"], "command_failed", failed)
+            self.assertEqual(failed["returncode"], 1)
+            self.assertIn("Permission denied", failed["stderr"])
+            self.assertEqual(slow["status"], "command_failed", slow)
+            self.assertIn("timeout", slow["detail"])
+            # Output past the 64 KiB cap is a failure, not a started sandbox.
+            self.assertEqual(flooded["status"], "command_failed", flooded)
+            self.assertIn("exceeded", flooded["detail"])
+            # A relative name is never looked up, not even on the preflight's
+            # PATH, and a file that cannot run is not spawned.
+            for refused in (relative, dotted, unusable):
+                self.assertEqual(refused["status"], "tool_unavailable", refused)
+                self.assertIsNone(refused["returncode"], refused)
+                self.assertTrue(refused["detail"], refused)
+
+            with mock.patch.object(gate, "comparator_platform_supported", return_value=False):
+                refused = gate.bwrap_preflight(str(recorder))
+            self.assertEqual(refused["status"], "tool_unavailable", refused)
+            self.assertIsNone(refused["returncode"])
+            self.assertFalse(marker.exists())
+
+    def test_toolchain_resolution_and_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            home = base / "home"
+            home.mkdir()
+            marker = base / "executed"
+            elan = base / "elan"
+            # The elan proxies obey the working directory's lean-toolchain: never used.
+            _marker_tool(elan / "bin" / gate.executable_name("lean"), marker)
+            _marker_tool(elan / "bin" / gate.executable_name("lake"), marker)
+            toolchains = elan / "toolchains"
+            full = _toolchain_dir(toolchains / "leanprover--lean4---v4.35.0")
+            _toolchain_dir(toolchains / "leanprover--lean4---v4.35.1", ("lake", "lean"))
+            for name in ("v4.34.1", "v4.35.0-rc2", "nightly-2026-10-01"):
+                _toolchain_dir(toolchains / f"leanprover--lean4---{name}")
+            input_root = base / "input"
+            input_root.mkdir()
+            outside = base / "outside"
+            outside.mkdir()
+
+            with _readiness_environment(home, ELAN_HOME=str(elan)):
+                found = gate.resolve_comparator_toolchain(
+                    "leanprover/lean4:v4.35.0", input_root=outside
+                )
+                not_installed = gate.resolve_comparator_toolchain("leanprover/lean4:v4.36.0")
+                incomplete = gate.resolve_comparator_toolchain("leanprover/lean4:v4.35.1")
+                unsupported = {
+                    value: gate.resolve_comparator_toolchain(value)
+                    for value in (
+                        "leanprover/lean4:v4.34.1",
+                        "leanprover/lean4:v4.35.0-rc2",
+                        "leanprover/lean4:nightly-2026-10-01",
+                        "Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit abc, Release)",
+                        "v4.35.0",
+                    )
+                }
+            resolved = os.path.realpath(full)
+            self.assertEqual(
+                found,
+                {
+                    "status": "available",
+                    "toolchain": "leanprover/lean4:v4.35.0",
+                    "path": resolved,
+                    "bin_dir": os.path.join(resolved, "bin"),
+                    "source": "elan-home",
+                    "detail": "",
+                },
+            )
+            # Elan names the directory by turning "/" into "--" and ":" into "---".
+            self.assertEqual(Path(found["path"]).name, "leanprover--lean4---v4.35.0")
+            self.assertEqual(not_installed["status"], "tool_unavailable", not_installed)
+            self.assertEqual(not_installed["source"], "elan-home")
+            self.assertEqual(incomplete["status"], "tool_unavailable", incomplete)
+            for binary in ("leanchecker", "leanexport"):
+                self.assertIn(binary, incomplete["detail"])
+            for value, result in unsupported.items():
+                with self.subTest(toolchain=value):
+                    self.assertEqual(result["status"], "unsupported_toolchain", result)
+                    self.assertEqual(result["path"], "", result)
+
+            # ELAN_HOME defaults to ~/.elan.
+            default_home = base / "default-home"
+            default = _toolchain_dir(
+                default_home / ".elan" / "toolchains" / "leanprover--lean4---v4.35.0"
+            )
+            with _readiness_environment(default_home):
+                from_home = gate.resolve_comparator_toolchain("leanprover/lean4:v4.35.0")
+            self.assertEqual(from_home["status"], "available", from_home)
+            self.assertEqual(from_home["path"], os.path.realpath(default))
+
+            override = _toolchain_dir(base / "custom-toolchain")
+            _toolchain_dir(input_root)
+            inside = _toolchain_dir(input_root / "toolchain")
+            _toolchain_dir(input_root / "toolchains" / "leanprover--lean4---v4.35.0")
+            # Every refused value names a complete toolchain, so only the rule
+            # under test stands between it and "available". The relative values
+            # resolve from the working directory, base.
+            refusals = {
+                "relative override": ({"AAS_LEAN_COMPARATOR_TOOLCHAIN": "custom-toolchain"}, "env"),
+                "override inside the input": ({"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(inside)}, "env"),
+                "override is the input": ({"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(input_root)}, "env"),
+                "ELAN_HOME inside the input": ({"ELAN_HOME": str(input_root)}, "elan-home"),
+                "relative ELAN_HOME": ({"ELAN_HOME": "elan"}, "elan-home"),
+                "an over-long override": (
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(base / ("x" * 300))},
+                    "env",
+                ),
+            }
+            linked_binary = _toolchain_dir(base / "linked-binary", ("lake", "lean", "leanchecker"))
+            linked_bin = base / "linked-bin"
+            linked_bin.mkdir()
+            try:
+                (linked_binary / "bin" / gate.executable_name("leanexport")).symlink_to(
+                    override / "bin" / gate.executable_name("leanexport")
+                )
+                (linked_bin / "bin").symlink_to(override / "bin", target_is_directory=True)
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                refusals["a symlinked binary"] = (
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_binary)},
+                    "env",
+                )
+                refusals["a symlinked bin/"] = (
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_bin)},
+                    "env",
+                )
+            for label, (values, source) in refusals.items():
+                with self.subTest(case=label):
+                    with _readiness_environment(home, **values), _working_directory(base):
+                        refused = gate.resolve_comparator_toolchain(
+                            "leanprover/lean4:v4.35.0", input_root=input_root
+                        )
+                    self.assertEqual(refused["status"], "tool_unavailable", refused)
+                    self.assertEqual(refused["source"], source, refused)
+                    self.assertEqual(refused["bin_dir"], "", refused)
+                    self.assertTrue(refused["detail"], refused)
+
+            with _readiness_environment(
+                home, AAS_LEAN_COMPARATOR_TOOLCHAIN=str(override), ELAN_HOME=str(elan)
+            ):
+                chosen = gate.resolve_comparator_toolchain(
+                    "leanprover/lean4:v4.35.0", input_root=input_root
+                )
+            self.assertEqual(chosen["status"], "available", chosen)
+            self.assertEqual(chosen["source"], "env")
+            self.assertEqual(chosen["path"], os.path.realpath(override))
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "the fake lean is a POSIX script; the comparator toolchain is Linux-only",
+    )
+    def test_toolchain_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "leanprover--lean4---v4.35.0"
+            bin_dir = root / "bin"
+            bin_dir.mkdir(parents=True)
+            record = Path(tmp) / "lean-run.json"
+            behaviour = bin_dir / "behaviour.json"
+            scanner._fake_tool(
+                bin_dir,
+                "lean",
+                "import json\n"
+                "import os\n"
+                "import sys\n"
+                f"with open({str(record)!r}, 'w', encoding='utf-8') as handle:\n"
+                "    json.dump({'env': dict(os.environ), 'cwd': os.getcwd(), 'argv': sys.argv[1:]}, handle)\n"
+                "here = os.path.dirname(os.path.abspath(__file__))\n"
+                "with open(os.path.join(here, 'behaviour.json'), encoding='utf-8') as handle:\n"
+                "    behaviour = json.load(handle)\n"
+                "print(behaviour['stdout'])\n"
+                "sys.exit(behaviour['exit'])\n",
+            )
+            for name in ("lake", "leanchecker", "leanexport"):
+                (bin_dir / name).write_bytes(f"#!/bin/sh\n# {name}\n".encode("utf-8"))
+            library = root / "lib" / "lean"
+            library.mkdir(parents=True)
+            (library / "libleanshared.so").write_bytes(b"\x7fELF shared\n")
+            (library / "libInit_shared.so").write_bytes(b"\x7fELF init\n")
+            (library / "Init.olean").write_bytes(b"not a library\n")
+            banner = "Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit 0123abc, Release)"
+
+            def attest(stdout: str, exit_code: int = 0) -> dict[str, Any]:
+                behaviour.write_text(
+                    json.dumps({"stdout": stdout, "exit": exit_code}), encoding="utf-8"
+                )
+                with mock.patch.dict(
+                    os.environ,
+                    {"LEAN_PATH": "/nonexistent/lean-path", "ELAN_TOOLCHAIN": "leanprover/lean4:v4.0.0"},
+                ):
+                    return gate.toolchain_attestation(root)
+
+            attested = attest(banner + "\nTarget: x86_64-unknown-linux-gnu")
+            expected_files = {
+                f"bin/{name}": _sha256(bin_dir / name) for name in COMPARATOR_BINARIES
+            }
+            expected_files["lib/lean/libInit_shared.so"] = _sha256(library / "libInit_shared.so")
+            expected_files["lib/lean/libleanshared.so"] = _sha256(library / "libleanshared.so")
+            self.assertEqual(
+                attested,
+                {
+                    "status": "ok",
+                    "files": expected_files,
+                    "lean_version": banner,
+                    "version": "4.35.0",
+                    "detail": "",
+                },
+            )
+            run = json.loads(record.read_text(encoding="utf-8"))
+            self.assertEqual(run["argv"], ["--version"])
+            self.assertTrue(os.path.samefile(run["cwd"], root), run["cwd"])
+            self.assertNotIn("LEAN_PATH", run["env"])
+            self.assertNotIn("ELAN_TOOLCHAIN", run["env"])
+            self.assertEqual(run["env"].get("LANG"), "C.UTF-8")
+            self.assertEqual(
+                run["env"]["PATH"].split(os.pathsep), [str(bin_dir), "/usr/bin", "/bin"]
+            )
+
+            for label, stdout, exit_code, status in (
+                ("release candidate", "Lean (version 4.35.0-rc2, x86_64, commit 1, Release)", 0, "unsupported_toolchain"),
+                ("older release", "Lean (version 4.34.1, x86_64, commit 1, Release)", 0, "unsupported_toolchain"),
+                ("not a banner", "lean 4.35.0", 0, "command_failed"),
+                ("a toolchain spec instead of a banner", "leanprover/lean4:v4.35.0", 0, "command_failed"),
+                ("non-zero exit", banner, 1, "command_failed"),
+                ("output past the 64 KiB cap", banner + "\n" + "x" * (100 * 1024), 0, "command_failed"),
+            ):
+                with self.subTest(case=label):
+                    result = attest(stdout, exit_code)
+                    self.assertEqual(result["status"], status, result)
+                    self.assertEqual(result["files"], expected_files, result)
+
+            behaviour.write_text(json.dumps({"stdout": banner, "exit": 0}), encoding="utf-8")
+            with self.subTest(case="a relative toolchain directory"), _working_directory(Path(tmp)):
+                relative = gate.toolchain_attestation(root.name)
+                self.assertEqual(relative["status"], "tool_unavailable", relative)
+                self.assertEqual(relative["files"], {}, relative)
+            # Only bin/ is a symlink here; lib/lean is an ordinary copy.
+            linked = Path(tmp) / "linked-toolchain"
+            (linked / "lib" / "lean").mkdir(parents=True)
+            for name in ("libleanshared.so", "libInit_shared.so"):
+                (linked / "lib" / "lean" / name).write_bytes((library / name).read_bytes())
+            try:
+                (linked / "bin").symlink_to(bin_dir, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                linked = None
+            if linked is not None:
+                with self.subTest(case="a symlinked bin/"):
+                    through_link = gate.toolchain_attestation(linked)
+                    self.assertEqual(through_link["status"], "tool_unavailable", through_link)
+                    self.assertEqual(through_link["files"], {}, through_link)
+
+            libraries = sorted(library.iterdir())
+            for index in range(gate.TOOLCHAIN_LIBRARY_MAX_FILES):
+                (library / f"libextra{index}.so").write_bytes(b"\x7fELF extra\n")
+            with self.subTest(case="too many libraries"):
+                self.assertEqual(attest(banner)["status"], "tool_unavailable")
+            for path in library.iterdir():
+                if path not in libraries:
+                    path.unlink()
+
+            link = library / "libLake_shared.so"
+            try:
+                link.symlink_to(library / "libleanshared.so")
+            except (OSError, NotImplementedError):
+                link = None
+            if link is not None:
+                with self.subTest(case="symlinked library"):
+                    linked = attest(banner)
+                    self.assertEqual(linked["status"], "tool_unavailable", linked)
+                    self.assertIn("libLake_shared.so", linked["detail"])
+                link.unlink()
+
+            (bin_dir / "leanexport").unlink()
+            with self.subTest(case="missing binary"):
+                missing = attest(banner)
+                self.assertEqual(missing["status"], "tool_unavailable", missing)
+                self.assertIn("leanexport", missing["detail"])
+
+    def test_doctor_reports_readiness_from_listings_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            marker = base / "executed"
+            home = base / "home"
+            bwrap = _marker_tool(home / ".local" / "opt" / "bubblewrap-0.13.1" / "bin" / "bwrap", marker)
+            _marker_tool(home / ".local" / "opt" / "bubblewrap-0.11.0" / "bin" / "bwrap", marker)
+            toolchains = home / ".elan" / "toolchains"
+            for name, binaries in (
+                ("leanprover--lean4---v4.34.1", ("lake", "lean", "leanchecker")),
+                ("leanprover--lean4---v4.35.0", COMPARATOR_BINARIES),
+                ("leanprover--lean4---v4.35.0-rc2", COMPARATOR_BINARIES),
+                ("leanprover--lean4---nightly-2026-10-01", ("lake", "lean")),
+                # Not a leanprover/lean4 toolchain: not listed.
+                ("custom-build", COMPARATOR_BINARIES),
+            ):
+                for binary in binaries:
+                    _marker_tool(toolchains / name / "bin" / gate.executable_name(binary), marker)
+            (toolchains / "leanprover--lean4---v9.9.9").write_text("not a directory\n", encoding="utf-8")
+            project = base / "project"
+            project.mkdir()
+            with _readiness_environment(home), mock.patch.object(
+                gate.shutil, "which", return_value=None
+            ):
+                payload = gate.doctor_payload(project_root=project, probe=False)
+                os.environ["ELAN_HOME"] = "relative-elan"
+                relative_elan = gate.doctor_payload(project_root=project, probe=False)
+                os.environ["ELAN_HOME"] = str(base / "no-elan-here")
+                no_elan = gate.doctor_payload(project_root=project, probe=False)
+                del os.environ["ELAN_HOME"]
+                with mock.patch.object(gate, "bwrap_status", side_effect=RuntimeError("injected")):
+                    crashed = gate.doctor_payload(project_root=project, probe=False)
+
+            self.assertEqual(payload["status"], "ok")
+            for key in ("tool_status", "project_status", "no_auto_install", "network_required", "installs_attempted"):
+                self.assertIn(key, payload)
+            self.assertEqual(
+                set(payload["tool_status"]),
+                {"lean", "lake", "elan", "lean4checker", "npm", "npx", "pip"},
+            )
+            self.assertNotIn("probe_status", payload)
+            comparator = payload["comparator"]
+            self.assertEqual(set(comparator), {"platform_supported", "bwrap", "toolchains"})
+            self.assertIs(comparator["platform_supported"], gate.comparator_platform_supported())
+            self.assertEqual(
+                comparator["bwrap"],
+                {
+                    "status": "available",
+                    "path": os.path.realpath(bwrap),
+                    "source": "local-opt",
+                    "version": "0.13.1",
+                    "version_source": "directory",
+                    "supported": True,
+                    "detail": "",
+                },
+            )
+            self.assertEqual(
+                comparator["toolchains"],
+                [
+                    {
+                        "name": "leanprover/lean4:nightly-2026-10-01",
+                        "version": None,
+                        "supported": False,
+                        "has_comparator": False,
+                    },
+                    {
+                        "name": "leanprover/lean4:v4.34.1",
+                        "version": "4.34.1",
+                        "supported": False,
+                        "has_comparator": False,
+                    },
+                    {
+                        "name": "leanprover/lean4:v4.35.0",
+                        "version": "4.35.0",
+                        "supported": True,
+                        "has_comparator": True,
+                    },
+                    {
+                        "name": "leanprover/lean4:v4.35.0-rc2",
+                        "version": None,
+                        "supported": False,
+                        "has_comparator": True,
+                    },
+                ],
+            )
+
+            # No elan installation is an empty listing, not an error.
+            self.assertEqual(no_elan["comparator"]["toolchains"], [])
+            self.assertNotIn("toolchains_error", no_elan["comparator"])
+            # A listing that cannot be made is reported, and the doctor still succeeds.
+            self.assertEqual(relative_elan["status"], "ok")
+            self.assertEqual(relative_elan["comparator"]["toolchains"], [])
+            self.assertIn("ELAN_HOME", relative_elan["comparator"]["toolchains_error"])
+            # So is a crash anywhere in the readiness section.
+            self.assertEqual(crashed["status"], "ok")
+            self.assertIn("injected", crashed["comparator"]["error"])
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "the probe runs a fake bwrap, a POSIX script, through the Linux-only sandbox preflight",
+    )
+    def test_doctor_probe_reads_the_bwrap_version_and_runs_the_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            home = base / "home"
+            opt_bin = home / ".local" / "opt" / "bubblewrap-0.13.1" / "bin"
+            opt_bin.mkdir(parents=True)
+            release = base / "release.txt"
+            release.write_text("0.13.1", encoding="utf-8")
+            bwrap = scanner._fake_tool(
+                opt_bin,
+                "bwrap",
+                "import sys\n"
+                "if sys.argv[1:] == ['--version']:\n"
+                f"    with open({str(release)!r}, encoding='utf-8') as handle:\n"
+                "        print('bubblewrap ' + handle.read().strip())\n"
+                "    sys.exit(0)\n"
+                f"sys.exit(0 if sys.argv[1:] == {PREFLIGHT_ARGS!r} else 5)\n",
+            )
+            project = base / "project"
+            project.mkdir()
+            with _readiness_environment(home), mock.patch.object(
+                gate.shutil, "which", return_value=None
+            ), mock.patch.object(gate, "comparator_platform_supported", return_value=True):
+                payload = gate.doctor_payload(project_root=project, probe=True)
+                release.write_text("0.11.0", encoding="utf-8")
+                old = gate.doctor_payload(project_root=project, probe=True)
+            self.assertIn("probe_status", payload)
+            comparator = payload["comparator"]
+            self.assertEqual(
+                comparator["bwrap"],
+                {
+                    "status": "available",
+                    "path": os.path.realpath(bwrap),
+                    "source": "local-opt",
+                    "version": "0.13.1",
+                    "version_source": "probe",
+                    "supported": True,
+                    "detail": "",
+                },
+            )
+            self.assertEqual(
+                comparator["sandbox_probe"],
+                {
+                    "status": "ok",
+                    "command": [os.path.realpath(bwrap), *PREFLIGHT_ARGS],
+                    "returncode": 0,
+                    "stderr": "",
+                    "detail": "",
+                },
+            )
+            # The probed release decides, whatever the directory name says.
+            old_bwrap = old["comparator"]["bwrap"]
+            self.assertEqual(old_bwrap["version"], "0.11.0", old_bwrap)
+            self.assertEqual(old_bwrap["version_source"], "probe")
+            self.assertFalse(old_bwrap["supported"])
+            self.assertEqual(old_bwrap["status"], "tool_unavailable")
+            self.assertEqual(old["comparator"]["sandbox_probe"]["status"], "tool_unavailable")
+            self.assertIsNone(old["comparator"]["sandbox_probe"]["returncode"])
+
+    def test_readiness_is_documented(self) -> None:
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        for phrase in (
+            "## Comparator readiness",
+            "AAS_BWRAP",
+            "AAS_LEAN_COMPARATOR_TOOLCHAIN",
+            "ELAN_HOME",
+            "sandbox_probe",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(phrase in skill, f"SKILL.md does not mention {phrase!r}")
 
 
 def _make_dir(path: Path) -> Path:

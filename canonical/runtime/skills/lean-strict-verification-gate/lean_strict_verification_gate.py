@@ -11,6 +11,7 @@ import signal
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -99,6 +100,9 @@ TOOL_ENV = {
     "lean": "AAS_LEAN",
     "lake": "AAS_LAKE",
     "lean4checker": "AAS_LEAN4CHECKER",
+    # Read only by bwrap_status(): the comparator's bwrap is never looked up
+    # by tool_status() or on PATH.
+    "bwrap": "AAS_BWRAP",
 }
 # The three axioms an ordinary mathlib proof reports. Anything else is a
 # trust-base expansion the audit has to surface by name.
@@ -165,6 +169,26 @@ _LEAN_TOOLCHAIN_SPEC_RE = re.compile(
 _LEAN_VERSION_BANNER_RE = re.compile(
     r"Lean \(version (0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*), "
 )
+# The comparator's sandbox: bubblewrap 0.12.0 or later, installed outside PATH
+# as ~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap or named by AAS_BWRAP.
+BWRAP_MIN_VERSION = (0, 12, 0)
+_BWRAP_DIRECTORY_RE = re.compile(
+    r"bubblewrap-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+)
+_BWRAP_VERSION_RE = re.compile(
+    r"bubblewrap (0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+)
+# An absolute toolchain directory that replaces $ELAN_HOME/toolchains/<name>.
+COMPARATOR_TOOLCHAIN_ENV = "AAS_LEAN_COMPARATOR_TOOLCHAIN"
+# lake comparator drives the run with lake and lean, and exports and replays
+# both environments with the same toolchain's leanexport and leanchecker.
+COMPARATOR_TOOLCHAIN_BINARIES = ("lake", "lean", "leanchecker", "leanexport")
+# bin/lean and bin/lake are launchers for lib/lean/*.so, so the attestation
+# hashes those libraries too; a toolchain with more is refused, not truncated.
+TOOLCHAIN_LIBRARY_MAX_FILES = 32
+READINESS_OUTPUT_MAX_BYTES = 64 * 1024
+# Elan stores leanprover/lean4:<release> as toolchains/leanprover--lean4---<release>.
+_ELAN_LEAN4_PREFIX = "leanprover--lean4---"
 
 
 class BoundedCommandResult(tuple):
@@ -579,6 +603,7 @@ def doctor_payload(*, project_root: Path, probe: bool) -> dict[str, Any]:
         "no_auto_install": True,
         "network_required": False,
         "installs_attempted": False,
+        "comparator": comparator_readiness(probe=probe),
     }
     if probe:
         payload["probe_status"] = probe_status(payload["tool_status"])
@@ -686,6 +711,510 @@ def probe_command(executable: str, args: list[str]) -> dict[str, str]:
         "stdout": completed.stdout[-2000:],
         "stderr": completed.stderr[-2000:],
     }
+
+
+def comparator_platform_supported() -> bool:
+    """Whether this host can run ``lake comparator`` for AAS.
+
+    The comparator sandboxes the code it judges with Linux namespaces, and AAS
+    never runs it as root. Every other host gives no verdict.
+    """
+
+    geteuid = getattr(os, "geteuid", None)
+    return sys.platform == "linux" and geteuid is not None and geteuid() != 0
+
+
+def comparator_readiness(*, probe: bool) -> dict[str, Any]:
+    """The doctor's ``comparator`` section, read from directory listings.
+
+    Without ``probe`` nothing runs. With it, ``bwrap --version`` decides the
+    bwrap version, and a supported bwrap gets the sandbox preflight. An
+    unexpected error lands in ``error`` and never fails the doctor.
+    """
+
+    readiness: dict[str, Any] = {}
+    try:
+        readiness["platform_supported"] = comparator_platform_supported()
+        readiness["bwrap"] = bwrap_status(probe=probe)
+        readiness.update(_comparator_toolchain_rows())
+        if probe:
+            bwrap = readiness["bwrap"]
+            if bwrap["status"] == "available":
+                readiness["sandbox_probe"] = bwrap_preflight(bwrap["path"])
+            else:
+                readiness["sandbox_probe"] = {
+                    "status": "tool_unavailable",
+                    "command": [],
+                    "returncode": None,
+                    "stderr": "",
+                    "detail": "no supported bwrap to probe: " + str(bwrap["detail"]),
+                }
+    except Exception as exc:  # readiness is a report; the doctor still succeeds
+        readiness["error"] = f"{type(exc).__name__}: {exc}"[:500]
+    return readiness
+
+
+def bwrap_status(*, probe: bool = False) -> dict[str, Any]:
+    """Find the bwrap ``lake comparator`` may use, never through PATH.
+
+    AAS_BWRAP, when set, must name an executable regular file by absolute
+    path, and nothing else is tried. Otherwise the highest
+    ``~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap`` is chosen. ``path`` is the
+    resolved file. Without ``probe`` its version comes from the
+    ``bubblewrap-X.Y.Z`` directory and nothing runs; with ``probe``,
+    ``bwrap --version`` decides. Only bubblewrap 0.12.0 or later is
+    ``available``. Never raises.
+    """
+
+    env_var = TOOL_ENV["bwrap"]
+    result: dict[str, Any] = {
+        "status": "tool_unavailable",
+        "path": "",
+        "source": "not-found",
+        "version": None,
+        "version_source": None,
+        "supported": False,
+        "detail": "",
+    }
+    try:
+        configured = os.environ.get(env_var, "").strip()
+        if configured:
+            result.update(source="env", path=configured)
+            if not os.path.isabs(configured):
+                result["detail"] = f"{env_var} must be an absolute path; PATH is never searched"
+                return result
+            candidate = configured
+        else:
+            candidate = _newest_local_bwrap()
+            if not candidate:
+                result["detail"] = (
+                    f"no ~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap; set {env_var} to an absolute path"
+                )
+                return result
+            result["source"] = "local-opt"
+        resolved = os.path.realpath(candidate)
+        result["path"] = resolved
+        problem = _executable_file_problem(resolved)
+        if problem:
+            result["detail"] = problem
+            return result
+        if probe:
+            probed = probe_command(resolved, ["--version"])
+            match = (
+                _BWRAP_VERSION_RE.fullmatch(probed["stdout"].strip())
+                if probed["status"] == "ok"
+                else None
+            )
+            version = _version_triple(match)
+            version_source = "probe"
+            if version is None:
+                output = (probed["stderr"] or probed["stdout"]).strip()
+                result["detail"] = (
+                    "bwrap --version did not report bubblewrap X.Y.Z: " + output[-200:]
+                )
+        else:
+            version = _bwrap_install_version(resolved)
+            version_source = "directory"
+            if version is None:
+                result["detail"] = (
+                    "the version is unknown: the path is not .../bubblewrap-X.Y.Z/bin/bwrap; "
+                    "doctor --probe runs bwrap --version"
+                )
+        if version is not None:
+            result.update(version=_version_text(version), version_source=version_source)
+            if version < BWRAP_MIN_VERSION:
+                result["detail"] = (
+                    f"bubblewrap {_version_text(version)} is older than "
+                    f"{_version_text(BWRAP_MIN_VERSION)}"
+                )
+            else:
+                result.update(status="available", supported=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(
+            status="tool_unavailable",
+            supported=False,
+            detail=f"{type(exc).__name__}: {exc}"[:500],
+        )
+    return result
+
+
+def bwrap_preflight(path: str, *, timeout: float = 5) -> dict[str, Any]:
+    """Start the sandbox once with every namespace unshared.
+
+    The argv is fixed, ``<path> --ro-bind / / --unshare-all --die-with-parent
+    -- /bin/true``; PATH=/usr/bin:/bin is the whole environment and the output
+    is capped at 64 KiB. Nothing is spawned unless
+    comparator_platform_supported() holds and ``path`` is an absolute,
+    executable regular file. ``ok`` means the sandbox started; a non-zero
+    exit, a timeout or a failure to run is ``command_failed``. Never raises.
+    """
+
+    command = [path, "--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "--", "/bin/true"]
+    result: dict[str, Any] = {
+        "status": "tool_unavailable",
+        "command": command,
+        "returncode": None,
+        "stderr": "",
+        "detail": "",
+    }
+    try:
+        if not comparator_platform_supported():
+            result["detail"] = "the comparator sandbox runs only on Linux, and never as root"
+            return result
+        if not os.path.isabs(path):
+            result["detail"] = "bwrap must be named by an absolute path; PATH is never searched"
+            return result
+        problem = _executable_file_problem(path)
+        if problem:
+            result["detail"] = problem
+            return result
+        try:
+            completed = run_bounded_command(
+                command,
+                timeout=timeout,
+                max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
+                env={"PATH": "/usr/bin:/bin"},
+            )
+        except subprocess.TimeoutExpired:
+            result.update(status="command_failed", detail=f"timeout after {timeout} seconds")
+            return result
+        except CommandOutputLimitExceeded as exc:
+            result.update(status="command_failed", stderr=exc.stderr[-2000:], detail=str(exc))
+            return result
+        except OSError as exc:
+            result.update(status="command_failed", detail=f"{type(exc).__name__}: {exc}"[:500])
+            return result
+        result.update(returncode=completed.returncode, stderr=completed.stderr[-2000:])
+        if completed.returncode == 0:
+            result["status"] = "ok"
+        else:
+            result.update(
+                status="command_failed",
+                detail=(
+                    f"bwrap exited {completed.returncode}: the sandbox did not start; "
+                    "unprivileged user namespaces may be unavailable"
+                ),
+            )
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(status="tool_unavailable", detail=f"{type(exc).__name__}: {exc}"[:500])
+    return result
+
+
+def resolve_comparator_toolchain(
+    toolchain: str, *, input_root: Path | None = None
+) -> dict[str, Any]:
+    """Find the directory of the stable Lean release a challenge names.
+
+    AAS_LEAN_COMPARATOR_TOOLCHAIN, when set, must be an absolute directory.
+    Otherwise the directory is ``$ELAN_HOME/toolchains/<name>``, ELAN_HOME
+    defaulting to ``~/.elan``; elan names ``leanprover/lean4:v4.35.0``
+    ``leanprover--lean4---v4.35.0`` ("/" becomes "--", ":" becomes "---").
+    The proxies in ``$ELAN_HOME/bin`` follow the working directory's
+    lean-toolchain and are never used. The resolved directory is refused when
+    it is ``input_root`` or lies inside it, whichever way it was found, and its
+    bin/ must hold lake, lean, leanchecker and leanexport as regular files.
+    Never raises.
+    """
+
+    result: dict[str, Any] = {
+        "status": "tool_unavailable",
+        "toolchain": toolchain,
+        "path": "",
+        "bin_dir": "",
+        "source": "",
+        "detail": "",
+    }
+    try:
+        version = (
+            parse_lean_version(toolchain)
+            if isinstance(toolchain, str) and _LEAN_TOOLCHAIN_SPEC_RE.fullmatch(toolchain)
+            else None
+        )
+        if version is None or version < COMPARATOR_MIN_LEAN_VERSION:
+            result.update(
+                status="unsupported_toolchain",
+                detail=(
+                    f"{toolchain}: lake comparator needs a stable "
+                    "leanprover/lean4:vX.Y.Z release, v4.35.0 or later"
+                ),
+            )
+            return result
+        override = os.environ.get(COMPARATOR_TOOLCHAIN_ENV, "").strip()
+        if override:
+            result["source"] = "env"
+            if not os.path.isabs(override):
+                result["detail"] = f"{COMPARATOR_TOOLCHAIN_ENV} must be an absolute directory"
+                return result
+            candidate = override
+        else:
+            result["source"] = "elan-home"
+            elan_home = os.environ.get("ELAN_HOME", "").strip()
+            if elan_home and not os.path.isabs(elan_home):
+                result["detail"] = "ELAN_HOME must be an absolute path"
+                return result
+            base = elan_home or str(_home_directory() / ".elan")
+            directory_name = toolchain.replace("/", "--").replace(":", "---")
+            candidate = os.path.join(base, "toolchains", directory_name)
+        resolved = os.path.realpath(candidate)
+        result["path"] = resolved
+        if input_root is not None:
+            root = Path(os.path.realpath(input_root))
+            if Path(resolved) == root or root in Path(resolved).parents:
+                result["detail"] = "the toolchain lies inside the input under review"
+                return result
+        try:
+            info = os.lstat(resolved)
+        except FileNotFoundError:
+            result["detail"] = f"{toolchain} is not installed at {resolved}"
+            return result
+        bin_dir = os.path.join(resolved, "bin")
+        if not stat.S_ISDIR(info.st_mode) or not _plain_directory(bin_dir):
+            result["detail"] = f"{resolved} is not a toolchain directory with a bin/ directory"
+            return result
+        missing = [
+            name
+            for name in COMPARATOR_TOOLCHAIN_BINARIES
+            if not _regular_file(os.path.join(bin_dir, executable_name(name)))
+        ]
+        if missing:
+            result["detail"] = "bin/ lacks " + ", ".join(missing) + " as regular files"
+            return result
+        result.update(status="available", bin_dir=bin_dir)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(status="tool_unavailable", bin_dir="", detail=f"{type(exc).__name__}: {exc}"[:500])
+    return result
+
+
+def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
+    """Hash a comparator toolchain and read the version its lean reports.
+
+    ``files`` maps ``bin/<binary>`` for lake, lean, leanchecker and leanexport,
+    and ``lib/lean/<library>.so`` for each shared library there (bin/lean and
+    bin/lake are launchers for them), to sha256. Then ``lean --version`` runs
+    in the toolchain directory with only PATH=<bin>:/usr/bin:/bin and
+    LANG=C.UTF-8, so no LEAN_*, ELAN_* or LAKE_* variable reaches it; nothing
+    from an input is read or run. A banner that is not a stable release at
+    v4.35.0 or later is ``unsupported_toolchain``, and a non-zero exit or an
+    unreadable banner is ``command_failed``. Never raises.
+    """
+
+    result: dict[str, Any] = {
+        "status": "tool_unavailable",
+        "files": {},
+        "lean_version": "",
+        "version": None,
+        "detail": "",
+    }
+    try:
+        root = Path(toolchain_dir)
+        if not root.is_absolute() or not _plain_directory(root):
+            result["detail"] = f"{root} is not an absolute toolchain directory"
+            return result
+        bin_dir = root / "bin"
+        files: dict[str, str] = {}
+        location = "toolchain"
+        try:
+            stable_directory_chain(root, ("bin",))
+            stable_directory_chain(root, ("lib", "lean"))
+            with os.scandir(root / "lib" / "lean") as entries:
+                libraries = sorted(entry.name for entry in entries if entry.name.endswith(".so"))
+            if len(libraries) > TOOLCHAIN_LIBRARY_MAX_FILES:
+                result["detail"] = (
+                    f"lib/lean holds {len(libraries)} shared libraries, more than "
+                    f"the {TOOLCHAIN_LIBRARY_MAX_FILES} an attestation hashes"
+                )
+                return result
+            relatives = [f"bin/{executable_name(name)}" for name in COMPARATOR_TOOLCHAIN_BINARIES]
+            relatives += [f"lib/lean/{name}" for name in libraries]
+            for location in relatives:
+                files[location] = stable_regular_file_sha256(
+                    root.joinpath(*location.split("/")), max_bytes=COMPILED_MODULE_MAX_BYTES
+                )
+        except StableReadError as exc:
+            result["detail"] = f"{location}: {exc.kind}: {exc.detail}"
+            return result
+        result["files"] = files
+        command = [str(bin_dir / executable_name("lean")), "--version"]
+        try:
+            completed = run_bounded_command(
+                command,
+                timeout=5,
+                cwd=root,
+                max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
+                env={"PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]), "LANG": "C.UTF-8"},
+            )
+        except subprocess.TimeoutExpired:
+            result.update(status="command_failed", detail="lean --version: timeout after 5 seconds")
+            return result
+        except CommandOutputLimitExceeded as exc:
+            result.update(status="command_failed", detail=f"lean --version: {exc}")
+            return result
+        except OSError as exc:
+            result.update(
+                status="command_failed", detail=f"lean --version: {type(exc).__name__}: {exc}"[:500]
+            )
+            return result
+        lines = completed.stdout.splitlines()
+        banner = lines[0][:200] if lines else ""
+        result["lean_version"] = banner
+        if completed.returncode != 0:
+            result.update(
+                status="command_failed", detail=f"lean --version exited {completed.returncode}"
+            )
+            return result
+        version = _version_triple(_LEAN_VERSION_BANNER_RE.match(banner))
+        if version is None:
+            if banner.startswith("Lean (version "):
+                result.update(
+                    status="unsupported_toolchain",
+                    detail="lean --version names no stable X.Y.Z release",
+                )
+            else:
+                result.update(
+                    status="command_failed", detail="lean --version printed no Lean version banner"
+                )
+            return result
+        result["version"] = _version_text(version)
+        if version < COMPARATOR_MIN_LEAN_VERSION:
+            result.update(
+                status="unsupported_toolchain",
+                detail=f"Lean {_version_text(version)} is older than v4.35.0",
+            )
+            return result
+        result["status"] = "ok"
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(status="tool_unavailable", detail=f"{type(exc).__name__}: {exc}"[:500])
+    return result
+
+
+def _comparator_toolchain_rows() -> dict[str, Any]:
+    """``toolchains``: a row per ``$ELAN_HOME/toolchains/leanprover--lean4---*`` directory.
+
+    The rows come from names and listings only: ``name`` decodes the elan
+    directory, ``version`` is set for a stable release, ``supported`` means
+    v4.35.0 or later, and ``has_comparator`` means bin/ holds lake, lean,
+    leanchecker and leanexport as regular files. Nothing runs. A listing that
+    cannot be made gives no rows and ``toolchains_error``.
+    """
+
+    try:
+        elan_home = os.environ.get("ELAN_HOME", "").strip()
+        if elan_home and not os.path.isabs(elan_home):
+            return {"toolchains": [], "toolchains_error": "ELAN_HOME must be an absolute path"}
+        directory = Path(elan_home) if elan_home else _home_directory() / ".elan"
+        directory = directory / "toolchains"
+        try:
+            with os.scandir(directory) as entries:
+                names = [
+                    entry.name
+                    for entry in entries
+                    if entry.name.startswith(_ELAN_LEAN4_PREFIX) and entry.is_dir()
+                ]
+        except FileNotFoundError:
+            return {"toolchains": []}
+        rows = []
+        for name in names:
+            spec = "leanprover/lean4:" + name[len(_ELAN_LEAN4_PREFIX):]
+            version = parse_lean_version(spec)
+            rows.append(
+                {
+                    "name": spec,
+                    "version": _version_text(version) if version else None,
+                    "supported": version is not None and version >= COMPARATOR_MIN_LEAN_VERSION,
+                    "has_comparator": all(
+                        _regular_file(directory / name / "bin" / executable_name(binary))
+                        for binary in COMPARATOR_TOOLCHAIN_BINARIES
+                    ),
+                }
+            )
+        return {"toolchains": sorted(rows, key=lambda row: row["name"])}
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"toolchains": [], "toolchains_error": f"{type(exc).__name__}: {exc}"[:500]}
+
+
+def _newest_local_bwrap() -> str:
+    """The highest ``~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap`` that is executable, or ""."""
+
+    opt = _home_directory() / ".local" / "opt"
+    try:
+        with os.scandir(opt) as entries:
+            names = sorted(entry.name for entry in entries)
+    except FileNotFoundError:
+        return ""
+    best: tuple[tuple[int, int, int], str] | None = None
+    for name in names:
+        version = _version_triple(_BWRAP_DIRECTORY_RE.fullmatch(name))
+        if version is None:
+            continue
+        candidate = os.path.join(opt, name, "bin", "bwrap")
+        if _executable_file_problem(candidate):
+            continue
+        if best is None or version > best[0]:
+            best = (version, candidate)
+    return best[1] if best else ""
+
+
+def _bwrap_install_version(path: str) -> tuple[int, int, int] | None:
+    """X.Y.Z of a ``.../bubblewrap-X.Y.Z/bin/bwrap`` path, or None."""
+
+    binary = Path(path)
+    if binary.name != "bwrap" or binary.parent.name != "bin":
+        return None
+    return _version_triple(_BWRAP_DIRECTORY_RE.fullmatch(binary.parent.parent.name))
+
+
+def _version_triple(match: re.Match[str] | None) -> tuple[int, int, int] | None:
+    if match is None:
+        return None
+    try:
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:  # a component past sys.get_int_max_str_digits()
+        return None
+
+
+def _version_text(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _home_directory() -> Path:
+    """Path.home(), which must be absolute; RuntimeError when it is unknown."""
+
+    home = Path.home()
+    if not home.is_absolute():
+        raise ValueError(f"the home directory {home} is not an absolute path")
+    return home
+
+
+def _executable_file_problem(path: str) -> str:
+    """"" when ``path`` is an executable regular file, else what is wrong with it."""
+
+    try:
+        info = os.stat(path)
+    except OSError as exc:
+        return f"{path} cannot be used: {exc.strerror or type(exc).__name__}"
+    if not stat.S_ISREG(info.st_mode):
+        return f"{path} is not a regular file"
+    if not os.access(path, os.X_OK):
+        return f"{path} is not executable"
+    return ""
+
+
+def _regular_file(path: str | Path) -> bool:
+    """A regular file that is not a symlink."""
+
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
+def _plain_directory(path: str | Path) -> bool:
+    """A directory that is not a symlink."""
+
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except (OSError, ValueError):
+        return False
 
 
 def scan_input(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dict[str, Any]:
@@ -1476,8 +2005,13 @@ def run_bounded_command(
     cwd: Path | None = None,
     max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     capture_evidence: bool = False,
+    env: dict[str, str] | None = None,
 ) -> BoundedCommandResult:
-    """Run one isolated child while hard-capping combined stdout and stderr."""
+    """Run one isolated child while hard-capping combined stdout and stderr.
+
+    ``env``, when given, is the child's whole environment; otherwise the child
+    inherits this process's environment.
+    """
 
     if timeout <= 0:
         raise ValueError("timeout must be positive")
@@ -1496,6 +2030,7 @@ def run_bounded_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=str(cwd) if cwd else None,
+        env=env,
         **group_options,
     )
     if process.stdout is None or process.stderr is None:
