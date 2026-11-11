@@ -11,7 +11,9 @@ exit mapping for ``scan`` and ``verify --strict`` (strict's "typecheck
 never ran is a failure" rule is pinned with a fake lean tool). The fake
 tool is a stub script spawned from the test tempdir, so the one test that
 executes it additionally assumes an exec-permitted temp directory
-(standard on mainstream CI); no test here is ever skip-gated.
+(standard on mainstream CI). No test here is gated on an installed
+toolchain; the few that need POSIX fakes or symlinks skip elsewhere with a
+stated reason.
 """
 
 from __future__ import annotations
@@ -1623,6 +1625,147 @@ class AuditCliTests(unittest.TestCase):
             self.assertTrue(
                 any("project-controlled" in note for note in selected["limitations"]),
                 selected,
+            )
+
+    def test_the_checker_order_is_documented(self) -> None:
+        skill = (
+            REPO_ROOT / "canonical" / "skills" / "lean-strict-verification-gate" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "1. the executable `AAS_LEAN4CHECKER` selects explicitly;",
+            "2. `lean4checker` on `PATH`;",
+            "3. `leanchecker` beside the selected `lake`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(phrase in skill, f"SKILL.md does not mention {phrase!r}")
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "on Windows the toolchain checker is leanchecker.exe and these fakes are .cmd wrappers",
+    )
+    def test_kernel_check_uses_the_leanchecker_beside_lake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._mark_basic_built(root)
+            toolchain_bin = Path(tmp) / "toolchain" / "bin"
+            toolchain_bin.mkdir(parents=True)
+            lake = _fake_tool(toolchain_bin, "lake", _FAKE_LAKE_ENV)
+            checker = _fake_tool(toolchain_bin, "leanchecker", "import sys\nsys.exit(0)\n")
+            home = Path(tmp) / "home"
+            home.mkdir()
+            environment = {"AAS_LAKE": str(lake), "HOME": str(home), "USERPROFILE": str(home)}
+            with mock.patch.dict(os.environ, environment), mock.patch.object(
+                gate.shutil, "which", return_value=None
+            ):
+                os.environ.pop("AAS_LEAN4CHECKER", None)
+                os.environ.pop("ELAN_HOME", None)
+                payload = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=60,
+                    modules=[],
+                    strict=True,
+                )
+                doctor = gate.doctor_payload(project_root=root, probe=False)
+            expected = {
+                "status": "available",
+                "path": str(checker.resolve()),
+                "source": "toolchain",
+                "name": "leanchecker",
+            }
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["kernel_check_status"], "kernel_checked", payload)
+            self.assertEqual(
+                payload["modules"], [{"module": "Proj.Basic", "status": "kernel_checked"}]
+            )
+            self.assertEqual(
+                payload["tool_status"]["lean4checker"],
+                {**expected, "inside_project_root": False},
+            )
+            self.assertEqual(payload["runner"], "lake-env-lean4checker")
+            self.assertEqual(doctor["tool_status"]["lean4checker"], expected)
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "on Windows the toolchain checker is leanchecker.exe and these fakes are .cmd wrappers",
+    )
+    def test_toolchain_leanchecker_never_overrides_or_comes_from_the_project(self) -> None:
+        """A leanchecker beside a project-local lake is never picked; the earlier choices win.
+
+        This is a regression check: before the toolchain checker existed no
+        checker was ever looked for beside lake, so every part held already.
+        AAS_LEAN4CHECKER and then lean4checker on PATH still come first.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._mark_basic_built(root)
+            project_bin = root / ".lake" / "build" / "bin"
+            project_bin.mkdir(parents=True)
+            project_lake = _fake_tool(project_bin, "lake", _FAKE_LAKE_ENV)
+            _fake_tool(project_bin, "leanchecker", "import sys\nsys.exit(0)\n")
+            with mock.patch.dict(os.environ, {"AAS_LAKE": str(project_lake)}), mock.patch.object(
+                gate.shutil, "which", return_value=None
+            ):
+                os.environ.pop("AAS_LEAN4CHECKER", None)
+                local = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=60,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertEqual(local["kernel_check_status"], "tool_unavailable", local)
+            self.assertEqual(
+                local["tool_status"]["lean4checker"],
+                {"status": "tool_unavailable", "path": "", "source": "not-found"},
+            )
+
+            toolchain_bin = Path(tmp) / "toolchain" / "bin"
+            toolchain_bin.mkdir(parents=True)
+            lake = _fake_tool(toolchain_bin, "lake", _FAKE_LAKE_ENV)
+            _fake_tool(toolchain_bin, "leanchecker", "import sys\nsys.exit(1)\n")
+            explicit_dir = Path(tmp) / "explicit"
+            explicit_dir.mkdir()
+            explicit = _fake_tool(explicit_dir, "lean4checker", "import sys\nsys.exit(0)\n")
+            with mock.patch.dict(
+                os.environ, {"AAS_LAKE": str(lake), "AAS_LEAN4CHECKER": str(explicit)}
+            ), mock.patch.object(gate.shutil, "which", return_value=None):
+                chosen = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=60,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertEqual(chosen["kernel_check_status"], "kernel_checked", chosen)
+            self.assertEqual(chosen["tool_status"]["lean4checker"]["source"], "env")
+            self.assertEqual(
+                chosen["tool_status"]["lean4checker"]["path"], str(explicit.resolve())
+            )
+
+            def which(name: str, *args: object, **kwargs: object) -> str | None:
+                return str(explicit) if name == "lean4checker" else None
+
+            with mock.patch.dict(os.environ, {"AAS_LAKE": str(lake)}), mock.patch.object(
+                gate.shutil, "which", side_effect=which
+            ):
+                os.environ.pop("AAS_LEAN4CHECKER", None)
+                on_path = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=60,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertEqual(on_path["kernel_check_status"], "kernel_checked", on_path)
+            self.assertEqual(
+                on_path["tool_status"]["lean4checker"],
+                {
+                    "status": "available",
+                    "path": str(explicit.resolve()),
+                    "source": "path",
+                    "inside_project_root": False,
+                },
             )
 
     def test_kernel_check_reports_each_module_replay(self) -> None:

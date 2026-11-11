@@ -163,14 +163,26 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   --strict
 ```
 
-`kernel-check` replays the compiled environment through `lean4checker`, which
-re-checks proof terms against the kernel instead of trusting the build cache.
-It requires `lean4checker` on `PATH` or explicitly selected with
-`AAS_LEAN4CHECKER`. The gate never auto-selects the project's
-`.lake/build/bin/lean4checker`: an artifact under review must not silently
-supply its own certifying checker. An explicitly selected checker inside the
-project root remains allowed, but the payload marks it as project-controlled
-rather than independent.
+`kernel-check` replays the compiled environment through a kernel checker,
+which re-checks proof terms against the kernel instead of trusting the build
+cache. The gate takes the first checker it finds, in this order:
+
+1. the executable `AAS_LEAN4CHECKER` selects explicitly;
+2. `lean4checker` on `PATH`;
+3. `leanchecker` beside the selected `lake`, which Lean toolchains ship from
+   v4.28. Under elan this is the `leanchecker` proxy, which follows the
+   project's `lean-toolchain`; for a project on an older toolchain the proxy
+   fails, and the replay reads as `kernel_check_failed` rather than
+   `tool_unavailable`.
+
+`tool_status.lean4checker` reports the choice: `source` is `env`, `path` or
+`toolchain`, and a toolchain checker also carries `name: leanchecker`. The
+gate never auto-selects a checker inside the project root, such as the
+project's `.lake/build/bin/lean4checker` or a `leanchecker` beside a
+project-local `lake`: an artifact under review must not silently supply its
+own certifying checker. An explicitly selected checker inside the project
+root remains allowed, but the payload marks it as project-controlled rather
+than independent.
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -207,10 +219,10 @@ shares that budget across all requested modules. Exceeding it fails closed as
 `command_failed`; an axiom report truncated by the cap is never parsed as
 evidence.
 
-Lean, Lake, `lean4checker`, their launchers, the process environment, and Lake's
-dependency resolution are trusted execution inputs. The payload reports tool
-paths, but this helper does not content-attest those executables or the external
-dependency closure.
+Lean, Lake, `lean4checker` or `leanchecker`, their launchers, the process
+environment, and Lake's dependency resolution are trusted execution inputs. The
+payload reports tool paths, but this helper does not content-attest those
+executables or the external dependency closure.
 
 For both verbs `--strict` means an audit that never ran is a failure. Without
 it, a missing toolchain reports `tool_unavailable` and exits 0, which callers

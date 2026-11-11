@@ -336,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
 
     kernel = sub.add_parser(
         "kernel-check",
-        help="replay compiled modules through the kernel with lean4checker",
+        help="replay compiled modules through the kernel with lean4checker or the toolchain's leanchecker",
     )
     kernel.add_argument("--input", required=True, help="project directory to re-check")
     kernel.add_argument("--project-root", help="lake workspace root (defaults to --input)")
@@ -350,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     kernel.add_argument(
         "--strict",
         action="store_true",
-        help="require a completed kernel replay for exit 0: a missing lean4checker is a failure",
+        help="require a completed kernel replay for exit 0: a missing checker is a failure",
     )
 
     freeze = sub.add_parser(
@@ -586,15 +586,20 @@ def add_scan_args(parser: argparse.ArgumentParser) -> None:
 
 
 def doctor_payload(*, project_root: Path, probe: bool) -> dict[str, Any]:
+    # lake first: kernel-check falls back to the leanchecker beside it.
+    lake = tool_status("lake")
     payload = {
         "status": "ok",
         "tool_status": {
             "lean": tool_status("lean"),
-            "lake": tool_status("lake"),
+            "lake": lake,
             "elan": tool_status("elan"),
             # Reported so an operator can see that kernel-check has no checker
             # to run, rather than discovering it as a tool_unavailable verdict.
-            "lean4checker": lean4checker_status(),
+            "lean4checker": lean4checker_status(
+                lake_path=lake["path"] if lake["status"] == "available" else "",
+                project_root=project_root,
+            ),
             "npm": tool_status("npm"),
             "npx": tool_status("npx"),
             "pip": tool_status("pip"),
@@ -2975,8 +2980,13 @@ def axiom_audit_payload(
     return payload
 
 
-def lean4checker_status() -> dict[str, Any]:
-    """Resolve an operator-selected checker without trusting project build output."""
+def lean4checker_status(*, lake_path: str = "", project_root: Path | None = None) -> dict[str, Any]:
+    """Resolve an operator-selected checker without trusting project build output.
+
+    The order is AAS_LEAN4CHECKER, then lean4checker on PATH, then the
+    leanchecker that Lean toolchains ship beside lake (from v4.28), taken only
+    beside ``lake_path`` and never from inside ``project_root``.
+    """
     env_var = TOOL_ENV["lean4checker"]
     env_value = os.environ.get(env_var, "").strip()
     if env_value:
@@ -2990,7 +3000,38 @@ def lean4checker_status() -> dict[str, Any]:
     path = resolve_candidate("lean4checker")
     if path:
         return {"status": "available", "path": path, "source": "path"}
+    toolchain_checker = _leanchecker_beside(lake_path, project_root)
+    if toolchain_checker:
+        return {
+            "status": "available",
+            "path": toolchain_checker,
+            "source": "toolchain",
+            "name": "leanchecker",
+        }
     return {"status": "tool_unavailable", "path": "", "source": "not-found"}
+
+
+def _leanchecker_beside(lake_path: str, project_root: Path | None) -> str:
+    """The resolved leanchecker next to ``lake_path``, or "" when absent or project-local.
+
+    A project must not supply its own certifying checker, so a leanchecker
+    that resolves to ``project_root`` or below it is never selected.
+    """
+
+    if not lake_path:
+        return ""
+    try:
+        resolved = resolve_candidate(str(Path(lake_path).parent / executable_name("leanchecker")))
+        if not resolved:
+            return ""
+        if project_root is not None:
+            root = Path(os.path.realpath(project_root))
+            checker = Path(resolved)
+            if checker == root or root in checker.parents:
+                return ""
+        return resolved
+    except (OSError, RuntimeError, ValueError):
+        return ""
 
 
 def kernel_check_payload(
@@ -3017,14 +3058,14 @@ def kernel_check_payload(
         "kernel_check_stdout": "",
         "kernel_check_stderr": "",
         "limitations": [
-            "a passing lake build is not a kernel replay: only lean4checker re-checks proof terms",
+            "a passing lake build is not a kernel replay: only lean4checker or leanchecker re-checks proof terms",
             "modules are replayed as compiled, so the audit inherits the build's own toolchain",
             "sources Lake did not build are skipped, so they are never replayed",
             "--timeout is the total budget for every module, not a per-module allowance",
             "source-newer-than-olean is an mtime preflight, not proof that compiled content came from source",
             "explicit dependency modules outside the project root are resolved by Lake but not content-hashed",
             "pre/post hashes detect endpoint differences, not a change-and-restore between snapshots",
-            "Lean, Lake, lean4checker, their launchers, environment, and dependency resolution are trusted inputs, not content-attested",
+            "Lean, Lake, lean4checker or leanchecker, their launchers, environment, and dependency resolution are trusted inputs, not content-attested",
         ],
     }
 
@@ -3116,7 +3157,10 @@ def kernel_check_payload(
         )
 
     lake = tool_status("lake")
-    checker = lean4checker_status()
+    checker = lean4checker_status(
+        lake_path=lake["path"] if lake["status"] == "available" else "",
+        project_root=root,
+    )
     if checker["status"] == "available":
         checker_path = Path(checker["path"])
         checker["inside_project_root"] = checker_path == root or root in checker_path.parents
@@ -3128,7 +3172,7 @@ def kernel_check_payload(
     if lake["status"] != "available" or checker["status"] != "available":
         payload["kernel_check_status"] = "tool_unavailable"
         payload["limitations"].append(
-            "lean4checker or lake was not found: no kernel replay evidence was produced"
+            "lean4checker, leanchecker or lake was not found: no kernel replay evidence was produced"
         )
         return payload
 
