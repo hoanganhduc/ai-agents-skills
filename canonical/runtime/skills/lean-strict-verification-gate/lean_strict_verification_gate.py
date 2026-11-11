@@ -128,6 +128,43 @@ KERNEL_CHECK_MAX_MODULES = 50
 # audit harness would be a build-time error, never a proof dependency.
 NON_MODULE_STEMS = {"lakefile"}
 SOURCE_UNREADABLE_PREFIX = "__AAS_SOURCE_UNREADABLE__:"
+# `lake comparator` ships with Lean from v4.35.0. An older release, a release
+# candidate or a nightly gives no verdict.
+COMPARATOR_MIN_LEAN_VERSION = (4, 35, 0)
+DEFAULT_COMPARATOR_TOOLCHAIN = "leanprover/lean4:v4.35.0"
+# A frozen challenge is the record below plus a byte-for-byte copy of the
+# reviewed statement file. CHALLENGE_MODULE is the module name the comparator
+# workspace gives that copy.
+CHALLENGE_RECORD_SCHEMA = "aas_lean_challenge.v1"
+CHALLENGE_MODULE = "AASChallenge"
+CHALLENGE_FILE = "Challenge.lean"
+CHALLENGE_RECORD_FILE = "challenge.json"
+CHALLENGE_SOURCE_MAX_BYTES = 1024 * 1024
+# The toolchain's own libraries: the only imports a core challenge may use.
+CORE_IMPORT_ROOTS = ("Init", "Lake", "Lean", "Std")
+CHALLENGE_RECORD_KEYS = frozenset(
+    {
+        "schema_version",
+        "challenge_sha256",
+        "challenge_module",
+        "theorem_names",
+        "definition_names",
+        "permitted_axioms",
+        "paranoid",
+        "toolchain",
+        "workspace",
+        "allowed_import_roots",
+    }
+)
+# `leanprover/lean4:vX.Y.Z` names one stable release, and a stable release's
+# `lean --version` banner starts `Lean (version X.Y.Z, `. The digits are ASCII
+# on purpose: \d also matches other scripts' digits, which int() accepts.
+_LEAN_TOOLCHAIN_SPEC_RE = re.compile(
+    r"leanprover/lean4:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+)
+_LEAN_VERSION_BANNER_RE = re.compile(
+    r"Lean \(version (0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*), "
+)
 
 
 class BoundedCommandResult(tuple):
@@ -187,6 +224,27 @@ def is_compiler_trust_axiom(name: str) -> bool:
     return name in COMPILER_TRUST_AXIOMS or any(
         pattern.search(name) for pattern in COMPILER_TRUST_AXIOM_PATTERNS
     )
+
+
+def parse_lean_version(value: object) -> tuple[int, int, int] | None:
+    """(major, minor, patch) of one stable Lean release, or None.
+
+    Accepts exactly a ``leanprover/lean4:vX.Y.Z`` toolchain spec or a
+    ``lean --version`` banner that starts ``Lean (version X.Y.Z, ``. Release
+    candidates, nightlies, leading zeros and non-strings give None. A release
+    is supported for ``lake comparator`` when its triple is at least
+    COMPARATOR_MIN_LEAN_VERSION.
+    """
+
+    if not isinstance(value, str):
+        return None
+    match = _LEAN_TOOLCHAIN_SPEC_RE.fullmatch(value) or _LEAN_VERSION_BANNER_RE.match(value)
+    if match is None:
+        return None
+    try:
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:  # a component past sys.get_int_max_str_digits()
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -269,6 +327,53 @@ def main(argv: list[str] | None = None) -> int:
         "--strict",
         action="store_true",
         help="require a completed kernel replay for exit 0: a missing lean4checker is a failure",
+    )
+
+    freeze = sub.add_parser(
+        "challenge-freeze",
+        help="freeze a reviewed Lean statement as the challenge lake comparator judges against",
+    )
+    freeze.add_argument("--source", required=True, help="Lean file holding the reviewed statements")
+    freeze.add_argument(
+        "--theorem",
+        action="append",
+        required=True,
+        help="fully qualified theorem a solution must prove; repeatable",
+    )
+    freeze.add_argument(
+        "--definition",
+        action="append",
+        default=[],
+        help="definition hole; repeatable, and always refused: a challenge names theorems only",
+    )
+    freeze.add_argument(
+        "--permitted-axiom",
+        action="append",
+        default=[],
+        help=(
+            f"axiom a solution may use; repeatable, and replaces the default {sorted(SANCTIONED_AXIOMS)}. "
+            f"{sorted(NEVER_SANCTIONED_AXIOMS)} is never permitted"
+        ),
+    )
+    freeze.add_argument(
+        "--allow-compiler-trust",
+        action="store_true",
+        help="let --permitted-axiom name a compiler-trust axiom such as Lean.ofReduceBool",
+    )
+    freeze.add_argument(
+        "--paranoid",
+        action="store_true",
+        help="record that the comparator also runs every external kernel bundled with Lean",
+    )
+    freeze.add_argument(
+        "--toolchain",
+        default=DEFAULT_COMPARATOR_TOOLCHAIN,
+        help=f"stable Lean release to judge with, v4.35.0 or later (default {DEFAULT_COMPARATOR_TOOLCHAIN})",
+    )
+    freeze.add_argument(
+        "--out",
+        required=True,
+        help="directory for Challenge.lean and challenge.json: absent under an existing parent, or empty",
     )
 
     args = parser.parse_args(argv)
@@ -434,6 +539,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.strict:
             return 0 if payload["ok"] and payload["kernel_check_status"] == "kernel_checked" else 1
         return 0 if payload["ok"] and payload["kernel_check_status"] != "command_failed" else 1
+    if args.command == "challenge-freeze":
+        payload = challenge_freeze_payload(
+            Path(args.source),
+            out_dir=Path(args.out),
+            theorems=list(args.theorem),
+            definitions=list(args.definition),
+            permitted_axioms=list(args.permitted_axiom),
+            allow_compiler_trust=bool(args.allow_compiler_trust),
+            paranoid=bool(args.paranoid),
+            toolchain=args.toolchain,
+        )
+        emit(payload)
+        return 0 if payload["ok"] else 1
     raise AssertionError(args.command)
 
 
@@ -614,11 +732,14 @@ def _stable_regular_file_read(
 
     descriptor: int | None = None
     try:
+        # O_NONBLOCK: a FIFO swapped in after the lstat above must not block
+        # the open; the fstat below then refuses it. Regular files ignore it.
         descriptor = os.open(
             path,
             os.O_RDONLY
             | getattr(os, "O_NOFOLLOW", 0)
             | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
             | getattr(os, "O_BINARY", 0),
         )
         before = os.fstat(descriptor)
@@ -2564,6 +2685,284 @@ def kernel_check_payload(
         )
     payload["kernel_check_status"] = "kernel_checked" if payload["ok"] else "kernel_check_failed"
     return payload
+
+
+def challenge_freeze_payload(
+    source: Path,
+    *,
+    out_dir: Path,
+    theorems: list[str],
+    definitions: list[str],
+    permitted_axioms: list[str],
+    allow_compiler_trust: bool,
+    paranoid: bool,
+    toolchain: str,
+) -> dict[str, Any]:
+    """Freeze a reviewed challenge: copy its bytes and pin a comparator record.
+
+    ``out_dir`` receives ``Challenge.lean``, the exact source bytes, and
+    ``challenge.json``, the closed ``aas_lean_challenge.v1`` record. The record
+    holds no timestamp, so the same inputs always give the same bytes, and
+    their sha256 (``record_sha256``) is the pin a caller keeps. A refusal is a
+    finding and leaves nothing behind. No Lean runs here: the checks read
+    names and bytes, and whether the statement says what the claim means
+    stays a review step.
+    """
+
+    payload: dict[str, Any] = {
+        "schema_version": "lean-strict-verification-gate.v1",
+        "ok": False,
+        "mode": "challenge-freeze",
+        "input": str(source),
+        "out": str(out_dir),
+        "findings": [],
+        "challenge_record": "",
+        "challenge_file": "",
+        "record_sha256": "",
+        "challenge_sha256": "",
+        "advisory_scan": {},
+        "limitations": [
+            "statement fidelity, whether the challenge states the intended claim, "
+            "still needs a human or different-family review",
+            "the import and construct checks and advisory_scan are an advisory preflight; "
+            "a proof supports a claim only when a host-run lake comparator accepts it "
+            "against this record",
+            "theorem names are found by a line walk over the source, not by Lean",
+            "the record pins the challenge bytes and the comparator options, "
+            "not the toolchain's bytes",
+        ],
+    }
+    findings: list[dict[str, str]] = payload["findings"]
+    created_files: list[Path] = []
+    created_dirs: list[Path] = []
+    try:
+        version = (
+            parse_lean_version(toolchain)
+            if isinstance(toolchain, str) and _LEAN_TOOLCHAIN_SPEC_RE.fullmatch(toolchain)
+            else None
+        )
+        if version is None or version < COMPARATOR_MIN_LEAN_VERSION:
+            findings.append(
+                {
+                    "kind": "unsupported_toolchain",
+                    "detail": (
+                        f"{toolchain}: lake comparator needs a stable "
+                        "leanprover/lean4:vX.Y.Z release, v4.35.0 or later"
+                    ),
+                }
+            )
+
+        axioms = sorted(set(permitted_axioms)) if permitted_axioms else sorted(SANCTIONED_AXIOMS)
+        for axiom in axioms:
+            if axiom in SANCTIONED_AXIOMS:
+                continue
+            if axiom in NEVER_SANCTIONED_AXIOMS:
+                findings.append(
+                    {"kind": "never_sanctioned_axiom", "detail": f"{axiom} can never be permitted"}
+                )
+            elif valid_lean_name(axiom) and is_compiler_trust_axiom(axiom):
+                if not allow_compiler_trust:
+                    findings.append(
+                        {
+                            "kind": "compiler_trust_not_allowed",
+                            "detail": f"{axiom} trusts the compiler; it needs --allow-compiler-trust",
+                        }
+                    )
+            else:
+                findings.append(
+                    {"kind": "never_sanctioned_axiom", "detail": f"{axiom} is not a sanctioned axiom"}
+                )
+
+        # A definition hole lets the solution choose the definition itself.
+        for name in sorted(set(definitions)):
+            findings.append(
+                {
+                    "kind": "definition_hole_not_allowed",
+                    "detail": f"{name}: a challenge names theorems only, never definition holes",
+                }
+            )
+
+        theorem_names = sorted(set(theorems))
+        if not theorem_names:
+            findings.append({"kind": "theorem_not_declared", "detail": "no theorem was named"})
+        for name in theorem_names:
+            if not valid_lean_name(name):
+                findings.append(
+                    {"kind": "theorem_not_declared", "detail": f"{name} is not a valid Lean name"}
+                )
+
+        source_bytes = b""
+        text: str | None = None
+        try:
+            source_bytes = stable_regular_file_bytes(source, max_bytes=CHALLENGE_SOURCE_MAX_BYTES)
+            text = source_bytes.decode("utf-8")
+        except StableReadError as exc:
+            findings.append({"kind": "source_unreadable", "detail": f"{exc.kind}: {exc.detail}"})
+        except UnicodeDecodeError:
+            findings.append(
+                {"kind": "source_unreadable", "detail": "invalid_utf8: the source is not valid UTF-8"}
+            )
+
+        imports: list[str] = []
+        if text is not None:
+            stripped = strip_comments_and_strings(text)
+            for module in imported_modules(stripped):
+                if valid_lean_name(module) and module.split(".", 1)[0] in CORE_IMPORT_ROOTS:
+                    imports.append(module)
+                else:
+                    findings.append(
+                        {"kind": "challenge_import_not_trusted", "detail": module or "<missing>"}
+                    )
+            for pattern_name, pattern in SAFETY_PATTERNS.items():
+                if pattern.search(stripped):
+                    findings.append({"kind": "challenge_unsafe_construct", "detail": pattern_name})
+            declarations = scan_declarations(text)
+            for name in theorem_names:
+                if valid_lean_name(name) and name not in declarations.names:
+                    findings.append(
+                        {
+                            "kind": "theorem_not_declared",
+                            "detail": (
+                                f"{name} is not declared as a public theorem in the source "
+                                f"(unparsed declaration lines: {len(declarations.unparsed)})"
+                            ),
+                        }
+                    )
+
+        out_info, out_problem = _challenge_output_dir(out_dir)
+        if out_problem:
+            findings.append({"kind": "output_dir_unusable", "detail": out_problem})
+        if findings:
+            return payload
+
+        record = {
+            "schema_version": CHALLENGE_RECORD_SCHEMA,
+            "challenge_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            "challenge_module": CHALLENGE_MODULE,
+            "theorem_names": theorem_names,
+            "definition_names": [],
+            "permitted_axioms": axioms,
+            "paranoid": bool(paranoid),
+            "toolchain": toolchain,
+            "workspace": {"kind": "core"},
+            "allowed_import_roots": list(CORE_IMPORT_ROOTS),
+        }
+        record_bytes = (
+            json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+        ).encode("ascii")
+        challenge_path = out_dir / CHALLENGE_FILE
+        record_path = out_dir / CHALLENGE_RECORD_FILE
+        try:
+            if out_info is None:
+                os.mkdir(out_dir, 0o700)
+                created_dirs.append(out_dir)
+            elif os.name == "posix":
+                os.chmod(out_dir, 0o700)
+            for target, data in ((challenge_path, source_bytes), (record_path, record_bytes)):
+                _write_new_private_file(target, data, created_files)
+        except OSError as exc:
+            _remove_created_outputs(created_files, created_dirs)
+            findings.append({"kind": "output_write_failed", "detail": str(exc)})
+            return payload
+
+        payload["advisory_scan"] = scan_path(challenge_path.absolute(), "stub", set(imports))
+        payload.update(
+            ok=True,
+            challenge_file=str(challenge_path.absolute()),
+            challenge_record=str(record_path.absolute()),
+            challenge_sha256=record["challenge_sha256"],
+            record_sha256=hashlib.sha256(record_bytes).hexdigest(),
+        )
+    except Exception as exc:  # a crash is a refusal too, and leaves nothing behind
+        _remove_created_outputs(created_files, created_dirs)
+        payload.update(
+            ok=False,
+            challenge_file="",
+            challenge_record="",
+            challenge_sha256="",
+            record_sha256="",
+            advisory_scan={},
+        )
+        findings.append(
+            {"kind": "challenge_freeze_failed", "detail": f"{type(exc).__name__}: {exc}"[:500]}
+        )
+    return payload
+
+
+def _challenge_output_dir(out_dir: Path) -> tuple[os.stat_result | None, str]:
+    """lstat ``--out``: absent under an existing directory, or an empty directory.
+
+    Returns the lstat result (None when absent) and a problem, or "" when the
+    directory can be used.
+    """
+
+    try:
+        info = os.lstat(out_dir)
+    except FileNotFoundError:
+        try:
+            parent = os.lstat(out_dir.parent)
+        except OSError as exc:
+            return None, f"the parent of --out is unusable: {exc}"
+        if stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode):
+            return None, "the parent of --out must be an existing directory, not a symlink"
+        return None, ""
+    except OSError as exc:
+        return None, f"--out cannot be examined: {exc}"
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        return info, "--out must be a directory, not a symlink or a file"
+    try:
+        with os.scandir(out_dir) as entries:
+            if next(entries, None) is not None:
+                return info, "--out must be absent or an empty directory"
+    except OSError as exc:
+        return info, f"--out cannot be listed: {exc}"
+    return info, ""
+
+
+def _write_new_private_file(path: Path, data: bytes, created: list[Path]) -> None:
+    """Create ``path`` exclusively with mode 0600 and write all of ``data``.
+
+    O_BINARY keeps CRLF bytes intact on Windows. The path joins ``created``
+    as soon as it exists, so a failed write can remove it.
+    """
+
+    descriptor = os.open(
+        path,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0),
+        0o600,
+    )
+    created.append(path)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"writing {path.name} made no progress")
+            view = view[written:]
+    finally:
+        os.close(descriptor)
+
+
+def _remove_created_outputs(files: list[Path], directories: list[Path]) -> None:
+    """Remove what one freeze created, newest first; best effort."""
+
+    for path in reversed(files):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    for path in reversed(directories):
+        try:
+            os.rmdir(path)
+        except OSError:
+            pass
+    files.clear()
+    directories.clear()
 
 
 def emit(payload: dict[str, Any]) -> None:

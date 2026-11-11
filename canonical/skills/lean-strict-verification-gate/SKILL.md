@@ -219,6 +219,93 @@ step.
 
 The helper never installs Lean, Lake, mathlib, npm packages, Python packages, credentials, services, or MCP servers. Missing Lean reports `tool_unavailable`.
 
+## Challenge freeze
+
+A Lean proof supports a claim only when a host-run `lake comparator` accepts
+it against a trusted challenge. `challenge-freeze` makes that challenge from a
+reviewed statement file: it copies the source byte for byte to
+`Challenge.lean` in `--out` and writes the record `challenge.json` beside it.
+The verb never runs Lean, needs no toolchain, and works on every platform.
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh challenge-freeze \
+  --source formal/challenge/Statement.lean \
+  --theorem main_claim \
+  --out formal/challenge/frozen
+```
+
+The record (`aas_lean_challenge.v1`) has a closed key set and no timestamp,
+so the same inputs always give the same bytes:
+
+- `challenge_sha256`: the sha256 of `Challenge.lean`;
+- `challenge_module`: `AASChallenge`, the module name the comparator
+  workspace gives the frozen copy;
+- `theorem_names`: the fully qualified names given with `--theorem`
+  (repeatable, at least one);
+- `definition_names`: always empty;
+- `permitted_axioms`: `propext`, `Classical.choice` and `Quot.sound`, unless
+  `--permitted-axiom` (repeatable) names the set instead;
+- `paranoid`: `--paranoid` (off by default) asks the comparator to run every
+  external kernel bundled with Lean as well;
+- `toolchain`: `--toolchain`, by default `leanprover/lean4:v4.35.0`;
+- `workspace`: `{"kind": "core"}`;
+- `allowed_import_roots`: `Init`, `Lake`, `Lean` and `Std`;
+- `schema_version`.
+
+Lists are sorted and de-duplicated. The JSON has sorted keys, compact
+separators and a trailing newline. The payload reports `record_sha256`, the
+sha256 of the `challenge.json` bytes, and that value is the pin: keep it, and
+check the record against it before any judgment. `--out` must be absent under
+an existing parent directory, or an empty directory. On POSIX the directory
+becomes `0700` and both files `0600`.
+
+On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
+
+- `unsupported_toolchain`: `--toolchain` is not a stable
+  `leanprover/lean4:vX.Y.Z` release at v4.35.0 or later, for example an older
+  release, a release candidate or a nightly;
+- `never_sanctioned_axiom`: `sorryAx`, which `--allow-compiler-trust` does not
+  change, or an axiom that is neither sanctioned nor compiler trust;
+- `compiler_trust_not_allowed`: a compiler-trust axiom such as
+  `Lean.ofReduceBool` without `--allow-compiler-trust`;
+- `definition_hole_not_allowed`: any `--definition`. A definition hole lets
+  the solution choose the definition, so a challenge names theorems only;
+- `theorem_not_declared`: a `--theorem` that the declaration walk does not
+  find as a public `theorem` or `lemma` under that fully qualified name. A
+  `def`, a `private` theorem, a commented-out one, one on a line the walk
+  cannot read, and a name with `«»` escapes are all refused; the detail counts
+  the unread lines;
+- `source_unreadable`: the source is missing, a symlink, not a regular file,
+  larger than 1 MiB, or not UTF-8;
+- `challenge_import_not_trusted`: an import outside `allowed_import_roots`,
+  such as `Mathlib`, an `import` that names no module, or a module name with
+  `«»` escapes;
+- `challenge_unsafe_construct`: a hit of the scanner's safety patterns, such
+  as `#eval` or `run_cmd`;
+- `output_dir_unusable`: `--out` is a symlink, a file or a non-empty
+  directory, or its parent is missing;
+- `output_write_failed`: a write failed, and what the run created is removed;
+- `challenge_freeze_failed`: an unexpected error, after which nothing is left
+  behind.
+
+A `sorry` in the challenge is expected: a challenge states theorems and does
+not prove them. The payload's `advisory_scan` is the `stub`-stage scan of the
+frozen file and never changes the verdict.
+
+Freezing checks names and bytes, not meaning. Whether the challenge states the
+claim it stands for is still a review by a human or by a model of a different
+family. The theorem names come from the same line walk as `axiom-audit`, not
+from Lean, and the record pins the challenge and the comparator options, not
+the toolchain's bytes.
+
+The comparator exports and compares every permitted axiom from both the
+challenge and the solution. Lean v4.35.0 no longer declares
+`Lean.ofReduceBool`, `Lean.ofReduceNat` or `Lean.trustCompiler`, and
+`native_decide` names a new axiom for each declaration, so the export of such
+an axiom fails and the comparator exits 1. A record that permits a
+compiler-trust axiom is therefore written but cannot lead to an acceptance.
+
 ## Blocking Policy
 
 Before any typecheck, the scanner blocks active:
