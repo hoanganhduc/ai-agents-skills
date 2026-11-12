@@ -586,12 +586,11 @@ challenge bytes, the solution files exactly as the checks read them, and
   closure, and whose `globs` name `AASSolution` and each of those modules.
   The globs matter: by default Lake builds each root's own module, such as a
   module `Sol` that does not exist for `Sol.Main`.
-- `AASSolution.lean` holds one `import` line for each `--solution-module`. It
-  imports `Init` as every module without `prelude` does, so a `prelude`
-  solution that redefines a constant of `Init` cannot be imported there.
-  Lean v4.35.0's own `primitive-issue` test, which lake comparator alone
-  rejects as a constant mismatch on `Nat.gcd`, is rejected here as
-  `build_failed`.
+- `AASSolution.lean` starts with `prelude` and holds one `import` line for
+  each `--solution-module`. `prelude` keeps `Init` out of the file itself, so
+  a `prelude` solution that declares a name `Init` also declares is judged by
+  lake comparator, not refused by the build. A solution module without
+  `prelude` still imports `Init` itself.
 - `comparator.json`, in the run directory, names `AASChallenge`,
   `AASSolution`, the record's theorems and its permitted axioms, and no
   definition holes and no extra kernels.

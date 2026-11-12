@@ -1064,7 +1064,7 @@ class ComparatorGeneratorTests(unittest.TestCase):
                 )
         self.assertEqual(
             gate.comparator_solution_source(["Sol.Main", "Sol.Lemmas", "Sol.Main"]),
-            "import Sol.Lemmas\nimport Sol.Main\n",
+            "prelude\nimport Sol.Lemmas\nimport Sol.Main\n",
         )
         self.assertEqual(
             gate.comparator_config(_core_record()),

@@ -4686,9 +4686,14 @@ def comparator_lakefile(closure_modules: list[str]) -> str:
 
 
 def comparator_solution_source(modules: list[str]) -> str:
-    """AASSolution.lean: one import line for each named solution module, sorted and distinct."""
+    """AASSolution.lean: prelude, then one import line for each named solution module.
 
-    return "".join(f"import {module}\n" for module in sorted(set(modules)))
+    The modules are sorted and distinct. prelude keeps Init out of the file
+    itself, so a prelude solution that declares a name Init also declares is
+    judged by lake comparator instead of failing to build here.
+    """
+
+    return "prelude\n" + "".join(f"import {module}\n" for module in sorted(set(modules)))
 
 
 def comparator_config(record: dict[str, Any]) -> bytes:
