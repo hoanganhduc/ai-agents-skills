@@ -718,8 +718,10 @@ change gives `command_failed`, whatever the judge said:
 - `workspace_changed_during_verification`: the workspace outside `.lake`;
 - `toolchain_changed_during_verification`: the toolchain's pinned files, or a
   stat walk of its whole tree (path, mode, size and modification time);
-- `sandbox_changed_during_verification`: the sandbox wrapper or the bwrap;
-- `challenge_changed_during_verification`: the record or its `Challenge.lean`.
+- `sandbox_changed_during_verification`: the sandbox wrapper, its
+  `wrapper.json` or the bwrap;
+- `challenge_changed_during_verification`: the record, its `Challenge.lean`
+  or the run's `comparator.json`.
 
 Once the judge has started, the run writes a receipt whatever its result:
 `receipts/<run_id>.json`, a new `0600` file holding a

@@ -5354,6 +5354,8 @@ class _ComparatorWorkspace(NamedTuple):
     log: Path
     wrapper: Path
     digests: dict[str, str]
+    config_sha256: str
+    settings_sha256: str
 
 
 def _comparator_judge(
@@ -5471,7 +5473,8 @@ def _comparator_workspace(
         created,
     )
     config = run_dir / "comparator.json"
-    _write_new_private_file(config, comparator_config(context.record), created)
+    config_bytes = comparator_config(context.record)
+    _write_new_private_file(config, config_bytes, created)
     log = run_dir / "phases.jsonl"
     _write_new_private_file(log, b"", created)
     wrapper = run_dir / "bwrap-wrapper"
@@ -5486,13 +5489,18 @@ def _comparator_workspace(
         "run_dir": str(run_dir),
         "writable": str(ws / ".lake"),
     }
-    _write_new_private_file(
-        run_dir / "wrapper.json",
-        (json.dumps(settings, sort_keys=True) + "\n").encode("ascii"),
-        created,
-    )
+    settings_bytes = (json.dumps(settings, sort_keys=True) + "\n").encode("ascii")
+    _write_new_private_file(run_dir / "wrapper.json", settings_bytes, created)
     return _ComparatorWorkspace(
-        ws, home, tmp, config, log, wrapper, _comparator_workspace_digests(ws)
+        ws,
+        home,
+        tmp,
+        config,
+        log,
+        wrapper,
+        _comparator_workspace_digests(ws),
+        hashlib.sha256(config_bytes).hexdigest(),
+        hashlib.sha256(settings_bytes).hexdigest(),
     )
 
 
@@ -5633,8 +5641,8 @@ def _comparator_integrity(
     Each change found is a finding that makes the result command_failed: the
     solution's files in --input (S1 against S0, giving post_digest), the
     workspace outside .lake (W1 against W0), the toolchain's pinned files or
-    its stat walk, the wrapper program or the bwrap binary, and the record or
-    its Challenge.lean.
+    its stat walk, the wrapper program, its wrapper.json or the bwrap binary,
+    and the record, its Challenge.lean or the run's comparator.json.
     """
 
     after: dict[str, str] = {}
@@ -5690,6 +5698,8 @@ def _comparator_integrity(
     reasons = []
     if _comparator_sha256(workspace.wrapper) != payload["sandbox"]["wrapper_sha256"]:
         reasons.append("the wrapper program")
+    if _comparator_sha256(workspace.wrapper.parent / "wrapper.json") != workspace.settings_sha256:
+        reasons.append("wrapper.json")
     if _comparator_sha256(Path(context.bwrap)) != context.bwrap_sha256:
         reasons.append("the bwrap binary")
     if reasons:
@@ -5704,6 +5714,8 @@ def _comparator_integrity(
         reasons.append("the challenge record")
     if _comparator_sha256(context.challenge_path) != context.record["challenge_sha256"]:
         reasons.append(CHALLENGE_FILE)
+    if _comparator_sha256(workspace.config) != workspace.config_sha256:
+        reasons.append("comparator.json")
     if reasons:
         problems.append(
             (
