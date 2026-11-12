@@ -895,6 +895,39 @@ class ChallengeFreezeTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
 
+    def test_out_may_sit_under_a_symlinked_parent(self) -> None:
+        """N3S12-F4: an absent --out needs an existing parent directory, symlinked or not.
+
+        os.mkdir follows a symlinked parent, as on macOS, whose /tmp is a
+        symlink to /private/tmp. A symlinked --out itself stays refused
+        (test_each_refusal_writes_nothing). That the help names no symlink
+        rule is a regression check.
+        """
+
+        with self.subTest(case="a symlinked parent"), tempfile.TemporaryDirectory() as tmp:
+            source = _write_source(tmp)
+            private = Path(tmp) / "private"
+            private.mkdir()
+            linked = Path(tmp) / "linked"
+            try:
+                linked.symlink_to(private, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"this host cannot create a symlink: {exc}")
+            payload = _freeze(source, linked / "frozen")
+            self.assertTrue(payload["ok"], payload)
+            frozen = private / "frozen"
+            self.assertEqual(sorted(os.listdir(frozen)), ["Challenge.lean", "challenge.json"])
+            self.assertEqual((frozen / "Challenge.lean").read_bytes(), source.read_bytes())
+            self.assertTrue(os.path.samefile(payload["challenge_file"], frozen / "Challenge.lean"))
+
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        self.assertIn("may be reached through a symlink", section)
+        usage = self._run_gate("challenge-freeze", "--help")
+        self.assertEqual(usage.returncode, 0, usage.stdout + usage.stderr)
+        self.assertIn("--out", usage.stdout)
+        self.assertNotIn("symlink", usage.stdout)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""

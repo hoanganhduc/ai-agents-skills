@@ -350,8 +350,10 @@ separators and a trailing newline. The payload reports `record_sha256`, the
 sha256 of the `challenge.json` bytes, and that value is the pin: keep it, and
 check the record against it before any judgment. It also reports
 `toolchain_dir`, the toolchain directory whose files were hashed. `--out`
-must be absent under an existing parent directory, or an empty directory. On
-POSIX the directory becomes `0700` and both files `0600`.
+must be absent under an existing parent directory, or an empty directory. The
+parent may be reached through a symlink, as macOS's `/tmp` is, but `--out`
+itself must not be one. On POSIX the directory becomes `0700` and both files
+`0600`.
 
 On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
 
@@ -386,7 +388,7 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   read raw strings, so `r#"a"b"#` leaves it in a string that never ends, and
   an `#eval` after it would hide from the patterns;
 - `output_dir_unusable`: `--out` is a symlink, a file or a non-empty
-  directory, or its parent is missing;
+  directory, or its parent is missing or not a directory;
 - `output_write_failed`: a write failed, and what the run created is removed;
 - `challenge_freeze_failed`: an unexpected error, after which nothing is left
   behind.

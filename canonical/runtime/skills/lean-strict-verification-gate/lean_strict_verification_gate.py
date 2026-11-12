@@ -3615,19 +3615,21 @@ def challenge_freeze_payload(
 def _challenge_output_dir(out_dir: Path) -> tuple[os.stat_result | None, str]:
     """lstat ``--out``: absent under an existing directory, or an empty directory.
 
-    Returns the lstat result (None when absent) and a problem, or "" when the
-    directory can be used.
+    The parent may be reached through a symlink, as macOS's /tmp is, since
+    os.mkdir follows it; ``--out`` itself must not be one. Returns the lstat
+    result (None when absent) and a problem, or "" when the directory can be
+    used.
     """
 
     try:
         info = os.lstat(out_dir)
     except FileNotFoundError:
         try:
-            parent = os.lstat(out_dir.parent)
+            parent = os.stat(out_dir.parent)
         except OSError as exc:
             return None, f"the parent of --out is unusable: {exc}"
-        if stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode):
-            return None, "the parent of --out must be an existing directory, not a symlink"
+        if not stat.S_ISDIR(parent.st_mode):
+            return None, "the parent of --out must be an existing directory"
         return None, ""
     except OSError as exc:
         return None, f"--out cannot be examined: {exc}"
