@@ -415,10 +415,16 @@ differ.
 
 The comparator exports and compares every permitted axiom from both the
 challenge and the solution. Lean v4.35.0 no longer declares
-`Lean.ofReduceBool`, `Lean.ofReduceNat` or `Lean.trustCompiler`, and
-`native_decide` names a new axiom for each declaration, so the export of such
-an axiom fails and the comparator exits 1. A record that permits a
-compiler-trust axiom is therefore written but cannot lead to an acceptance.
+`Lean.ofReduceBool`, `Lean.ofReduceNat` or `Lean.trustCompiler`, so the
+export of such an axiom fails and the comparator exits 1: a record that
+permits one of these three is written but can never lead to an acceptance. A
+declaration-local axiom such as `<decl>._native.native_decide.ax_N` is
+different, and so is the `_native.decide` one that `decide +native` adds.
+`Lean/Meta/Native.lean` names it with `mkAuxDeclName` after the declaration
+that uses the tactic, so a challenge and a solution that declare the same
+helper export the same axiom, and a solution that proves its theorem through
+that helper is accepted. `--allow-compiler-trust` therefore really admits
+compiler trust, and the statement review must see it.
 
 ## Blocking Policy
 

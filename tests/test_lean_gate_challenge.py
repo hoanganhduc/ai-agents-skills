@@ -1008,6 +1008,29 @@ class ChallengeFreezeTests(unittest.TestCase):
                 self.assertIn(phrase, section)
         self.assertNotIn("public `theorem` or `lemma`", section)
 
+    def test_the_compiler_trust_a_record_admits_is_documented(self) -> None:
+        """N3S12-F6: only the three fixed names can never be accepted; a native_decide axiom can.
+
+        Lean v4.35.0 declares no Lean.ofReduceBool, Lean.ofReduceNat or
+        Lean.trustCompiler, but names each native_decide axiom after the
+        declaration that uses it, so a challenge and a solution that declare
+        the same helper export the same axiom.
+        """
+
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in (
+            "can never lead to an acceptance",
+            "`<decl>._native.native_decide.ax_N`",
+            "`mkAuxDeclName`",
+            "through that helper is accepted",
+            "really admits compiler trust",
+            "the statement review must see it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+        self.assertNotIn("permits a compiler-trust axiom is therefore written", section)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""
