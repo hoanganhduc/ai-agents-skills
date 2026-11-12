@@ -1071,6 +1071,39 @@ class ChallengeFreezeTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
 
+    @unittest.skipUnless(
+        os.name == "posix", "POSIX umask and owner-only modes; Windows has no mode bits to check"
+    )
+    def test_output_modes_do_not_depend_on_the_umask(self) -> None:
+        """OC-K-4: --out is 0700 and both files 0600 whatever the umask.
+
+        The umask filters the modes os.mkdir and os.open create with. Under
+        0o400 the files came out 0200, which the owner cannot read, and under
+        0o277 a new --out came out 0500, so no file could be created in it.
+        """
+
+        for mask in (0o400, 0o277):
+            for label in ("created out", "existing empty out"):
+                with self.subTest(umask=oct(mask), case=label), tempfile.TemporaryDirectory() as tmp:
+                    source = _write_source(tmp)
+                    out = Path(tmp) / "out"
+                    if label == "existing empty out":
+                        out.mkdir()
+                    previous = os.umask(mask)
+                    try:
+                        payload = _freeze(source, out)
+                    finally:
+                        os.umask(previous)
+                    self.assertTrue(payload["ok"], payload)
+                    self.assertEqual(stat.S_IMODE(os.lstat(out).st_mode), 0o700, out)
+                    for name in ("Challenge.lean", "challenge.json"):
+                        self.assertEqual(
+                            stat.S_IMODE(os.lstat(out / name).st_mode), 0o600, out / name
+                        )
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        self.assertIn("whatever the umask", section)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""

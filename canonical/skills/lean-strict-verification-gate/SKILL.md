@@ -353,7 +353,7 @@ check the record against it before any judgment. It also reports
 must be absent under an existing parent directory, or an empty directory. The
 parent may be reached through a symlink, as macOS's `/tmp` is, but `--out`
 itself must not be one. On POSIX the directory becomes `0700` and both files
-`0600`.
+`0600`, whatever the umask.
 
 On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
 

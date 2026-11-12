@@ -3633,7 +3633,8 @@ def challenge_freeze_payload(
             if out_info is None:
                 os.mkdir(out_dir, 0o700)
                 created_dirs.append(out_dir)
-            elif os.name == "posix":
+            if os.name == "posix":
+                # The umask filters the mode os.mkdir creates with.
                 os.chmod(out_dir, 0o700)
             for target, data in ((challenge_path, source_bytes), (record_path, record_bytes)):
                 _write_new_private_file(target, data, created_files)
@@ -3703,8 +3704,10 @@ def _challenge_output_dir(out_dir: Path) -> tuple[os.stat_result | None, str]:
 def _write_new_private_file(path: Path, data: bytes, created: list[Path]) -> None:
     """Create ``path`` exclusively with mode 0600 and write all of ``data``.
 
-    O_BINARY keeps CRLF bytes intact on Windows. The path joins ``created``
-    as soon as it exists, so a failed write can remove it.
+    O_BINARY keeps CRLF bytes intact on Windows. On POSIX the descriptor is
+    set to 0600 before the write, since the umask filters the mode os.open
+    creates with. The path joins ``created`` as soon as it exists, so a
+    failed write can remove it.
     """
 
     descriptor = os.open(
@@ -3719,6 +3722,8 @@ def _write_new_private_file(path: Path, data: bytes, created: list[Path]) -> Non
     )
     created.append(path)
     try:
+        if os.name == "posix" and hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
         view = memoryview(data)
         while view:
             written = os.write(descriptor, view)
