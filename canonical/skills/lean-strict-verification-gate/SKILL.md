@@ -294,8 +294,13 @@ it. Either way the directory is refused when it is the input under review or
 lies inside it, and its `bin/` must hold `lake`, `lean`, `leanchecker` and
 `leanexport` as regular files. The elan proxies in `$ELAN_HOME/bin` are never
 used, because a proxy follows the working directory's `lean-toolchain`. The
-toolchain attestation hashes those four binaries and every `lib/lean/*.so`
-(`bin/lean` and `bin/lake` are launchers for those libraries), then reads
+toolchain attestation hashes every file directly in `bin/`, the bundled
+kernels that `--paranoid` runs (`leanchecker-paranoid`, `lean4lean`,
+`nanoda_bin`, `con-leche` and `con-ron`) among them, and every
+`lib/lean/*.so` (`bin/lean` and `bin/lake` are launchers for those
+libraries). A symlink or any other entry of `bin/` that is not a regular file
+is refused, and so is a `bin/` with more than 64 entries or a `lib/lean` with
+more than 32 libraries: the attestation never truncates. It then reads
 `lean --version` in the toolchain directory with only `PATH` and `LANG` set,
 so no `LEAN_*`, `ELAN_*` or `LAKE_*` variable can select another Lean.
 
@@ -305,7 +310,9 @@ A Lean proof supports a claim only when a host-run `lake comparator` accepts
 it against a trusted challenge. `challenge-freeze` makes that challenge from a
 reviewed statement file: it copies the source byte for byte to
 `Challenge.lean` in `--out` and writes the record `challenge.json` beside it.
-The verb never runs Lean, needs no toolchain, and works on every platform.
+The verb runs no tool, Lean included, and works on every platform, but the
+toolchain it names must be installed, because the record pins that
+toolchain's bytes.
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -316,7 +323,7 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 ```
 
 The record (`aas_lean_challenge.v1`) has a closed key set and no timestamp,
-so the same inputs always give the same bytes:
+so the same inputs and the same toolchain bytes always give the same bytes:
 
 - `challenge_sha256`: the sha256 of `Challenge.lean`;
 - `challenge_module`: `AASChallenge`, the module name the comparator
@@ -328,7 +335,12 @@ so the same inputs always give the same bytes:
   `--permitted-axiom` (repeatable) names the set instead;
 - `paranoid`: `--paranoid` (off by default) asks the comparator to run every
   external kernel bundled with Lean as well;
-- `toolchain`: `--toolchain`, by default `leanprover/lean4:v4.35.0`;
+- `toolchain`: `{"spec": ..., "files": {...}}`. `spec` is `--toolchain`, by
+  default `leanprover/lean4:v4.35.0`. `files` maps each file the toolchain
+  attestation hashes (see "Comparator readiness") to its sha256, by POSIX path
+  relative to the toolchain directory, such as `bin/lake` or
+  `lib/lean/libleanshared.so`, as read from the installed toolchain at freeze
+  time;
 - `workspace`: `{"kind": "core"}`;
 - `allowed_import_roots`: `Init`, `Lake`, `Lean` and `Std`;
 - `schema_version`.
@@ -336,15 +348,22 @@ so the same inputs always give the same bytes:
 Lists are sorted and de-duplicated. The JSON has sorted keys, compact
 separators and a trailing newline. The payload reports `record_sha256`, the
 sha256 of the `challenge.json` bytes, and that value is the pin: keep it, and
-check the record against it before any judgment. `--out` must be absent under
-an existing parent directory, or an empty directory. On POSIX the directory
-becomes `0700` and both files `0600`.
+check the record against it before any judgment. It also reports
+`toolchain_dir`, the toolchain directory whose files were hashed. `--out`
+must be absent under an existing parent directory, or an empty directory. On
+POSIX the directory becomes `0700` and both files `0600`.
 
 On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
 
 - `unsupported_toolchain`: `--toolchain` is not a stable
   `leanprover/lean4:vX.Y.Z` release at v4.35.0 or later, for example an older
   release, a release candidate or a nightly;
+- `toolchain_unavailable`: the release is not installed, or it lacks `lake`,
+  `lean`, `leanchecker` or `leanexport`; its directory is the source file's
+  directory or lies inside it; `ELAN_HOME` or `AAS_LEAN_COMPARATOR_TOOLCHAIN`
+  is not absolute; or its files cannot be hashed, for example because `bin/`
+  holds a symlink, a directory or more entries than the attestation takes.
+  The detail says which;
 - `never_sanctioned_axiom`: `sorryAx`, which `--allow-compiler-trust` does not
   change, or an axiom that is neither sanctioned nor compiler trust;
 - `compiler_trust_not_allowed`: a compiler-trust axiom such as
@@ -376,8 +395,13 @@ frozen file and never changes the verdict.
 Freezing checks names and bytes, not meaning. Whether the challenge states the
 claim it stands for is still a review by a human or by a model of a different
 family. The theorem names come from the same line walk as `axiom-audit`, not
-from Lean, and the record pins the challenge and the comparator options, not
-the toolchain's bytes.
+from Lean.
+
+The record binds the toolchain bytes seen at freeze time. Freeze on the host
+that will judge, with that toolchain installed. A changed toolchain, such as
+an update, a rebuild or an edited binary, needs a new freeze, and a record
+frozen on another host or architecture will not match, because its binaries
+differ.
 
 The comparator exports and compares every permitted axiom from both the
 challenge and the solution. Lean v4.35.0 no longer declares

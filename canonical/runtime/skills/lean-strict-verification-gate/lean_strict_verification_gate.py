@@ -183,6 +183,9 @@ COMPARATOR_TOOLCHAIN_ENV = "AAS_LEAN_COMPARATOR_TOOLCHAIN"
 # lake comparator drives the run with lake and lean, and exports and replays
 # both environments with the same toolchain's leanexport and leanchecker.
 COMPARATOR_TOOLCHAIN_BINARIES = ("lake", "lean", "leanchecker", "leanexport")
+# The attestation hashes every file in bin/, the kernels that --paranoid runs
+# among them; a bin/ with more entries is refused, not truncated.
+TOOLCHAIN_BIN_MAX_FILES = 64
 # bin/lean and bin/lake are launchers for lib/lean/*.so, so the attestation
 # hashes those libraries too; a toolchain with more is refused, not truncated.
 TOOLCHAIN_LIBRARY_MAX_FILES = 32
@@ -392,7 +395,10 @@ def main(argv: list[str] | None = None) -> int:
     freeze.add_argument(
         "--toolchain",
         default=DEFAULT_COMPARATOR_TOOLCHAIN,
-        help=f"stable Lean release to judge with, v4.35.0 or later (default {DEFAULT_COMPARATOR_TOOLCHAIN})",
+        help=(
+            "installed stable Lean release to judge with, v4.35.0 or later; the record pins "
+            f"its bin/ and lib/lean/*.so bytes (default {DEFAULT_COMPARATOR_TOOLCHAIN})"
+        ),
     )
     freeze.add_argument(
         "--out",
@@ -993,13 +999,87 @@ def resolve_comparator_toolchain(
     return result
 
 
+def toolchain_file_digests(toolchain_dir: Path | str) -> dict[str, Any]:
+    """sha256 of the files a comparator toolchain runs, by POSIX relative path.
+
+    ``files`` maps ``bin/<name>`` for every entry directly in bin/ and
+    ``lib/lean/<library>.so`` for each shared library there (bin/lean and
+    bin/lake are launchers for them) to sha256. bin/ holds lake, lean,
+    leanchecker and leanexport, which must be there, and the kernels that
+    ``--paranoid`` runs: leanchecker-paranoid, lean4lean, nanoda_bin,
+    con-leche and con-ron. A symlink or any other entry of bin/ that is not a
+    regular file is refused, and so is a bin/ with more than
+    TOOLCHAIN_BIN_MAX_FILES entries or a lib/lean with more than
+    TOOLCHAIN_LIBRARY_MAX_FILES libraries: the map is never truncated.
+    ``status`` is ``ok``, or ``tool_unavailable`` with ``detail`` and no
+    files. Nothing runs. Never raises.
+    """
+
+    result: dict[str, Any] = {"status": "tool_unavailable", "files": {}, "detail": ""}
+    try:
+        root = Path(toolchain_dir)
+        if not root.is_absolute() or not _plain_directory(root):
+            result["detail"] = f"{root} is not an absolute toolchain directory"
+            return result
+        files: dict[str, str] = {}
+        location = "toolchain"
+        try:
+            stable_directory_chain(root, ("bin",))
+            stable_directory_chain(root, ("lib", "lean"))
+            names: list[str] = []
+            with os.scandir(root / "bin") as entries:
+                for entry in entries:
+                    if len(names) == TOOLCHAIN_BIN_MAX_FILES:
+                        result["detail"] = (
+                            f"bin/ holds more than the {TOOLCHAIN_BIN_MAX_FILES} entries "
+                            "an attestation hashes"
+                        )
+                        return result
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                    if not stat.S_ISREG(mode):
+                        what = "a symlink" if stat.S_ISLNK(mode) else "not a regular file"
+                        result["detail"] = (
+                            f"bin/{entry.name} is {what}; bin/ must hold regular files only"
+                        )
+                        return result
+                    names.append(entry.name)
+            missing = [
+                name for name in COMPARATOR_TOOLCHAIN_BINARIES if executable_name(name) not in names
+            ]
+            if missing:
+                result["detail"] = "bin/ lacks " + ", ".join(missing)
+                return result
+            with os.scandir(root / "lib" / "lean") as entries:
+                libraries = sorted(entry.name for entry in entries if entry.name.endswith(".so"))
+            if len(libraries) > TOOLCHAIN_LIBRARY_MAX_FILES:
+                result["detail"] = (
+                    f"lib/lean holds {len(libraries)} shared libraries, more than "
+                    f"the {TOOLCHAIN_LIBRARY_MAX_FILES} an attestation hashes"
+                )
+                return result
+            relatives = [f"bin/{name}" for name in sorted(names)]
+            relatives += [f"lib/lean/{name}" for name in libraries]
+            for location in relatives:
+                files[location] = stable_regular_file_sha256(
+                    root.joinpath(*location.split("/")), max_bytes=COMPILED_MODULE_MAX_BYTES
+                )
+        except StableReadError as exc:
+            result["detail"] = f"{location}: {exc.kind}: {exc.detail}"
+            return result
+        result.update(status="ok", files=files)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(status="tool_unavailable", files={}, detail=f"{type(exc).__name__}: {exc}"[:500])
+    return result
+
+
 def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
     """Hash a comparator toolchain and read the version its lean reports.
 
-    ``files`` maps ``bin/<binary>`` for lake, lean, leanchecker and leanexport,
-    and ``lib/lean/<library>.so`` for each shared library there (bin/lean and
-    bin/lake are launchers for them), to sha256. Then ``lean --version`` runs
-    in the toolchain directory with only PATH=<bin>:/usr/bin:/bin and
+    ``files`` is the map toolchain_file_digests() gives: every file directly
+    in bin/, the kernels that ``--paranoid`` runs among them, and each
+    lib/lean/*.so, by POSIX relative path. A toolchain that helper refuses is
+    ``tool_unavailable``, and nothing runs. Then ``lean --version`` runs in
+    the toolchain directory with only PATH=<bin>:/usr/bin:/bin and
     LANG=C.UTF-8, so no LEAN_*, ELAN_* or LAKE_* variable reaches it; nothing
     from an input is read or run. A banner that is not a stable release at
     v4.35.0 or later is ``unsupported_toolchain``, and a non-zero exit or an
@@ -1015,33 +1095,12 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
     }
     try:
         root = Path(toolchain_dir)
-        if not root.is_absolute() or not _plain_directory(root):
-            result["detail"] = f"{root} is not an absolute toolchain directory"
+        digests = toolchain_file_digests(root)
+        if digests["status"] != "ok":
+            result["detail"] = digests["detail"]
             return result
         bin_dir = root / "bin"
-        files: dict[str, str] = {}
-        location = "toolchain"
-        try:
-            stable_directory_chain(root, ("bin",))
-            stable_directory_chain(root, ("lib", "lean"))
-            with os.scandir(root / "lib" / "lean") as entries:
-                libraries = sorted(entry.name for entry in entries if entry.name.endswith(".so"))
-            if len(libraries) > TOOLCHAIN_LIBRARY_MAX_FILES:
-                result["detail"] = (
-                    f"lib/lean holds {len(libraries)} shared libraries, more than "
-                    f"the {TOOLCHAIN_LIBRARY_MAX_FILES} an attestation hashes"
-                )
-                return result
-            relatives = [f"bin/{executable_name(name)}" for name in COMPARATOR_TOOLCHAIN_BINARIES]
-            relatives += [f"lib/lean/{name}" for name in libraries]
-            for location in relatives:
-                files[location] = stable_regular_file_sha256(
-                    root.joinpath(*location.split("/")), max_bytes=COMPILED_MODULE_MAX_BYTES
-                )
-        except StableReadError as exc:
-            result["detail"] = f"{location}: {exc.kind}: {exc.detail}"
-            return result
-        result["files"] = files
+        result["files"] = digests["files"]
         command = [str(bin_dir / executable_name("lean")), "--version"]
         try:
             completed = run_bounded_command(
@@ -3336,11 +3395,13 @@ def challenge_freeze_payload(
 
     ``out_dir`` receives ``Challenge.lean``, the exact source bytes, and
     ``challenge.json``, the closed ``aas_lean_challenge.v1`` record. The record
-    holds no timestamp, so the same inputs always give the same bytes, and
-    their sha256 (``record_sha256``) is the pin a caller keeps. A refusal is a
-    finding and leaves nothing behind. No Lean runs here: the checks read
-    names and bytes, and whether the statement says what the claim means
-    stays a review step.
+    holds no timestamp, so the same inputs and the same toolchain bytes always
+    give the same bytes, and their sha256 (``record_sha256``) is the pin a
+    caller keeps. Its ``toolchain`` is the spec with toolchain_file_digests()
+    of the installed toolchain that resolve_comparator_toolchain() finds
+    outside the source's directory. A refusal is a finding and leaves nothing
+    behind. No tool runs here: the checks read names and bytes, and whether
+    the statement says what the claim means stays a review step.
     """
 
     payload: dict[str, Any] = {
@@ -3362,9 +3423,11 @@ def challenge_freeze_payload(
             "a proof supports a claim only when a host-run lake comparator accepts it "
             "against this record",
             "theorem names are found by a line walk over the source, not by Lean",
-            "the record pins the challenge bytes and the comparator options, "
-            "not the toolchain's bytes",
+            "the record binds the challenge bytes, the comparator options and the "
+            "toolchain bytes seen at freeze time; a changed toolchain, or one on another "
+            "host or architecture, does not match it and needs a new freeze",
         ],
+        "toolchain_dir": "",
     }
     findings: list[dict[str, str]] = payload["findings"]
     created_files: list[Path] = []
@@ -3375,6 +3438,8 @@ def challenge_freeze_payload(
             if isinstance(toolchain, str) and _LEAN_TOOLCHAIN_SPEC_RE.fullmatch(toolchain)
             else None
         )
+        toolchain_dir = ""
+        toolchain_files: dict[str, str] = {}
         if version is None or version < COMPARATOR_MIN_LEAN_VERSION:
             findings.append(
                 {
@@ -3385,6 +3450,19 @@ def challenge_freeze_payload(
                     ),
                 }
             )
+        else:
+            # The record pins the bytes of the installed toolchain, which must
+            # not lie in the directory of the source under review.
+            resolved = resolve_comparator_toolchain(toolchain, input_root=source.parent)
+            if resolved["status"] != "available":
+                findings.append({"kind": "toolchain_unavailable", "detail": resolved["detail"]})
+            else:
+                digests = toolchain_file_digests(resolved["path"])
+                if digests["status"] != "ok":
+                    findings.append({"kind": "toolchain_unavailable", "detail": digests["detail"]})
+                else:
+                    toolchain_dir = resolved["path"]
+                    toolchain_files = digests["files"]
 
         axioms = sorted(set(permitted_axioms)) if permitted_axioms else sorted(SANCTIONED_AXIOMS)
         for axiom in axioms:
@@ -3477,7 +3555,7 @@ def challenge_freeze_payload(
             "definition_names": [],
             "permitted_axioms": axioms,
             "paranoid": bool(paranoid),
-            "toolchain": toolchain,
+            "toolchain": {"spec": toolchain, "files": toolchain_files},
             "workspace": {"kind": "core"},
             "allowed_import_roots": list(CORE_IMPORT_ROOTS),
         }
@@ -3506,6 +3584,7 @@ def challenge_freeze_payload(
             challenge_record=str(record_path.absolute()),
             challenge_sha256=record["challenge_sha256"],
             record_sha256=hashlib.sha256(record_bytes).hexdigest(),
+            toolchain_dir=toolchain_dir,
         )
     except Exception as exc:  # a crash is a refusal too, and leaves nothing behind
         _remove_created_outputs(created_files, created_dirs)
@@ -3516,6 +3595,7 @@ def challenge_freeze_payload(
             challenge_sha256="",
             record_sha256="",
             advisory_scan={},
+            toolchain_dir="",
         )
         findings.append(
             {"kind": "challenge_freeze_failed", "detail": f"{type(exc).__name__}: {exc}"[:500]}

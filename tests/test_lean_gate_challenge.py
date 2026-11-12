@@ -4,11 +4,12 @@ A Lean proof supports a claim only when a host-run ``lake comparator`` accepts
 it against a trusted challenge. ``challenge-freeze`` produces that challenge:
 it copies the reviewed source byte for byte to ``Challenge.lean`` and writes
 the closed, timestamp-free record ``challenge.json`` beside it. The freeze runs
-no Lean, so every test here is hermetic. Cases that need POSIX file modes, a
-FIFO or a symlink skip elsewhere with a stated reason; that is why they live in
-this module rather than in ``test_lean_gate_scanner``, which is never
-skip-gated. The gate module and its path come from that module, so one copy of
-the gate is loaded.
+no tool, so every test here is hermetic: the toolchain whose bytes the record
+pins is a fake tree under a temporary ELAN_HOME. Cases that need POSIX file
+modes, a FIFO or a symlink skip elsewhere with a stated reason; that is why
+they live in this module rather than in ``test_lean_gate_scanner``, which is
+never skip-gated. The gate module and its path come from that module, so one
+copy of the gate is loaded.
 
 ``ComparatorReadinessTests`` covers what the comparator will need from the
 host: the platform check, the pinned bwrap, the toolchain directory, its
@@ -24,6 +25,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -74,6 +76,7 @@ PAYLOAD_KEYS = {
     "challenge_sha256",
     "advisory_scan",
     "limitations",
+    "toolchain_dir",
 }
 # A reviewed core statement: the bodies are `sorry`, as a challenge's are.
 CHALLENGE = (
@@ -133,6 +136,8 @@ def _release_fifo_reader(fifo: Path) -> None:
 # What `lake comparator` takes from its toolchain, and the preflight argv after
 # the bwrap path.
 COMPARATOR_BINARIES = ("lake", "lean", "leanchecker", "leanexport")
+# The kernels a toolchain bundles for `lake comparator --paranoid`.
+BUNDLED_KERNELS = ("leanchecker-paranoid", "lean4lean", "nanoda_bin", "con-leche", "con-ron")
 PREFLIGHT_ARGS = ["--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "--", "/bin/true"]
 # Variables that select a tool for the gate; each readiness test starts without them.
 _READINESS_VARIABLES = (
@@ -193,7 +198,49 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _comparator_toolchain(directory: Path) -> Path:
+    """A complete toolchain tree whose bytes a record pins; nothing in it runs.
+
+    bin/ holds the comparator's binaries and the bundled kernels. lib/lean
+    holds two shared libraries beside a module file and a directory, which
+    are not libraries.
+    """
+
+    _toolchain_dir(directory, COMPARATOR_BINARIES + BUNDLED_KERNELS)
+    library = directory / "lib" / "lean"
+    (library / "Init").mkdir(parents=True)
+    for name in ("libleanshared.so", "libInit_shared.so"):
+        (library / name).write_bytes(f"\x7fELF {name}\n".encode("utf-8"))
+    (library / "Init.olean").write_bytes(b"not a library\n")
+    return directory
+
+
+def _toolchain_files(directory: Path) -> dict[str, str]:
+    """The digests a record and an attestation pin for ``_comparator_toolchain(directory)``."""
+
+    names = sorted(gate.executable_name(name) for name in COMPARATOR_BINARIES + BUNDLED_KERNELS)
+    files = {f"bin/{name}": _sha256(directory / "bin" / name) for name in names}
+    for name in ("libInit_shared.so", "libleanshared.so"):
+        files[f"lib/lean/{name}"] = _sha256(directory / "lib" / "lean" / name)
+    return files
+
+
 class ChallengeFreezeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The record pins the bytes of the toolchain it names, so every freeze
+        # here finds a complete fake toolchain under a temporary ELAN_HOME,
+        # outside each test's source directory.
+        elan = tempfile.TemporaryDirectory()
+        self.addCleanup(elan.cleanup)
+        self.elan_home = Path(elan.name)
+        self.toolchain = _comparator_toolchain(
+            self.elan_home / "toolchains" / "leanprover--lean4---v4.35.0"
+        )
+        environment = mock.patch.dict(os.environ, {"ELAN_HOME": str(self.elan_home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("AAS_LEAN_COMPARATOR_TOOLCHAIN", None)
+
     def _within_deadline(
         self,
         function: Callable[[], Any],
@@ -231,7 +278,13 @@ class ChallengeFreezeTests(unittest.TestCase):
         self.assertFalse(payload["ok"], payload)
         self.assertIn(kind, _kinds(payload), payload)
         self.assertEqual(set(payload), PAYLOAD_KEYS, payload)
-        for key in ("challenge_record", "challenge_file", "record_sha256", "challenge_sha256"):
+        for key in (
+            "challenge_record",
+            "challenge_file",
+            "record_sha256",
+            "challenge_sha256",
+            "toolchain_dir",
+        ):
             self.assertEqual(payload[key], "", payload)
         self.assertEqual(payload["advisory_scan"], {}, payload)
         if before is None:
@@ -339,10 +392,17 @@ class ChallengeFreezeTests(unittest.TestCase):
             self.assertEqual(scan["placeholder_status"], "placeholders_allowed_for_stub")
             self.assertEqual(scan["content_sha256"], payload["challenge_sha256"])
             self.assertTrue(os.path.samefile(scan["input"], frozen))
+            self.assertEqual(payload["toolchain_dir"], os.path.realpath(self.toolchain))
             limitations = " ".join(payload["limitations"])
             self.assertEqual(len(payload["limitations"]), 4)
-            for phrase in ("human or different-family review", "lake comparator", "line walk"):
+            for phrase in (
+                "human or different-family review",
+                "lake comparator",
+                "line walk",
+                "toolchain bytes seen at freeze time",
+            ):
                 self.assertIn(phrase, limitations)
+            self.assertNotIn("not the toolchain's bytes", limitations)
 
     def test_record_is_deterministic_and_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -376,7 +436,10 @@ class ChallengeFreezeTests(unittest.TestCase):
                     "definition_names": [],
                     "permitted_axioms": ["Classical.choice", "Quot.sound", "propext"],
                     "paranoid": False,
-                    "toolchain": DEFAULT_TOOLCHAIN,
+                    "toolchain": {
+                        "spec": DEFAULT_TOOLCHAIN,
+                        "files": _toolchain_files(self.toolchain),
+                    },
                     "workspace": {"kind": "core"},
                     "allowed_import_roots": ["Init", "Lake", "Lean", "Std"],
                 },
@@ -403,6 +466,153 @@ class ChallengeFreezeTests(unittest.TestCase):
             self.assertEqual(chosen_record["permitted_axioms"], ["Quot.sound", "propext"])
             self.assertIs(chosen_record["paranoid"], True)
             self.assertNotEqual(chosen["record_sha256"], first["record_sha256"])
+
+    def test_record_pins_the_toolchain_bytes_and_the_freeze_runs_no_tool(self) -> None:
+        """N3S12-F2: the record's toolchain is its spec and the attestation's file digests."""
+
+        banner = "Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit 0123abc, Release)"
+        with tempfile.TemporaryDirectory() as tmp:
+            source = _write_source(tmp)
+            out = Path(tmp) / "first"
+            # A tool run would raise inside the freeze and turn it into a refusal.
+            with mock.patch.object(
+                gate, "run_bounded_command", side_effect=AssertionError("the freeze ran a tool")
+            ), mock.patch.object(
+                gate.subprocess, "Popen", side_effect=AssertionError("the freeze started a process")
+            ):
+                payload = _freeze(source, out)
+            self.assertTrue(payload["ok"], payload)
+            record_bytes = (out / "challenge.json").read_bytes()
+            record = json.loads(record_bytes.decode("ascii"))
+            files = _toolchain_files(self.toolchain)
+            self.assertEqual(record["toolchain"], {"spec": DEFAULT_TOOLCHAIN, "files": files})
+            for kernel in BUNDLED_KERNELS:
+                self.assertIn(f"bin/{gate.executable_name(kernel)}", files)
+            self.assertEqual(payload["toolchain_dir"], os.path.realpath(self.toolchain))
+
+            # Exactly the map the attestation hashes before it asks lean for its version.
+            lean_run = gate.BoundedCommandResult(0, banner + "\n", "", len(banner) + 1)
+            with mock.patch.object(gate, "run_bounded_command", return_value=lean_run):
+                attested = gate.toolchain_attestation(Path(payload["toolchain_dir"]))
+            self.assertEqual(attested["status"], "ok", attested)
+            self.assertEqual(attested["files"], record["toolchain"]["files"])
+
+            # The same bytes in another directory give the same record bytes.
+            elsewhere = self.elan_home / "elsewhere"
+            shutil.copytree(self.toolchain, elsewhere)
+            with mock.patch.dict(os.environ, {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(elsewhere)}):
+                moved = _freeze(source, Path(tmp) / "moved")
+            self.assertTrue(moved["ok"], moved)
+            self.assertEqual(moved["toolchain_dir"], os.path.realpath(elsewhere))
+            self.assertEqual((Path(tmp) / "moved" / "challenge.json").read_bytes(), record_bytes)
+
+            # A rebuilt bundled kernel changes its digest, and so the record.
+            kernel = self.toolchain / "bin" / gate.executable_name("nanoda_bin")
+            kernel.write_bytes(kernel.read_bytes() + b"# rebuilt\n")
+            edited = _freeze(source, Path(tmp) / "edited")
+            self.assertTrue(edited["ok"], edited)
+            self.assertNotEqual(edited["record_sha256"], payload["record_sha256"])
+            edited_record = json.loads(
+                (Path(tmp) / "edited" / "challenge.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                edited_record["toolchain"]["files"],
+                {**files, f"bin/{kernel.name}": _sha256(kernel)},
+            )
+
+    def test_a_toolchain_whose_bytes_cannot_be_pinned_is_refused(self) -> None:
+        """N3S12-F2: a toolchain whose bytes the freeze cannot pin is refused; nothing is written."""
+
+        with tempfile.TemporaryDirectory() as custom:
+            custom_root = Path(custom)
+            _toolchain_dir(
+                self.elan_home / "toolchains" / "leanprover--lean4---v4.35.1", ("lake", "lean")
+            )
+            with_directory = _comparator_toolchain(custom_root / "with-directory")
+            (with_directory / "bin" / "share").mkdir()
+            crowded = _comparator_toolchain(custom_root / "crowded")
+            for index in range(65 - len(COMPARATOR_BINARIES + BUNDLED_KERNELS)):
+                (crowded / "bin" / f"tool{index}").write_bytes(f"tool {index}\n".encode("utf-8"))
+            cases = (
+                ("not installed", {"toolchain": "leanprover/lean4:v4.36.0"}, {}, "not installed"),
+                ("incomplete", {"toolchain": "leanprover/lean4:v4.35.1"}, {}, "leanexport"),
+                ("relative ELAN_HOME", {}, {"ELAN_HOME": "elan"}, "ELAN_HOME"),
+                (
+                    "relative override",
+                    {},
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": "toolchain"},
+                    "absolute",
+                ),
+                (
+                    "a directory in bin/",
+                    {},
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(with_directory)},
+                    "bin/share",
+                ),
+                (
+                    "65 entries in bin/",
+                    {},
+                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(crowded)},
+                    "64",
+                ),
+            )
+            for label, options, environment, detail in cases:
+                with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                    os.environ, environment
+                ):
+                    source = _write_source(tmp)
+                    out = Path(tmp) / "out"
+                    payload = _freeze(source, out, **options)
+                    self._assert_refused(payload, "toolchain_unavailable", out)
+                    self.assertEqual(_kinds(payload), ["toolchain_unavailable"], payload)
+                    self.assertIn(detail, payload["findings"][0]["detail"], payload)
+
+            with self.subTest(case="the toolchain lies in the source's directory"):
+                with tempfile.TemporaryDirectory() as tmp:
+                    source = _write_source(tmp)
+                    inside = _comparator_toolchain(Path(tmp) / "toolchain")
+                    out = Path(tmp) / "out"
+                    with mock.patch.dict(
+                        os.environ, {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(inside)}
+                    ):
+                        payload = _freeze(source, out)
+                    self._assert_refused(payload, "toolchain_unavailable", out)
+                    self.assertIn("inside the input", payload["findings"][0]["detail"], payload)
+
+            with self.subTest(case="a symlink in bin/"):
+                linked = _comparator_toolchain(custom_root / "with-symlink")
+                kernel = linked / "bin" / gate.executable_name("nanoda_bin")
+                kernel.unlink()
+                try:
+                    kernel.symlink_to(with_directory / "bin" / kernel.name)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"this host cannot create a symlink: {exc}")
+                with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                    os.environ, {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked)}
+                ):
+                    source = _write_source(tmp)
+                    out = Path(tmp) / "out"
+                    payload = _freeze(source, out)
+                    self._assert_refused(payload, "toolchain_unavailable", out)
+                    self.assertIn(f"bin/{kernel.name}", payload["findings"][0]["detail"], payload)
+
+    def test_the_toolchain_pin_is_documented(self) -> None:
+        """N3S12-F2: SKILL.md says where to freeze and when a record stops matching."""
+
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in (
+            "`toolchain_unavailable`",
+            "`toolchain_dir`",
+            "on the host that will judge",
+            "needs a new freeze",
+            "on another host or architecture will not match",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+        for stale in ("needs no toolchain", "not the toolchain's bytes"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, section)
 
     @unittest.skipUnless(os.name == "posix", "POSIX owner-only modes; Windows has no mode bits to check")
     def test_outputs_are_private_on_posix(self) -> None:
@@ -630,8 +840,14 @@ class ChallengeFreezeTests(unittest.TestCase):
                 )
 
     def test_a_crash_is_reported_and_leaves_nothing_behind(self) -> None:
-        # scan_declarations runs before anything is written, scan_path after.
-        for name in ("scan_declarations", "scan_path"):
+        # The toolchain is resolved and hashed, and scan_declarations runs,
+        # before anything is written; scan_path runs after.
+        for name in (
+            "resolve_comparator_toolchain",
+            "toolchain_file_digests",
+            "scan_declarations",
+            "scan_path",
+        ):
             with self.subTest(crash_in=name), tempfile.TemporaryDirectory() as tmp:
                 source = _write_source(tmp)
                 out = Path(tmp) / "out"
@@ -697,7 +913,11 @@ class ChallengeFreezeTests(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(out)), ["Challenge.lean", "challenge.json"])
             self.assertEqual((out / "Challenge.lean").read_bytes(), source.read_bytes())
             record = json.loads((out / "challenge.json").read_text(encoding="utf-8"))
-            self.assertEqual(record["toolchain"], DEFAULT_TOOLCHAIN)
+            self.assertEqual(
+                record["toolchain"],
+                {"spec": DEFAULT_TOOLCHAIN, "files": _toolchain_files(self.toolchain)},
+            )
+            self.assertEqual(payload["toolchain_dir"], os.path.realpath(self.toolchain))
             self.assertEqual(
                 hashlib.sha256((out / "challenge.json").read_bytes()).hexdigest(),
                 payload["record_sha256"],
@@ -1134,7 +1354,8 @@ class ComparatorReadinessTests(unittest.TestCase):
             bin_dir = root / "bin"
             bin_dir.mkdir(parents=True)
             record = Path(tmp) / "lean-run.json"
-            behaviour = bin_dir / "behaviour.json"
+            # Outside bin/: every file in bin/ is hashed, and this one changes per case.
+            behaviour = Path(tmp) / "behaviour.json"
             scanner._fake_tool(
                 bin_dir,
                 "lean",
@@ -1143,8 +1364,7 @@ class ComparatorReadinessTests(unittest.TestCase):
                 "import sys\n"
                 f"with open({str(record)!r}, 'w', encoding='utf-8') as handle:\n"
                 "    json.dump({'env': dict(os.environ), 'cwd': os.getcwd(), 'argv': sys.argv[1:]}, handle)\n"
-                "here = os.path.dirname(os.path.abspath(__file__))\n"
-                "with open(os.path.join(here, 'behaviour.json'), encoding='utf-8') as handle:\n"
+                f"with open({str(behaviour)!r}, encoding='utf-8') as handle:\n"
                 "    behaviour = json.load(handle)\n"
                 "print(behaviour['stdout'])\n"
                 "sys.exit(behaviour['exit'])\n",
@@ -1169,8 +1389,10 @@ class ComparatorReadinessTests(unittest.TestCase):
                     return gate.toolchain_attestation(root)
 
             attested = attest(banner + "\nTarget: x86_64-unknown-linux-gnu")
+            # Every file in bin/ is hashed, the fake lean's script among them.
             expected_files = {
-                f"bin/{name}": _sha256(bin_dir / name) for name in COMPARATOR_BINARIES
+                f"bin/{name}": _sha256(bin_dir / name)
+                for name in (*COMPARATOR_BINARIES, "fake_lean_impl.py")
             }
             expected_files["lib/lean/libInit_shared.so"] = _sha256(library / "libInit_shared.so")
             expected_files["lib/lean/libleanshared.so"] = _sha256(library / "libleanshared.so")
@@ -1253,6 +1475,96 @@ class ComparatorReadinessTests(unittest.TestCase):
                 missing = attest(banner)
                 self.assertEqual(missing["status"], "tool_unavailable", missing)
                 self.assertIn("leanexport", missing["detail"])
+
+    def test_the_attestation_hashes_every_file_in_bin_and_each_library(self) -> None:
+        """N3S12-F7: bin/ is hashed whole, bundled kernels included, and never truncated.
+
+        ``lean --version`` is stubbed, so this runs on every platform. The
+        missing-binary case is a regression check: it was refused before.
+        """
+
+        banner = "Lean (version 4.35.0, x86_64-unknown-linux-gnu, commit 0123abc, Release)"
+        lean_run = gate.BoundedCommandResult(0, banner + "\n", "", len(banner) + 1)
+
+        def attest(root: Path) -> tuple[dict[str, Any], int]:
+            with mock.patch.object(gate, "run_bounded_command", return_value=lean_run) as run:
+                result = gate.toolchain_attestation(root)
+            return result, run.call_count
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.subTest(case="every file in bin/ and each library"):
+                root = _comparator_toolchain(base / "complete")
+                attested, runs = attest(root)
+                self.assertEqual(attested["status"], "ok", attested)
+                self.assertEqual(attested["files"], _toolchain_files(root))
+                self.assertEqual(runs, 1)
+
+            with self.subTest(case="an edited bundled kernel"):
+                root = _comparator_toolchain(base / "edited")
+                before, _ = attest(root)
+                kernel = root / "bin" / gate.executable_name("nanoda_bin")
+                kernel.write_bytes(kernel.read_bytes() + b"# edited by the same user\n")
+                after, _ = attest(root)
+                self.assertEqual(after["status"], "ok", after)
+                self.assertIn(f"bin/{kernel.name}", before["files"])
+                self.assertEqual(
+                    after["files"], {**before["files"], f"bin/{kernel.name}": _sha256(kernel)}
+                )
+
+            with self.subTest(case="64 entries in bin/"):
+                root = _comparator_toolchain(base / "full")
+                for index in range(64 - len(COMPARATOR_BINARIES + BUNDLED_KERNELS)):
+                    (root / "bin" / f"tool{index}").write_bytes(f"tool {index}\n".encode("utf-8"))
+                attested, _ = attest(root)
+                self.assertEqual(attested["status"], "ok", attested)
+                self.assertEqual(sum(key.startswith("bin/") for key in attested["files"]), 64)
+
+            def a_directory(bin_dir: Path) -> str:
+                (bin_dir / "share").mkdir()
+                return "bin/share"
+
+            def a_symlink(bin_dir: Path) -> str:
+                kernel = bin_dir / gate.executable_name("nanoda_bin")
+                target = base / "kernel-elsewhere"
+                target.write_bytes(kernel.read_bytes())
+                kernel.unlink()
+                try:
+                    kernel.symlink_to(target)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"this host cannot create a symlink: {exc}")
+                return f"bin/{kernel.name}"
+
+            def a_fifo(bin_dir: Path) -> str:
+                if not hasattr(os, "mkfifo"):
+                    self.skipTest("FIFOs are POSIX-only")
+                os.mkfifo(bin_dir / "pipe")
+                return "bin/pipe"
+
+            def crowded(bin_dir: Path) -> str:
+                for index in range(65 - len(COMPARATOR_BINARIES + BUNDLED_KERNELS)):
+                    (bin_dir / f"tool{index}").write_bytes(f"tool {index}\n".encode("utf-8"))
+                return "64"
+
+            def missing(bin_dir: Path) -> str:
+                (bin_dir / gate.executable_name("leanexport")).unlink()
+                return "leanexport"
+
+            for label, change in (
+                ("a directory in bin/", a_directory),
+                ("a symlink in bin/", a_symlink),
+                ("a FIFO in bin/", a_fifo),
+                ("65 entries in bin/", crowded),
+                ("a missing comparator binary", missing),
+            ):
+                with self.subTest(case=label):
+                    root = _comparator_toolchain(base / label.replace("/", "").replace(" ", "-"))
+                    detail = change(root / "bin")
+                    refused, runs = attest(root)
+                    self.assertEqual(refused["status"], "tool_unavailable", refused)
+                    self.assertEqual(refused["files"], {}, refused)
+                    self.assertIn(detail, refused["detail"], refused)
+                    self.assertEqual(runs, 0, "lean --version ran for a refused toolchain")
 
     def test_doctor_reports_readiness_from_listings_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1426,6 +1738,23 @@ class ComparatorReadinessTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertTrue(phrase in skill, f"SKILL.md does not mention {phrase!r}")
+        # N3S12-F7: what the attestation hashes, and that it never truncates.
+        readiness = " ".join(
+            skill.split("## Comparator readiness", 1)[1].split("\n## ", 1)[0].split()
+        )
+        for phrase in (
+            "every file directly in `bin/`",
+            "`leanchecker-paranoid`",
+            "`lean4lean`",
+            "`nanoda_bin`",
+            "`con-leche`",
+            "`con-ron`",
+            "more than 64 entries",
+            "never truncates",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readiness)
+        self.assertNotIn("hashes those four binaries", readiness)
 
 
 def _make_dir(path: Path) -> Path:
