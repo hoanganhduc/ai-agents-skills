@@ -1016,24 +1016,61 @@ class ChallengeFreezeTests(unittest.TestCase):
         """N3S12-F6: only the three fixed names can never be accepted; a native_decide axiom can.
 
         Lean v4.35.0 declares no Lean.ofReduceBool, Lean.ofReduceNat or
-        Lean.trustCompiler, but names each native_decide axiom after the
-        declaration that uses it, so a challenge and a solution that declare
-        the same helper export the same axiom.
+        Lean.trustCompiler. It named the axiom that native_decide adds for
+        ``helper`` ``helper._native.native_decide.ax_1_1``, and lake
+        comparator v4.35.0 accepted a solution through that helper when the
+        challenge declared it too and the record permitted the axiom. The
+        text uses that observed name and claims no other suffix shape. The
+        freeze checks are regression checks of the gate's pattern: the
+        observed native_decide name is compiler trust, and the axiom that
+        bv_decide added on v4.35.0 is not, so the freeze refuses it even with
+        --allow-compiler-trust.
         """
 
         skill = SKILL_MD.read_text(encoding="utf-8")
         section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
         for phrase in (
-            "can never lead to an acceptance",
-            "`<decl>._native.native_decide.ax_N`",
-            "`mkAuxDeclName`",
-            "through that helper is accepted",
+            "cannot be accepted, because those are absent from the v4.35.0 environment",
+            "the axiom that `native_decide` adds for a helper",
+            "can lead to an acceptance that rests on compiler trust",
+            "when the challenge declares the same helper (observed on v4.35.0)",
+            "`helper._native.native_decide.ax_1_1`",
+            "An axiom of the `_native.bv_decide` form is not classed as compiler trust",
+            "the freeze refuses it even with `--allow-compiler-trust`",
             "really admits compiler trust",
             "the statement review must see it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
-        self.assertNotIn("permits a compiler-trust axiom is therefore written", section)
+        for stale in (
+            "permits a compiler-trust axiom is therefore written",
+            "ax_N",
+            "`<decl>.",
+            "`_native.decide` one",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, section)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = _write_source(tmp)
+            observed = "helper._native.native_decide.ax_1_1"
+            with self.subTest(case="the observed native_decide axiom without the flag"):
+                refused = _freeze(source, Path(tmp) / "without", axioms=(observed,))
+                self.assertEqual(_kinds(refused), ["compiler_trust_not_allowed"], refused)
+            with self.subTest(case="the observed native_decide axiom with the flag"):
+                allowed = _freeze(
+                    source, Path(tmp) / "with", axioms=(observed,), allow_compiler_trust=True
+                )
+                self.assertTrue(allowed["ok"], allowed)
+            with self.subTest(case="a bv_decide axiom with the flag"):
+                bv_decide = "bv_mul._native.bv_decide.ax_1_5"
+                payload = _freeze(
+                    source, Path(tmp) / "bv", axioms=(bv_decide,), allow_compiler_trust=True
+                )
+                self.assertEqual(
+                    payload["findings"],
+                    [{"kind": "never_sanctioned_axiom", "detail": f"{bv_decide} is not a sanctioned axiom"}],
+                )
 
     def test_an_import_the_toolchain_does_not_ship_is_refused(self) -> None:
         """OC-DS-2: every import is a module the pinned toolchain ships.

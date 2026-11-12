@@ -419,17 +419,22 @@ frozen on another host or architecture will not match, because its binaries
 differ.
 
 The comparator exports and compares every permitted axiom from both the
-challenge and the solution. Lean v4.35.0 no longer declares
-`Lean.ofReduceBool`, `Lean.ofReduceNat` or `Lean.trustCompiler`, so the
-export of such an axiom fails and the comparator exits 1: a record that
-permits one of these three is written but can never lead to an acceptance. A
-declaration-local axiom such as `<decl>._native.native_decide.ax_N` is
-different, and so is the `_native.decide` one that `decide +native` adds.
-`Lean/Meta/Native.lean` names it with `mkAuxDeclName` after the declaration
-that uses the tactic, so a challenge and a solution that declare the same
-helper export the same axiom, and a solution that proves its theorem through
-that helper is accepted. `--allow-compiler-trust` therefore really admits
-compiler trust, and the statement review must see it.
+challenge and the solution. For compiler trust this means:
+
+- A record that permits `Lean.ofReduceBool`, `Lean.ofReduceNat` or
+  `Lean.trustCompiler` cannot be accepted, because those are absent from the
+  v4.35.0 environment: their export fails, and the comparator exits 1.
+- A record that permits the axiom that `native_decide` adds for a helper can
+  lead to an acceptance that rests on compiler trust, when the challenge
+  declares the same helper (observed on v4.35.0). For
+  `theorem helper : 2 + 2 = 4 := by native_decide`, Lean v4.35.0 named that
+  axiom `helper._native.native_decide.ax_1_1`.
+- An axiom of the `_native.bv_decide` form is not classed as compiler trust
+  by the gate's pattern, so the freeze refuses it even with
+  `--allow-compiler-trust`.
+
+`--allow-compiler-trust` therefore really admits compiler trust, and the
+statement review must see it.
 
 ## Blocking Policy
 
