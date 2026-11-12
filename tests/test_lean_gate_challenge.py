@@ -856,6 +856,45 @@ class ChallengeFreezeTests(unittest.TestCase):
                 self._assert_refused(payload, "challenge_freeze_failed", out)
                 self.assertEqual(_kinds(payload), ["challenge_freeze_failed"])
 
+    def test_a_source_the_lexer_cannot_finish_is_refused(self) -> None:
+        """N3S12-F3: a lexical error refuses the freeze, as it fails ``scan``.
+
+        The scanner's lexer does not read raw strings. It reads r#"a"b"# as a
+        string and the start of another one that never ends, so the #eval that
+        Lean runs after it never meets the safety patterns.
+        """
+
+        cases = (
+            (
+                "an #eval behind a raw string",
+                'theorem t : True := sorry\ndef x := r#"a"b"#\n#eval IO.println "x"\ndef y := "c"\n',
+                "lexical_scan_incomplete: unterminated string literal",
+            ),
+            (
+                "an unterminated block comment",
+                "theorem t : True := sorry\n/- never closed\n#eval 1\n",
+                "lexical_scan_incomplete: unterminated block comment",
+            ),
+        )
+        for label, text, detail in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, text)
+                scanned = gate.scan_path(source, "stub", set())
+                self.assertIn(
+                    "lexical_scan_incomplete", [item["kind"] for item in scanned["findings"]]
+                )
+                out = Path(tmp) / "out"
+                payload = _freeze(source, out, theorems=("t",))
+                self._assert_refused(payload, "challenge_unsafe_construct", out)
+                self.assertEqual(
+                    payload["findings"], [{"kind": "challenge_unsafe_construct", "detail": detail}]
+                )
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in ("`lexical_scan_incomplete: ...`", "raw string"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""

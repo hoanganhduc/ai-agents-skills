@@ -3517,7 +3517,16 @@ def challenge_freeze_payload(
 
         imports: list[str] = []
         if text is not None:
-            stripped = strip_comments_and_strings(text)
+            stripped, lexical_errors = _strip_comments_and_strings(text)
+            if lexical_errors:
+                # Where this lexer and Lean's disagree, as on a raw string, a
+                # construct can hide in what the lexer takes for a string.
+                findings.append(
+                    {
+                        "kind": "challenge_unsafe_construct",
+                        "detail": f"lexical_scan_incomplete: {lexical_errors[0]}",
+                    }
+                )
             for module in imported_modules(stripped):
                 if valid_lean_name(module) and module.split(".", 1)[0] in CORE_IMPORT_ROOTS:
                     imports.append(module)

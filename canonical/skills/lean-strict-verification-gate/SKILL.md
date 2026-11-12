@@ -381,7 +381,10 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   such as `Mathlib`, an `import` that names no module, or a module name with
   `«»` escapes;
 - `challenge_unsafe_construct`: a hit of the scanner's safety patterns, such
-  as `#eval` or `run_cmd`;
+  as `#eval` or `run_cmd`, or a source the scanner's lexer cannot read to its
+  end, with the detail `lexical_scan_incomplete: ...`. That lexer does not
+  read raw strings, so `r#"a"b"#` leaves it in a string that never ends, and
+  an `#eval` after it would hide from the patterns;
 - `output_dir_unusable`: `--out` is a symlink, a file or a non-empty
   directory, or its parent is missing;
 - `output_write_failed`: a write failed, and what the run created is removed;
