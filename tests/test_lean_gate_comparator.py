@@ -1,4 +1,4 @@
-"""The gate's ``comparator`` verb, up to the judge run, and the run's own pieces.
+"""The gate's ``comparator`` verb: its checks, the judge run and the run's pieces.
 
 ``comparator`` judges a solution project with ``lake comparator`` against a
 challenge that ``challenge-freeze`` wrote. Before any judge runs, the verb
@@ -6,19 +6,20 @@ checks the host, admits the pinned record and the ``Challenge.lean`` beside
 it, resolves and attests the toolchain the record names, checks the pinned
 bwrap, and reads the solution's local import closure exactly once. It also
 generates the workspace's ``lakefile.toml``, ``AASSolution.lean`` and
-``comparator.json``. The judge run is not wired yet, so an admitted run ends
-as ``command_failed``. The run's own pieces are tested here before they are
-wired: the wrapper program lake comparator runs in place of bwrap, the phase
-log it writes, and the classification of a finished run.
+``comparator.json``. The run's pieces are tested on their own: the wrapper
+program lake comparator runs in place of bwrap, the phase log it writes,
+and the classification of a finished run. The run itself (state directory,
+host guards, workspace, judge, integrity checks, receipt and cleanup) is
+tested on Linux with a fake toolchain and a fake bwrap.
 
-Everything here runs on every platform, except the wrapper program itself,
+Everything else runs on every platform, except the wrapper program itself,
 which forks and runs bwrap and so is run only on POSIX hosts. The comparator
-runs only on Linux, so the payload tests patch the platform, and admission,
-the closure, the generators, the wrapper's argument check and the
-classification are also called directly. Mocks stand in for the toolchain
-attestation and the bwrap probes, which would run tools, and a tool that
-runs by mistake fails the test. A case that needs POSIX modes, a symlink or
-a hard link is skipped with a stated reason on a host that cannot make it.
+runs only on Linux, so the payload tests patch the platform and stand in for
+the run, and admission, the closure, the generators, the wrapper's argument
+check and the classification are also called directly. Mocks stand in for the
+toolchain attestation and the bwrap probes, which would run tools, and a tool
+that runs by mistake fails the test. A case that needs POSIX modes, a symlink
+or a hard link is skipped with a stated reason on a host that cannot make it.
 The gate module comes from ``test_lean_gate_scanner``, and the fake
 toolchain and freeze helpers from ``test_lean_gate_challenge``, so one copy
 of the gate is loaded.
@@ -34,9 +35,11 @@ import json
 import os
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any, Callable
@@ -120,6 +123,9 @@ LIMITATIONS = [
     "core profile: imports outside Init, Std, Lean and Lake are refused",
 ]
 NO_MEMORY_LIMIT = "no memory limit was applied"
+# The payload tests check what comes before the run; this refusal stands in
+# for the run itself, which ComparatorRunTests covers on Linux.
+STAND_IN_RUN = "the payload tests stand in for the run"
 
 
 def _sha256(data: bytes) -> str:
@@ -398,8 +404,9 @@ class ComparatorCliTests(unittest.TestCase):
             *(f"`{status}`" for status in STATUSES),
             "Only `accepted` and `rejected` are verdicts",
             "The verb exits 0 only for `accepted`, 1 for every other result, and 2 for a usage error.",
-            "The judge run is not wired yet",
-            "`run not implemented`",
+            "`host_comparator_receipt.v1`",
+            "`comparator.lock`",
+            "`--keep-workspace` keeps it and reports its path as `run.workspace_kept`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
@@ -1047,7 +1054,10 @@ class ComparatorPayloadTests(unittest.TestCase):
         linux: bool = True,
         **overrides: Any,
     ) -> dict[str, Any]:
-        """Run comparator_payload with the tool probes mocked; ``self.calls`` holds the mocks."""
+        """Run comparator_payload with the tool probes mocked; ``self.calls`` holds the mocks.
+
+        _comparator_run is a stand-in that refuses with STAND_IN_RUN.
+        """
 
         arguments: dict[str, Any] = {
             "challenge_record": self.record_path,
@@ -1074,7 +1084,14 @@ class ComparatorPayloadTests(unittest.TestCase):
             ("bwrap_preflight", {"return_value": preflight}),
             ("solution_closure", {"wraps": gate.solution_closure}),
             ("comparator_state_root", {"wraps": gate.comparator_state_root}),
-            ("_comparator_run", {"wraps": gate._comparator_run}),
+            (
+                "_comparator_run",
+                {
+                    "side_effect": gate.ComparatorRefusal(
+                        "command_failed", "comparator_failed", STAND_IN_RUN
+                    )
+                },
+            ),
             ("run_bounded_command", {"side_effect": AssertionError("a tool ran")}),
         )
         self.calls: dict[str, Any] = {}
@@ -1293,7 +1310,7 @@ class ComparatorPayloadTests(unittest.TestCase):
         self._assert_finding(payload, "tool_unavailable", "paranoid_kernel_missing", "lean4lean, con-ron")
         self._assert_not_called("solution_closure")
         payload = self._payload()
-        self._assert_finding(payload, "command_failed", "comparator_failed", "run not implemented")
+        self._assert_finding(payload, "command_failed", "comparator_failed", STAND_IN_RUN)
         self._use_record(
             self._record(paranoid=True, toolchain={"spec": DEFAULT_TOOLCHAIN, "files": kernels})
         )
@@ -1312,7 +1329,7 @@ class ComparatorPayloadTests(unittest.TestCase):
 
         self._use_record(self._record())
         payload = self._payload(paranoid=True)
-        self._assert_finding(payload, "command_failed", "comparator_failed", "run not implemented")
+        self._assert_finding(payload, "command_failed", "comparator_failed", STAND_IN_RUN)
         self.assertTrue(self.calls["_comparator_run"].call_args.args[1].paranoid)
 
     def test_solution_and_state_refusals(self) -> None:
@@ -1348,7 +1365,7 @@ class ComparatorPayloadTests(unittest.TestCase):
         _skip_as_root(self)
         payload = self._payload()
         self._assert_finding(payload, "command_failed", "comparator_failed")
-        self.assertEqual(payload["findings"][0]["detail"], "run not implemented")
+        self.assertEqual(payload["findings"][0]["detail"], STAND_IN_RUN)
         self.assertEqual(payload["input"], str(self.input))
         self.assertEqual(payload["challenge"], self._filled_challenge())
         self.assertEqual(
@@ -1426,7 +1443,7 @@ class ComparatorPayloadTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.state))
 
         payload = self._payload(memory_limit="off", timeout=9, keep_workspace=True)
-        self._assert_finding(payload, "command_failed", "comparator_failed", "run not implemented")
+        self._assert_finding(payload, "command_failed", "comparator_failed", STAND_IN_RUN)
         self.assertEqual(payload["sandbox"]["memory_limit"], "off")
         self.assertEqual(payload["run"]["timeout_seconds"], 9)
         self.assertEqual(payload["limitations"], [*LIMITATIONS, NO_MEMORY_LIMIT])
@@ -1460,6 +1477,26 @@ class ComparatorPayloadTests(unittest.TestCase):
             ),
             (240, 15 * 1024 * 1024, 16 * 1024 * 1024),
         )
+        # The run tests patch these, so their own values are pinned here too.
+        self.assertEqual(gate.COMPARATOR_MIN_FREE_BYTES, 2 * 1024 * 1024 * 1024)
+        self.assertEqual(
+            (
+                gate.COMPARATOR_SYSTEMD_RUN,
+                gate.COMPARATOR_SYSTEMCTL,
+                gate.COMPARATOR_NICE,
+                gate.COMPARATOR_ENV,
+                gate.COMPARATOR_WRAPPER_INTERPRETER,
+            ),
+            (
+                "/usr/bin/systemd-run",
+                "/usr/bin/systemctl",
+                "/usr/bin/nice",
+                "/usr/bin/env",
+                "/usr/bin/python3",
+            ),
+        )
+        self.assertEqual((gate.COMPARATOR_RESOLVE_TIMEOUT, gate.COMPARATOR_LOCK_MAX_WAIT), (60, 600))
+        self.assertEqual(gate.COMPARATOR_RECEIPT_SCHEMA, "host_comparator_receipt.v1")
 
     def test_state_root_follows_xdg_state_home(self) -> None:
         default = self.home / ".local" / "state" / "ai-agents-skills" / "comparator"
@@ -2731,6 +2768,1377 @@ class ComparatorAttestationTimeoutTests(unittest.TestCase):
                 (stalled["status"], stalled["detail"]),
                 ("command_failed", "lean --version: timeout after 7 seconds"),
             )
+
+
+# The judge run on Linux. A fake toolchain stands in for Lean: its lake drives
+# the gate's own wrapper program through /usr/bin/env -i, once per scripted
+# step, with bwrap arguments shaped like lake comparator's, and its other
+# programs exit as the scenario says. A fake bwrap answers the gate's probes,
+# logs each step's arguments and runs the step's command.
+
+LINUX_RUN = (
+    sys.platform == "linux"
+    and os.geteuid() != 0
+    and os.access("/usr/bin/python3", os.X_OK)
+    and os.access("/usr/bin/env", os.X_OK)
+    and os.access("/bin/sh", os.X_OK),
+    "a comparator run needs Linux and a user that is not root; its wrapper program "
+    "needs /usr/bin/python3 and /usr/bin/env, and the fake tools need /bin/sh",
+)
+# What /bin/sh may add to the environment of a program it starts: dash adds
+# PWD, and bash also SHLVL and _. Environment checks leave these out.
+SHELL_VARIABLES = frozenset({"PWD", "SHLVL", "_"})
+RECEIPT_KEYS = {
+    "schema_version",
+    "run_id",
+    "created_at",
+    "gate",
+    "platform",
+    "toolchain",
+    "sandbox",
+    "challenge",
+    "solution",
+    "run",
+    "result",
+}
+RESULT_KEYS = ("comparator_status", "comparator_rejection_kind", "comparator_detail", "findings")
+# The manifest the fake lake resolve-deps writes, as Lake writes one for a
+# workspace without dependencies.
+FAKE_MANIFEST = (
+    '{"version": "1.1.0", "packagesDir": ".lake/packages", "packages": [], '
+    '"name": "aas_comparator", "lakeDir": ".lake"}\n'
+)
+# The five steps before the kernels, as a scenario of the fake lake names them.
+PRE_KERNEL_PLAN = [
+    {"step": "resolve"},
+    {"step": "build", "target": "AASChallenge"},
+    {"step": "export", "target": "AASChallenge"},
+    {"step": "build", "target": "AASSolution"},
+    {"step": "export", "target": "AASSolution"},
+]
+# The arguments lake comparator v4.35.0 gives each kernel before the export's path.
+KERNEL_ARGUMENTS = {
+    "leanchecker": ["--silent", "--from-export"],
+    "leanchecker-paranoid": ["--silent", "--from-export"],
+    "lean4lean": ["--import"],
+    "nanoda_bin": [],
+    "con-leche": [],
+    "con-ron": [],
+}
+# For each rejection kind: the steps that run, their exit codes and lake
+# comparator's final message.
+REJECTION_PLANS = {
+    "statement_mismatch": (
+        PRE_KERNEL_PLAN,
+        {},
+        "Challenge and solution theorem statement do not match: 'add_zero_right'",
+    ),
+    "kind_mismatch": (
+        PRE_KERNEL_PLAN,
+        {},
+        "Challenge and solution constant kind don't match: 'add_zero_right'",
+    ),
+    "constant_mismatch": (
+        PRE_KERNEL_PLAN,
+        {},
+        "Const does not match between challenge and target 'Nat.gcd'",
+    ),
+    "missing_constant": (PRE_KERNEL_PLAN, {}, "Const not found in solution: 'add_zero_right'"),
+    "forbidden_axiom": (PRE_KERNEL_PLAN, {}, "Illegal axiom detected: 'sorryAx'"),
+    "kernel_rejected": (
+        [*PRE_KERNEL_PLAN, {"step": "kernel", "target": "leanchecker"}],
+        {"kernel leanchecker": 1},
+        "Lean default exited with 1",
+    ),
+    "build_failed": (PRE_KERNEL_PLAN[:4], {"build AASSolution": 1}, "Child exited with 1"),
+}
+# A fake toolchain program: argv[1] names it, and settings.json, scenario.json
+# and calls.jsonl lie beside this file, outside the toolchain, so the record's
+# pins and the run's stat walk never see them change.
+FAKE_JUDGE = r'''"""A fake toolchain program for the comparator run tests; argv[1] names it.
+
+lean --version prints the banner. lake resolve-deps writes a manifest. lake
+comparator logs what the gate gave it, runs the scenario's steps through
+COMPARATOR_BWRAP under /usr/bin/env -i, applies the scenario's hooks, then
+prints the scenario's output and exits with its code. Any other call is one
+sandboxed step, which exits with the code the scenario gives it.
+"""
+
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load(name):
+    with open(os.path.join(HERE, name), encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+SETTINGS = load("settings.json")
+PLAN = load("scenario.json")
+TOOLCHAIN = SETTINGS["toolchain"]
+
+
+def record(entry):
+    with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def mode(path):
+    return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+def environment():
+    """The environment this program was started with, before Python added LC_CTYPE (PEP 538)."""
+    with open("/proc/self/environ", "rb") as handle:
+        items = handle.read().split(b"\0")
+    pairs = [item.decode("utf-8", "surrogateescape").partition("=") for item in items if item]
+    return {name: value for name, _, value in pairs}
+
+
+def text(path):
+    with open(path, "rb") as handle:
+        return handle.read().decode("utf-8", "replace")
+
+
+def workspace(root):
+    """Each entry below root outside its .lake: relative path to [text or None, mode]."""
+    entries = {}
+    for directory, directories, names in os.walk(root):
+        if directory == root:
+            directories[:] = [name for name in directories if name != ".lake"]
+        for name in directories:
+            path = os.path.join(directory, name)
+            entries[os.path.relpath(path, root)] = [None, mode(path)]
+        for name in names:
+            path = os.path.join(directory, name)
+            entries[os.path.relpath(path, root)] = [text(path), mode(path)]
+    return entries
+
+
+def bwrap_args(step, project):
+    """The wrapper's arguments for one step, in the order lake comparator builds them."""
+    kind, target = step["step"], step.get("target", "")
+    bin_dir = os.path.join(TOOLCHAIN, "bin")
+    path = ":".join([bin_dir, "/usr/bin", "/bin"])
+    dot_lake = os.path.join(project, ".lake")
+    guarded = ["--tmpfs", "/run", "--tmpfs", "/var"]
+    readable = [
+        "--ro-bind", project, project, "--ro-bind", TOOLCHAIN, TOOLCHAIN,
+        "--ro-bind", TOOLCHAIN, TOOLCHAIN,
+    ]
+    writable = ["--bind", dot_lake, dot_lake]
+    build_env = ["--setenv", "PATH", path, "--setenv", "LEAN_ABORT_ON_PANIC", "1"]
+    network = []
+    chdir = ["--chdir", project]
+    if kind == "resolve":
+        middle = readable + writable + build_env
+        network = ["--share-net"]
+        command = [os.path.join(bin_dir, "lake"), "env"]
+    elif kind == "build":
+        middle = guarded + readable + writable + build_env
+        command = [os.path.join(bin_dir, "lake"), "build", target]
+    elif kind == "export":
+        exporter = os.path.join(bin_dir, "leanexport")
+        middle = guarded + [
+            "--ro-bind", project, project, "--ro-bind", dot_lake, dot_lake,
+            "--ro-bind", TOOLCHAIN, TOOLCHAIN, "--ro-bind", exporter, exporter,
+            "--setenv", "LEAN_ABORT_ON_PANIC", "1", "--setenv", "PATH", path,
+        ]
+        command = [exporter, target, "--", "add_zero_right", "propext"]
+    else:
+        kernel = os.path.join(bin_dir, target)
+        descriptor, export = tempfile.mkstemp()
+        os.close(descriptor)
+        middle = guarded + [
+            "--ro-bind", export, export, "--ro-bind", kernel, kernel,
+            "--ro-bind", TOOLCHAIN, TOOLCHAIN, "--setenv", "LEAN_ABORT_ON_PANIC", "1",
+        ]
+        chdir = ["--chdir", tempfile.gettempdir()]
+        command = [kernel, *SETTINGS["kernel_arguments"][target], export]
+    extra = [value.format(ws=project) for value in step.get("extra", [])]
+    return (
+        SETTINGS["covers"] + middle + extra + SETTINGS["isolation"] + network + chdir
+        + ["--", *command]
+    )
+
+
+def apply(hook, places):
+    """Change what a hook names, as a solution or another process might during a run."""
+    action, argument = hook[0], hook[1].format(**places)
+    if action == "append":
+        with open(argument, "ab") as handle:
+            handle.write(b"\n-- changed during the run\n")
+    elif action == "write":
+        with open(argument, "w", encoding="utf-8") as handle:
+            handle.write("-- planted during the run\n")
+    elif action == "touch":
+        info = os.lstat(argument)
+        os.utime(argument, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
+    elif action == "same_size":
+        # One byte changes; the size and the times stay, so only a digest sees it.
+        info = os.lstat(argument)
+        with open(argument, "r+b") as handle:
+            data = handle.read()
+            handle.seek(0)
+            handle.write(data[:-1] + (b"#" if data[-1:] != b"#" else b" "))
+        os.utime(argument, ns=(info.st_atime_ns, info.st_mtime_ns))
+    elif action == "chmod":
+        os.chmod(argument, int(hook[2], 8))
+    elif action == "mkdir":
+        os.mkdir(argument)
+    elif action in ("locked_directory", "read_only_directory"):
+        os.mkdir(argument)
+        with open(os.path.join(argument, "inside"), "w", encoding="utf-8") as handle:
+            handle.write("inside\n")
+        os.chmod(argument, 0 if action == "locked_directory" else 0o500)
+    elif action == "sleep":
+        time.sleep(float(argument))
+    elif action == "flood":
+        chunk = b"x" * 65536
+        for _ in range(int(argument) // len(chunk) + 1):
+            sys.stdout.buffer.write(chunk)
+        sys.stdout.flush()
+
+
+def comparator(args):
+    project = os.path.realpath(os.getcwd())
+    wrapper = os.environ.get("COMPARATOR_BWRAP", "")
+    run = os.path.dirname(wrapper)
+    config = args[args.index("--config") + 1]
+    record({
+        "call": "comparator",
+        "args": args,
+        "cwd": project,
+        "env": environment(),
+        "workspace": workspace(project),
+        "run": sorted(os.listdir(run)),
+        "modes": {name: mode(os.path.join(run, name)) for name in os.listdir(run)},
+        "config": text(config),
+        "wrapper": text(wrapper),
+        "settings": json.loads(text(os.path.join(run, "wrapper.json"))),
+        "log": text(os.path.join(run, "phases.jsonl")),
+    })
+    os.makedirs(os.path.join(project, ".lake"), exist_ok=True)
+    places = {"ws": project, "run": run}
+    for hook in PLAN.get("before", []):
+        apply(hook, places)
+    for step in PLAN.get("steps", []):
+        completed = subprocess.run(
+            ["/usr/bin/env", "-i", wrapper, *bwrap_args(step, project)],
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+        record({"call": "wrapper", "step": step, "rc": completed.returncode})
+    for hook in PLAN.get("after", []):
+        apply(hook, places)
+    sys.stdout.write(PLAN.get("stdout", ""))
+    sys.stdout.flush()
+    sys.stderr.write(PLAN.get("stderr", ""))
+    sys.stderr.flush()
+    return PLAN.get("rc", 0)
+
+
+def main():
+    tool, args = sys.argv[1], sys.argv[2:]
+    if tool == "lean" and args == ["--version"]:
+        record({"call": "lean", "args": args})
+        print(SETTINGS["banner"])
+        return 0
+    if tool == "lake" and args == ["resolve-deps"]:
+        record({
+            "call": "resolve-deps",
+            "cwd": os.getcwd(),
+            "env": environment(),
+            "entries": sorted(os.listdir(".")),
+        })
+        time.sleep(PLAN.get("resolve_deps_sleep", 0))
+        if PLAN.get("manifest", True):
+            with open("lake-manifest.json", "w", encoding="utf-8") as handle:
+                handle.write(SETTINGS["manifest"])
+        if PLAN.get("resolve_deps_rc", 0):
+            sys.stderr.write("error: the scenario fails resolve-deps\n")
+        return PLAN.get("resolve_deps_rc", 0)
+    if tool == "lake" and args[:1] == ["comparator"]:
+        return comparator(args[1:])
+    if tool == "lake" and args == ["env"]:
+        step = "resolve"
+    elif tool == "lake" and args[:1] == ["build"]:
+        step = " ".join(["build", *args[1:]])
+    elif tool == "leanexport":
+        step = "export " + args[0]
+    else:
+        step = "kernel " + tool
+    record({"call": "step", "step": step, "args": args})
+    return PLAN.get("rcs", {}).get(step, 0)
+
+
+sys.exit(main())
+'''
+FAKE_RUN_BWRAP = r'''"""A fake bwrap: it answers --version and the preflight, and logs and runs a step."""
+
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("bubblewrap 0.12.0")
+    sys.exit(0)
+with open(os.path.join(HERE, "scenario.json"), encoding="utf-8") as handle:
+    plan = json.load(handle)
+if args == ["--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "--", "/bin/true"]:
+    sys.exit(plan.get("bwrap_preflight_rc", 0))
+with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"call": "bwrap", "args": args}, sort_keys=True) + "\n")
+command = args[args.index("--") + 1 :]
+os.execv(command[0], command)
+'''
+FAKE_HOST_TOOL = r'''"""A fake systemd-run or systemctl (argv[1]) that logs its call and environment.
+
+systemd-run fails as one without a user bus does when the scenario says so,
+and otherwise runs the command after --, as systemd-run --scope does.
+"""
+
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+tool, args = sys.argv[1], sys.argv[2:]
+# The environment this program was started with, before Python added LC_CTYPE (PEP 538).
+with open("/proc/self/environ", "rb") as handle:
+    pairs = [
+        item.decode("utf-8", "surrogateescape").partition("=")
+        for item in handle.read().split(b"\0")
+        if item
+    ]
+started_with = {name: value for name, _, value in pairs}
+with open(os.path.join(HERE, "calls.jsonl"), "a", encoding="utf-8") as handle:
+    handle.write(
+        json.dumps({"call": tool, "args": args, "env": started_with}, sort_keys=True) + "\n"
+    )
+with open(os.path.join(HERE, "scenario.json"), encoding="utf-8") as handle:
+    plan = json.load(handle)
+if tool == "systemd-run":
+    if plan.get("systemd_run_rc", 0):
+        sys.stderr.write("Failed to connect to bus: No medium found\n")
+        sys.exit(plan["systemd_run_rc"])
+    command = args[args.index("--") + 1 :]
+    os.execv(command[0], command)
+sys.exit(0)
+'''
+
+
+def _sh_tool(path: Path, implementation: Path, *arguments: str) -> Path:
+    """A '#!/bin/sh' program that runs ``implementation`` with this interpreter.
+
+    Every path in it is absolute, so it also runs under env -i, without PATH.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    words = [sys.executable, "-I", str(implementation), *arguments]
+    path.write_text(
+        "#!/bin/sh\nexec " + " ".join(shlex.quote(word) for word in words) + ' "$@"\n',
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _judge_toolchain(directory: Path, fake: Path) -> Path:
+    """A complete toolchain tree whose programs are fake tools run by ``fake``/judge_tool.py."""
+
+    challenge_tests._comparator_toolchain(directory)
+    implementation = fake / "judge_tool.py"
+    implementation.write_text(FAKE_JUDGE, encoding="utf-8")
+    for name in (*challenge_tests.COMPARATOR_BINARIES, *challenge_tests.BUNDLED_KERNELS):
+        _sh_tool(directory / "bin" / name, implementation, name)
+    return directory
+
+
+def _fake_bwrap(path: Path, fake: Path) -> Path:
+    implementation = fake / "bwrap_tool.py"
+    implementation.write_text(FAKE_RUN_BWRAP, encoding="utf-8")
+    return _sh_tool(path, implementation)
+
+
+def _host_tool(path: Path, fake: Path, name: str) -> Path:
+    implementation = fake / "host_tool.py"
+    implementation.write_text(FAKE_HOST_TOOL, encoding="utf-8")
+    return _sh_tool(path, implementation, name)
+
+
+@contextlib.contextmanager
+def _restored(*paths: Path) -> Any:
+    """Give each file back its bytes, mode and times after the block."""
+
+    saved = [(path, path.read_bytes(), os.lstat(path)) for path in paths]
+    try:
+        yield
+    finally:
+        for path, data, info in saved:
+            path.write_bytes(data)
+            path.chmod(stat.S_IMODE(info.st_mode))
+            os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+
+
+def _without_shell(environment: dict[str, str]) -> dict[str, str]:
+    return {name: value for name, value in environment.items() if name not in SHELL_VARIABLES}
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+def _accepted_plan(*, paranoid: bool = False) -> dict[str, Any]:
+    kernels = [*challenge_tests.BUNDLED_KERNELS, "leanchecker"] if paranoid else ["leanchecker"]
+    return {
+        "steps": [*PRE_KERNEL_PLAN, *({"step": "kernel", "target": kernel} for kernel in kernels)],
+        "stdout": ComparatorClassificationTests.ACCEPTED_STDOUT,
+        "rc": 0,
+    }
+
+
+def _failed_plan(steps: list[dict[str, Any]], message: str, rcs: dict[str, int]) -> dict[str, Any]:
+    return {
+        "steps": steps,
+        "rcs": rcs,
+        "stdout": "Resolving dependencies\n",
+        "stderr": f"output of the build\nerror: {message}\n",
+        "rc": 1,
+    }
+
+
+@unittest.skipUnless(*LINUX_RUN)
+class ComparatorRunTests(unittest.TestCase):
+    """The judge run on Linux, with a fake toolchain and a fake bwrap.
+
+    The fake lake drives the wrapper program the gate writes, through
+    /usr/bin/env -i, once per scripted step; the fake bwrap logs the step's
+    arguments and runs its command, a fake tool that exits as the scenario
+    says. --memory-limit is off unless a test says otherwise, and the state
+    directory, HOME, the toolchain and the bwrap lie in a temporary directory.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        check = subprocess.run(
+            ["/usr/bin/python3", "-I", "-c", "import sys; sys.exit(sys.version_info < (3, 9))"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if check.returncode != 0:
+            raise unittest.SkipTest("the run's wrapper program needs /usr/bin/python3 3.9 or later")
+
+    def setUp(self) -> None:
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        # Real paths, as the run reports them.
+        self.base = Path(os.path.realpath(stack.enter_context(tempfile.TemporaryDirectory())))
+        self.home = self.base / "home"
+        self.home.mkdir()
+        self.fake = self.base / "fake"
+        self.fake.mkdir()
+        self.elan = self.base / "elan"
+        self.toolchain = _judge_toolchain(
+            self.elan / "toolchains" / "leanprover--lean4---v4.35.0", self.fake
+        )
+        self.files = challenge_tests._toolchain_files(self.toolchain)
+        self.bwrap = _fake_bwrap(self.base / "opt" / "bubblewrap-0.12.0" / "bin" / "bwrap", self.fake)
+        self.input = _tree(self.base / "input", {"Solution.lean": SOLUTION})
+        self.record = _core_record(toolchain={"spec": DEFAULT_TOOLCHAIN, "files": dict(self.files)})
+        self.frozen = self.base / "frozen"
+        self.record_path, self.record_sha = _write_record(self.frozen, self.record)
+        self.state = self.base / "state"
+        self.comparator_state = self.state / "ai-agents-skills" / "comparator"
+        (self.fake / "settings.json").write_text(
+            json.dumps(
+                {
+                    "toolchain": str(self.toolchain),
+                    "banner": BANNER,
+                    "manifest": FAKE_MANIFEST,
+                    "covers": BWRAP_COVERS,
+                    "isolation": BWRAP_ISOLATION,
+                    "kernel_arguments": KERNEL_ARGUMENTS,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._plan(_accepted_plan())
+        stack.enter_context(
+            challenge_tests._readiness_environment(
+                self.home,
+                ELAN_HOME=str(self.elan),
+                XDG_STATE_HOME=str(self.state),
+                AAS_BWRAP=str(self.bwrap),
+            )
+        )
+
+    def _plan(self, plan: dict[str, Any]) -> None:
+        (self.fake / "scenario.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    def _judge(
+        self, *, floor: int | None = 1, input_path: Path | None = None, **overrides: Any
+    ) -> dict[str, Any]:
+        """One comparator_payload run. The disk floor is patched to ``floor`` unless it is None."""
+
+        arguments: dict[str, Any] = {
+            "challenge_record": self.record_path,
+            "challenge_record_sha256": self.record_sha,
+            "solution_modules": ["Solution"],
+            "timeout": 60,
+            "paranoid": False,
+            "keep_workspace": False,
+            "memory_limit": "off",
+        }
+        arguments.update(overrides)
+        # Emptied, not removed: the fakes append to it under any umask.
+        (self.fake / "calls.jsonl").write_bytes(b"")
+        with contextlib.ExitStack() as stack:
+            if floor is not None:
+                stack.enter_context(mock.patch.object(gate, "COMPARATOR_MIN_FREE_BYTES", floor))
+            return gate.comparator_payload(input_path or self.input, **arguments)
+
+    def _main(self) -> tuple[Any, dict[str, Any]]:
+        """The verb through gate.main, with emit captured: (exit code, payload)."""
+
+        emitted: list[dict[str, Any]] = []
+        (self.fake / "calls.jsonl").write_bytes(b"")
+        argv = [
+            "comparator",
+            "--input",
+            str(self.input),
+            "--challenge-record",
+            str(self.record_path),
+            "--challenge-record-sha256",
+            self.record_sha,
+            "--solution-module",
+            "Solution",
+            "--memory-limit",
+            "off",
+        ]
+        with mock.patch.object(gate, "emit", side_effect=emitted.append), mock.patch.object(
+            gate, "COMPARATOR_MIN_FREE_BYTES", 1
+        ):
+            code = gate.main(argv)
+        self.assertEqual(len(emitted), 1)
+        return code, emitted[0]
+
+    def _calls(self, call: str) -> list[dict[str, Any]]:
+        path = self.fake / "calls.jsonl"
+        if not path.exists():
+            return []
+        entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        return [entry for entry in entries if entry["call"] == call]
+
+    def _runs(self) -> list[str]:
+        runs = self.comparator_state / "runs"
+        return sorted(os.listdir(runs)) if runs.exists() else []
+
+    def _receipts(self) -> list[str]:
+        receipts = self.comparator_state / "receipts"
+        return sorted(os.listdir(receipts)) if receipts.exists() else []
+
+    def _run_path(self, payload: dict[str, Any]) -> Path:
+        return self.comparator_state / "runs" / payload["run"]["run_id"]
+
+    def _receipt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """The run's receipt, checked against the payload: path, digest, mode and form."""
+
+        path = Path(payload["receipt"]["path"])
+        self.assertEqual(
+            path, self.comparator_state / "receipts" / (payload["run"]["run_id"] + ".json")
+        )
+        data = path.read_bytes()
+        self.assertEqual(payload["receipt"]["sha256"], _sha256(data))
+        self.assertEqual(_mode(path), 0o600)
+        receipt = json.loads(data.decode("utf-8"))
+        self.assertEqual(
+            data,
+            (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"),
+        )
+        self.assertEqual(set(receipt), RECEIPT_KEYS)
+        self.assertEqual(receipt["schema_version"], "host_comparator_receipt.v1")
+        self.assertEqual(receipt["run_id"], payload["run"]["run_id"])
+        return receipt
+
+    def _assert_no_verdict(self, payload: dict[str, Any], kind: str, detail: str = "") -> None:
+        self.assertEqual(
+            (payload["comparator_status"], payload["comparator_rejection_kind"], payload["ok"]),
+            ("command_failed", "", False),
+            payload,
+        )
+        self.assertEqual([item["kind"] for item in payload["findings"]], [kind], payload)
+        self.assertIn(detail, payload["findings"][0]["detail"])
+
+    def _assert_guard(self, payload: dict[str, Any], status: str, kind: str, detail: str) -> None:
+        """A host guard's refusal: no run directory, no lake, no receipt."""
+
+        self.assertEqual((payload["comparator_status"], payload["ok"]), (status, False), payload)
+        self.assertEqual([item["kind"] for item in payload["findings"]], [kind], payload)
+        self.assertIn(detail, payload["findings"][0]["detail"])
+        self.assertEqual(payload["run"]["run_id"], "")
+        self.assertEqual(payload["receipt"], {"path": "", "sha256": ""})
+        self.assertEqual(self._runs(), [])
+        self.assertEqual(self._receipts(), [])
+        self.assertEqual(self._calls("resolve-deps") + self._calls("comparator"), [])
+
+    def test_accepted_and_each_rejection(self) -> None:
+        code, payload = self._main()
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(
+            (
+                payload["comparator_status"],
+                payload["comparator_rejection_kind"],
+                payload["comparator_detail"],
+                payload["ok"],
+                payload["findings"],
+            ),
+            ("accepted", "", "", True, []),
+            payload,
+        )
+        run = payload["run"]
+        self.assertEqual(
+            [(step["phase"], step["target"], step["rc"]) for step in run["phases"]],
+            [(phase, target, 0) for phase, target in [*STEPS_BEFORE_KERNELS, ("kernel", "leanchecker")]],
+        )
+        self.assertRegex(run["run_id"], r"\A[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
+        self.assertEqual((run["returncode"], run["timeout_seconds"], run["workspace_kept"]), (0, 300, ""))
+        self.assertIsInstance(run["seconds"], float)
+        self.assertTrue(run["stdout_tail"].endswith(OKAY_LINE + "\n"), run["stdout_tail"])
+        self.assertEqual(payload["solution"]["post_digest"], payload["solution"]["digest"])
+        self.assertEqual(
+            payload["sandbox"]["wrapper_sha256"],
+            _sha256(b"#!/usr/bin/python3 -I\n" + gate.COMPARATOR_WRAPPER_SOURCE.encode("utf-8")),
+        )
+        self.assertEqual(payload["limitations"], [*LIMITATIONS, NO_MEMORY_LIMIT])
+        # Nothing of the run is left but its receipt.
+        self.assertEqual(self._runs(), [])
+        receipt = self._receipt(payload)
+        self.assertRegex(
+            receipt["created_at"], r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z"
+        )
+        gate_path = Path(os.path.realpath(scanner.GATE_PY))
+        self.assertEqual(
+            receipt["gate"], {"path": str(gate_path), "sha256": _sha256(gate_path.read_bytes())}
+        )
+        self.assertEqual(
+            receipt["platform"], {"system": os.uname().sysname, "machine": os.uname().machine}
+        )
+        for section in ("toolchain", "sandbox", "challenge"):
+            self.assertEqual(receipt[section], payload[section], section)
+        self.assertEqual(receipt["solution"], {"input": str(self.input), **payload["solution"]})
+        self.assertEqual(
+            receipt["run"],
+            {key: run[key] for key in ("argv", "returncode", "seconds", "timeout_seconds", "phases")},
+        )
+        self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+
+        for kind, (steps, rcs, message) in REJECTION_PLANS.items():
+            with self.subTest(kind=kind):
+                self._plan(_failed_plan(steps, message, rcs))
+                code, payload = self._main()
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    (
+                        payload["comparator_status"],
+                        payload["comparator_rejection_kind"],
+                        payload["comparator_detail"],
+                        payload["ok"],
+                        payload["findings"],
+                    ),
+                    ("rejected", kind, message, False, []),
+                    payload,
+                )
+                self.assertEqual(payload["run"]["returncode"], 1)
+                receipt = self._receipt(payload)
+                self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+                self.assertEqual(self._runs(), [])
+
+        with self.subTest(case="paranoid"):
+            # The run is paranoid by the flag: the bundled kernels run before leanchecker.
+            self._plan(_accepted_plan(paranoid=True))
+            payload = self._judge(paranoid=True)
+            self.assertEqual(payload["comparator_status"], "accepted", payload)
+            self.assertEqual(payload["run"]["argv"][-1], "--paranoid")
+            self.assertEqual(
+                [step["target"] for step in payload["run"]["phases"][5:]],
+                [*challenge_tests.BUNDLED_KERNELS, "leanchecker"],
+            )
+
+    def test_workspace_and_run_files(self) -> None:
+        files = {
+            "Sol/Main.lean": "import Sol.Lemmas\n"
+            "theorem add_zero_right (n : Nat) : n + 0 = n := Sol.helper n\n",
+            "Sol/Lemmas.lean": "namespace Sol\n"
+            "theorem helper (n : Nat) : n + 0 = n := by simp\nend Sol\n",
+            "Unused.lean": "theorem unused : True := trivial\n",
+        }
+        two = _tree(self.base / "two", files)
+        payload = self._judge(input_path=two, solution_modules=["Sol.Main"])
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        run = self._run_path(payload)
+        ws = run / "ws"
+        # lake resolve-deps runs on the generated files alone, before any solution byte.
+        (resolve,) = self._calls("resolve-deps")
+        self.assertEqual(resolve["cwd"], str(ws))
+        self.assertEqual(resolve["entries"], ["lakefile.toml", "lean-toolchain"])
+        (judged,) = self._calls("comparator")
+        self.assertEqual(judged["cwd"], str(ws))
+        self.assertEqual(judged["args"], ["--config", str(run / "comparator.json")])
+        manifest_mode = judged["workspace"]["lake-manifest.json"][1]
+        self.assertEqual(
+            judged["workspace"],
+            {
+                "AASChallenge.lean": [CHALLENGE_BYTES.decode("utf-8"), 0o600],
+                "AASSolution.lean": ["import Sol.Main\n", 0o600],
+                "Sol": [None, 0o700],
+                "Sol/Lemmas.lean": [files["Sol/Lemmas.lean"], 0o600],
+                "Sol/Main.lean": [files["Sol/Main.lean"], 0o600],
+                "lake-manifest.json": [FAKE_MANIFEST, manifest_mode],
+                "lakefile.toml": [gate.comparator_lakefile(["Sol.Lemmas", "Sol.Main"]), 0o600],
+                "lean-toolchain": [DEFAULT_TOOLCHAIN + "\n", 0o600],
+            },
+        )
+        self.assertEqual(
+            judged["modes"],
+            {
+                "bwrap-wrapper": 0o700,
+                "comparator.json": 0o600,
+                "home": 0o700,
+                "phases.jsonl": 0o600,
+                "tmp": 0o700,
+                "wrapper.json": 0o600,
+                "ws": 0o700,
+            },
+        )
+        self.assertEqual(judged["run"], sorted(judged["modes"]))
+        self.assertEqual(judged["config"], gate.comparator_config(self.record).decode("ascii"))
+        self.assertEqual(judged["wrapper"], "#!/usr/bin/python3 -I\n" + gate.COMPARATOR_WRAPPER_SOURCE)
+        self.assertEqual(judged["log"], "")
+        self.assertEqual(
+            judged["settings"],
+            {
+                "bwrap": str(self.bwrap),
+                "log": str(run / "phases.jsonl"),
+                "toolchain_dir": str(self.toolchain),
+                "run_dir": str(run),
+                "writable": str(ws / ".lake"),
+            },
+        )
+        self.assertEqual(
+            payload["solution"]["files"],
+            {name: _sha256(files[name].encode("utf-8")) for name in ("Sol/Main.lean", "Sol/Lemmas.lean")},
+        )
+        self.assertEqual(_mode(self.comparator_state / "comparator.lock"), 0o600)
+        self.assertEqual(self._runs(), [])
+
+        # The modes do not depend on the umask, even one that strips the owner's bits.
+        previous = os.umask(0o277)
+        try:
+            payload = self._judge(input_path=two, solution_modules=["Sol.Main"])
+        finally:
+            os.umask(previous)
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        (judged,) = self._calls("comparator")
+        self.assertEqual(
+            {name: entry[1] for name, entry in judged["workspace"].items() if name != "lake-manifest.json"},
+            {
+                "AASChallenge.lean": 0o600,
+                "AASSolution.lean": 0o600,
+                "Sol": 0o700,
+                "Sol/Lemmas.lean": 0o600,
+                "Sol/Main.lean": 0o600,
+                "lakefile.toml": 0o600,
+                "lean-toolchain": 0o600,
+            },
+        )
+        self.assertEqual(
+            judged["modes"],
+            {
+                "bwrap-wrapper": 0o700,
+                "comparator.json": 0o600,
+                "home": 0o700,
+                "phases.jsonl": 0o600,
+                "tmp": 0o700,
+                "wrapper.json": 0o600,
+                "ws": 0o700,
+            },
+        )
+        self._receipt(payload)
+        self.assertEqual(self._runs(), [])
+
+    def test_state_directory_rules(self) -> None:
+        # A parent that exists keeps its mode; the directories the run owns are 0700.
+        self.state.mkdir()
+        self.state.chmod(0o755)
+        own = (
+            self.comparator_state,
+            self.comparator_state / "receipts",
+            self.comparator_state / "runs",
+        )
+        payload = self._judge()
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertEqual(_mode(self.state), 0o755)
+        for directory in (self.state / "ai-agents-skills", *own):
+            self.assertEqual(_mode(directory), 0o700, directory)
+        # They become 0700 again on each run.
+        for directory in own:
+            directory.chmod(0o755)
+        payload = self._judge()
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        for directory in own:
+            self.assertEqual(_mode(directory), 0o700, directory)
+
+        # The lock file is kept 0600, and a symlink in its place is refused.
+        lock = self.comparator_state / "comparator.lock"
+        lock.chmod(0o644)
+        payload = self._judge()
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertEqual(_mode(lock), 0o600)
+        target = self.base / "elsewhere-lock"
+        target.write_text("not a lock\n", encoding="utf-8")
+        target.chmod(0o644)
+        lock.unlink()
+        lock.symlink_to(target)
+        payload = self._judge()
+        self._assert_no_verdict(payload, "comparator_failed")
+        self.assertEqual(self._calls("resolve-deps"), [])
+        self.assertEqual((target.read_text(encoding="utf-8"), _mode(target)), ("not a lock\n", 0o644))
+        lock.unlink()
+
+        # The disk floor is a floor: exactly that much free space is enough.
+        floor = gate.COMPARATOR_MIN_FREE_BYTES
+        for free, status in ((floor, "accepted"), (floor - 1, "tool_unavailable")):
+            with self.subTest(free=free), mock.patch.object(
+                gate.shutil, "disk_usage", return_value=mock.Mock(free=free)
+            ):
+                payload = self._judge(floor=None)
+                self.assertEqual(payload["comparator_status"], status, payload)
+
+        # A state directory reached through a symlinked parent: the run uses real paths.
+        linked = self.base / "linked-state"
+        linked.symlink_to(self.state, target_is_directory=True)
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(linked)}):
+            payload = self._judge(keep_workspace=True)
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertEqual(payload["run"]["workspace_kept"], str(self._run_path(payload)))
+        self.assertTrue(payload["receipt"]["path"].startswith(str(self.comparator_state) + os.sep))
+        gate.shutil.rmtree(self._run_path(payload))
+
+        # A symlink in place of the state directory is refused; nothing is made where it points.
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        moved = self.base / "moved-state"
+        self.comparator_state.rename(moved)
+        self.comparator_state.symlink_to(elsewhere, target_is_directory=True)
+        payload = self._judge()
+        self._assert_no_verdict(payload, "comparator_failed", "symlink")
+        self.assertEqual(os.listdir(elsewhere), [])
+        self.assertEqual(self._calls("resolve-deps"), [])
+        self.comparator_state.unlink()
+        moved.rename(self.comparator_state)
+        # So is a receipts/ that is not a directory.
+        receipts = self.comparator_state / "receipts"
+        for name in os.listdir(receipts):
+            (receipts / name).unlink()
+        receipts.rmdir()
+        receipts.write_text("not a directory\n", encoding="utf-8")
+        payload = self._judge()
+        self._assert_no_verdict(payload, "comparator_failed", "receipts")
+        self.assertEqual(self._calls("resolve-deps"), [])
+
+    def test_no_verdict_runs(self) -> None:
+        refused_bind = [
+            PRE_KERNEL_PLAN[0],
+            {"step": "build", "target": "AASChallenge", "extra": ["--bind", "{ws}", "{ws}"]},
+        ]
+        for label, plan, kind in (
+            (
+                "the challenge does not build",
+                _failed_plan(PRE_KERNEL_PLAN[:2], "Child exited with 1", {"build AASChallenge": 1}),
+                "challenge_build_failed",
+            ),
+            (
+                "the solution's build is killed",
+                _failed_plan(PRE_KERNEL_PLAN[:4], "Child exited with 137", {"build AASSolution": 137}),
+                "solution_build_aborted",
+            ),
+            (
+                "a step binds the workspace writable",
+                _failed_plan(refused_bind, "Child exited with 125", {}),
+                "wrapper_refused",
+            ),
+        ):
+            with self.subTest(case=label):
+                self._plan(plan)
+                payload = self._judge()
+                self._assert_no_verdict(payload, kind)
+                receipt = self._receipt(payload)
+                self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+                self.assertEqual(self._runs(), [])
+        # The refused step never ran: the bwrap ran the resolve step alone.
+        self.assertEqual(len(self._calls("bwrap")), 1)
+
+        receipts = self._receipts()
+        for label, change, detail in (
+            ("resolve-deps fails", {"resolve_deps_rc": 1}, "exited 1"),
+            ("resolve-deps writes no manifest", {"manifest": False}, "lake-manifest.json"),
+            ("resolve-deps hangs", {"resolve_deps_sleep": 30}, "timeout after 1 seconds"),
+        ):
+            with self.subTest(case=label), mock.patch.object(gate, "COMPARATOR_RESOLVE_TIMEOUT", 1):
+                self._plan({**_accepted_plan(), **change})
+                started = time.monotonic()
+                payload = self._judge()
+                self.assertLess(time.monotonic() - started, 20)
+                self._assert_no_verdict(payload, "workspace_setup_failed", detail)
+                self.assertNotEqual(payload["run"]["run_id"], "")
+                self.assertEqual(payload["receipt"], {"path": "", "sha256": ""})
+                self.assertEqual(self._receipts(), receipts)
+                self.assertEqual(self._calls("comparator"), [])
+                self.assertEqual(self._runs(), [])
+
+    def test_integrity(self) -> None:
+        solution = self.input / "Solution.lean"
+        stat_only = self.toolchain / "lib" / "lean" / "Init.olean"
+        pinned = self.toolchain / "bin" / "leanchecker"
+        challenge = self.frozen / "Challenge.lean"
+        for label, restore, hook, kind, detail in (
+            ("an input file", solution, ["append", str(solution)], "input", "Solution.lean"),
+            ("the workspace", None, ["write", "{ws}/Planted.lean"], "workspace", "outside .lake"),
+            ("a toolchain entry", stat_only, ["touch", str(stat_only)], "toolchain", "stat walk"),
+            ("a pinned toolchain file", pinned, ["same_size", str(pinned)], "toolchain", "pinned"),
+            ("the wrapper", None, ["append", "{run}/bwrap-wrapper"], "sandbox", "wrapper program"),
+            ("the bwrap", self.bwrap, ["append", str(self.bwrap)], "sandbox", "bwrap binary"),
+            ("the record", self.record_path, ["append", str(self.record_path)], "challenge", "record"),
+            ("Challenge.lean", challenge, ["append", str(challenge)], "challenge", "Challenge.lean"),
+        ):
+            finding = f"{kind}_changed_during_verification"
+            with self.subTest(change=label), _restored(*([restore] if restore else [])):
+                self._plan({**_accepted_plan(), "after": [hook]})
+                payload = self._judge()
+                self._assert_no_verdict(payload, finding, detail)
+                # Each check names only what it saw change.
+                if label == "a toolchain entry":
+                    self.assertNotIn("pinned", payload["findings"][0]["detail"])
+                if label == "a pinned toolchain file":
+                    self.assertNotIn("stat walk", payload["findings"][0]["detail"])
+                if kind == "input":
+                    self.assertNotEqual(
+                        payload["solution"]["post_digest"], payload["solution"]["digest"]
+                    )
+                else:
+                    self.assertEqual(
+                        payload["solution"]["post_digest"], payload["solution"]["digest"]
+                    )
+                receipt = self._receipt(payload)
+                self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+                self.assertEqual(self._runs(), [])
+
+        # A new directory in the toolchain shows in the stat walk.
+        planted = self.toolchain / "planted"
+        self._plan({**_accepted_plan(), "after": [["mkdir", str(planted)]]})
+        try:
+            payload = self._judge()
+        finally:
+            if os.path.lexists(planted):
+                planted.rmdir()
+        self._assert_no_verdict(payload, "toolchain_changed_during_verification", "stat walk")
+
+        # A change after a rejection takes the rejection back.
+        steps, rcs, message = REJECTION_PLANS["statement_mismatch"]
+        with _restored(solution):
+            self._plan({**_failed_plan(steps, message, rcs), "after": [["append", str(solution)]]})
+            payload = self._judge()
+        self._assert_no_verdict(payload, "input_changed_during_verification")
+        self.assertEqual(payload["comparator_detail"], message)
+
+    def test_limits_and_host_guards(self) -> None:
+        import fcntl  # Linux only, as this class is
+
+        host = self.base / "host"
+        systemd_run = _host_tool(host / "systemd-run", self.fake, "systemd-run")
+        systemctl = _host_tool(host / "systemctl", self.fake, "systemctl")
+        lock = self.comparator_state / "comparator.lock"
+        bus = {
+            "XDG_RUNTIME_DIR": "/run/user/4242",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/4242/bus",
+        }
+
+        # The disk floor comes before the memory preflight, and both before the lock.
+        with mock.patch.object(gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)):
+            payload = self._judge(floor=2**62, memory_limit="512M")
+        self._assert_guard(payload, "tool_unavailable", "insufficient_disk", "bytes free")
+        self.assertEqual(self._calls("systemd-run"), [])
+        self.assertFalse(os.path.lexists(lock))
+
+        self._plan({**_accepted_plan(), "systemd_run_rc": 1})
+        with mock.patch.object(gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)), mock.patch.dict(
+            os.environ, bus
+        ):
+            payload = self._judge(memory_limit="512M")
+        self._assert_guard(
+            payload, "tool_unavailable", "memory_limit_unavailable", "Failed to connect to bus"
+        )
+        (preflight,) = self._calls("systemd-run")
+        self.assertEqual(
+            preflight["args"],
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "-p",
+                "MemoryMax=512M",
+                "-p",
+                "MemorySwapMax=0",
+                "--",
+                "/bin/true",
+            ],
+        )
+        self.assertEqual(_without_shell(preflight["env"]), {"PATH": "/usr/bin:/bin", **bus})
+        self.assertFalse(os.path.lexists(lock))
+        self._plan(_accepted_plan())
+
+        not_executable = host / "python3-not-executable"
+        not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        not_executable.chmod(0o644)
+        for interpreter in (host / "missing" / "python3", not_executable):
+            with self.subTest(interpreter=interpreter.name), mock.patch.object(
+                gate, "COMPARATOR_WRAPPER_INTERPRETER", str(interpreter)
+            ):
+                payload = self._judge()
+                self._assert_guard(
+                    payload, "tool_unavailable", "wrapper_interpreter_unavailable", str(interpreter)
+                )
+                self.assertFalse(os.path.lexists(lock))
+
+        # Another run holds the lock: this one waits for its --timeout, then gives up.
+        descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            started = time.monotonic()
+            payload = self._judge(timeout=1)
+            waited = time.monotonic() - started
+        finally:
+            os.close(descriptor)
+        self._assert_guard(payload, "command_failed", "host_busy", "waited 1 s")
+        self.assertGreaterEqual(waited, 1.0)
+        self.assertLess(waited, 30)
+        # The wait is the timeout, and never more than COMPARATOR_LOCK_MAX_WAIT.
+        descriptor = os.open(lock, os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            started = time.monotonic()
+            with mock.patch.object(gate, "COMPARATOR_LOCK_MAX_WAIT", 1):
+                payload = self._judge(timeout=8)
+            waited = time.monotonic() - started
+        finally:
+            os.close(descriptor)
+        self._assert_guard(payload, "command_failed", "host_busy", "waited 1 s")
+        self.assertGreaterEqual(waited, 1.0)
+        self.assertLess(waited, 6)
+
+        # Once the judge has started, a run without a verdict still gets a receipt (D10).
+        self._plan({**_accepted_plan(), "before": [["sleep", "30"]]})
+        with mock.patch.object(gate, "COMPARATOR_SYSTEMCTL", str(systemctl)), mock.patch.object(
+            gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)
+        ):
+            started = time.monotonic()
+            payload = self._judge(timeout=2)
+            self.assertLess(time.monotonic() - started, 25)
+        self._assert_no_verdict(payload, "timeout", "2 seconds")
+        self.assertIsNone(payload["run"]["returncode"])
+        self._receipt(payload)
+        self.assertEqual(self._runs(), [])
+        # Without a memory limit there is no scope: no preflight, and none to stop.
+        self.assertEqual(self._calls("systemd-run") + self._calls("systemctl"), [])
+
+        self._plan({**_accepted_plan(), "before": [["flood", str(17 * 1024 * 1024)]]})
+        payload = self._judge()
+        self._assert_no_verdict(payload, "output_limit")
+        self.assertIsNone(payload["run"]["returncode"])
+        self._receipt(payload)
+        self.assertEqual(self._runs(), [])
+
+    def test_memory_limit_scope(self) -> None:
+        """--memory-limit puts the judge in a user scope of its own, here through a fake systemd-run."""
+
+        host = self.base / "host"
+        systemd_run = _host_tool(host / "systemd-run", self.fake, "systemd-run")
+        systemctl = _host_tool(host / "systemctl", self.fake, "systemctl")
+        bus = {
+            "XDG_RUNTIME_DIR": "/run/user/4242",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/4242/bus",
+        }
+        outer = {"PATH": "/usr/bin:/bin", **bus}
+        with mock.patch.object(gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)), mock.patch.object(
+            gate, "COMPARATOR_SYSTEMCTL", str(systemctl)
+        ), mock.patch.dict(os.environ, bus):
+            payload = self._judge(memory_limit="512M")
+            self.assertEqual(payload["comparator_status"], "accepted", payload)
+            unit = "aas-comparator-" + payload["run"]["run_id"]
+            prefix = [
+                str(systemd_run),
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                f"--unit={unit}",
+                "-p",
+                "MemoryMax=512M",
+                "-p",
+                "MemorySwapMax=0",
+                "--",
+                "/usr/bin/nice",
+                "-n",
+                "19",
+                "/usr/bin/env",
+                "-i",
+            ]
+            self.assertEqual(payload["run"]["argv"][: len(prefix)], prefix)
+            preflight, judge = self._calls("systemd-run")
+            self.assertEqual(preflight["args"][-2:], ["--", "/bin/true"])
+            self.assertEqual(judge["args"], payload["run"]["argv"][1:])
+            for call in (preflight, judge):
+                self.assertEqual(_without_shell(call["env"]), outer)
+            self.assertEqual(payload["sandbox"]["memory_limit"], "512M")
+            self.assertEqual(payload["limitations"], LIMITATIONS)
+            self.assertEqual(self._calls("systemctl"), [])
+
+            # A judge that runs out of time has its scope stopped as well.
+            self._plan({**_accepted_plan(), "before": [["sleep", "30"]]})
+            payload = self._judge(memory_limit="512M", timeout=2)
+            self._assert_no_verdict(payload, "timeout")
+            (kill,) = self._calls("systemctl")
+            self.assertEqual(
+                kill["args"],
+                [
+                    "--user",
+                    "kill",
+                    "--signal=KILL",
+                    "aas-comparator-" + payload["run"]["run_id"] + ".scope",
+                ],
+            )
+            self.assertEqual(_without_shell(kill["env"]), outer)
+
+    def test_environment_wrapper_and_lifecycle(self) -> None:
+        leaks = {
+            "ELAN_HOME": str(self.elan),
+            "LEAN_PATH": "/nonexistent/lean-path",
+            "LAKE_OVERRIDE_LEAN": "/nonexistent/lean",
+            "LD_LIBRARY_PATH": "/nonexistent/lib",
+            "XDG_RUNTIME_DIR": "/run/user/4242",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/4242/bus",
+        }
+        with mock.patch.dict(os.environ, leaks):
+            payload = self._judge()
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        run = self._run_path(payload)
+        bin_dir = self.toolchain / "bin"
+        path = f"{bin_dir}:/usr/bin:/bin"
+        (judged,) = self._calls("comparator")
+        self.assertEqual(
+            _without_shell(judged["env"]),
+            {
+                "PATH": path,
+                "HOME": str(run / "home"),
+                "TMPDIR": str(run / "tmp"),
+                "LANG": "C.UTF-8",
+                "COMPARATOR_BWRAP": str(run / "bwrap-wrapper"),
+            },
+        )
+        (resolve,) = self._calls("resolve-deps")
+        self.assertEqual(
+            _without_shell(resolve["env"]),
+            {"PATH": path, "HOME": str(run / "home"), "TMPDIR": str(run / "tmp"), "LANG": "C.UTF-8"},
+        )
+        self.assertEqual(
+            payload["run"]["argv"],
+            [
+                "/usr/bin/nice",
+                "-n",
+                "19",
+                "/usr/bin/env",
+                "-i",
+                f"PATH={path}",
+                f"HOME={run / 'home'}",
+                f"TMPDIR={run / 'tmp'}",
+                "LANG=C.UTF-8",
+                f"COMPARATOR_BWRAP={run / 'bwrap-wrapper'}",
+                str(bin_dir / "lake"),
+                "comparator",
+                "--config",
+                str(run / "comparator.json"),
+            ],
+        )
+        # The wrapper drops --share-net: the bwrap never sees it, and the phase log names it.
+        steps = self._calls("bwrap")
+        self.assertEqual(len(steps), 6)
+        for step in steps:
+            self.assertNotIn("--share-net", step["args"])
+        self.assertEqual(
+            [phase["dropped"] for phase in payload["run"]["phases"]], [["--share-net"]] + [[]] * 5
+        )
+
+        # An unexpected error after the judge started: no verdict, but a receipt.
+        with mock.patch.object(gate, "classify_comparator_run", side_effect=RuntimeError("x" * 600)):
+            payload = self._judge()
+        self._assert_no_verdict(payload, "comparator_failed")
+        self.assertEqual(payload["findings"][0]["detail"], ("RuntimeError: " + "x" * 600)[:500])
+        receipt = self._receipt(payload)
+        self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+        self.assertEqual(self._runs(), [])
+
+        # --keep-workspace keeps the run directory and reports where it is.
+        payload = self._judge(keep_workspace=True)
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        run = self._run_path(payload)
+        self.assertEqual(payload["run"]["workspace_kept"], str(run))
+        self.assertEqual(self._runs(), [run.name])
+        self.assertEqual((run / "ws" / "Solution.lean").read_bytes(), SOLUTION.encode("utf-8"))
+        self.assertEqual(len(gate.parse_phase_log((run / "phases.jsonl").read_bytes())), 6)
+        self._receipt(payload)
+        gate.shutil.rmtree(run)
+
+        # A receipt that cannot be written leaves no verdict (D11).
+        receipts = self.comparator_state / "receipts"
+        self._plan({**_accepted_plan(), "after": [["chmod", str(receipts), "500"]]})
+        try:
+            payload = self._judge()
+        finally:
+            receipts.chmod(0o700)
+        self._assert_no_verdict(payload, "receipt_write_failed")
+        self.assertEqual(payload["receipt"], {"path": "", "sha256": ""})
+        self.assertNotIn(payload["run"]["run_id"] + ".json", self._receipts())
+        self.assertEqual(self._runs(), [])
+        # A receipt whose write fails part way is removed, not left half written.
+        self._plan(_accepted_plan())
+        accepted = self._judge()
+        before = self._receipts()
+        with mock.patch.object(gate.os, "write", side_effect=OSError(28, "No space left on device")):
+            gate._comparator_receipt(accepted, mock.Mock(input_root=self.input), "partial", receipts)
+        self._assert_no_verdict(accepted, "receipt_write_failed", "No space left on device")
+        self.assertEqual(self._receipts(), before)
+
+        # The cleanup removes what a solution locked away in .lake: a directory
+        # its owner cannot list, and one whose entries its owner cannot remove.
+        self._plan(
+            {
+                **_accepted_plan(),
+                "after": [
+                    ["locked_directory", "{ws}/.lake/locked"],
+                    ["read_only_directory", "{ws}/.lake/read-only"],
+                ],
+            }
+        )
+        payload = self._judge()
+        self.assertEqual(
+            (payload["comparator_status"], payload["findings"]), ("accepted", []), payload
+        )
+        self.assertEqual(self._runs(), [])
+
+        # A cleanup that fails is reported and leaves the verdict alone.
+        self._plan(_accepted_plan())
+        with mock.patch.object(gate.shutil, "rmtree", side_effect=OSError("cannot remove")):
+            payload = self._judge()
+        self.assertEqual((payload["comparator_status"], payload["ok"]), ("accepted", True), payload)
+        self.assertEqual([item["kind"] for item in payload["findings"]], ["cleanup_failed"])
+        self.assertIn("cannot remove", payload["findings"][0]["detail"])
+        # The receipt was written before the cleanup, so it records the verdict alone.
+        self.assertEqual(self._receipt(payload)["result"]["findings"], [])
+        self.assertEqual(self._runs(), [payload["run"]["run_id"]])
+        gate.shutil.rmtree(self._run_path(payload))
+        # So is a removal that reports nothing but leaves the directory.
+        with mock.patch.object(gate.shutil, "rmtree", return_value=None):
+            payload = self._judge()
+        self.assertEqual((payload["comparator_status"], payload["ok"]), ("accepted", True), payload)
+        self.assertEqual([item["kind"] for item in payload["findings"]], ["cleanup_failed"])
+        self.assertIn("still there", payload["findings"][0]["detail"])
+        gate.shutil.rmtree(self._run_path(payload))
+
+    def test_pre_run_refusals(self) -> None:
+        """REGRESSION CHECK: these refusals come before the run and held before it was wired.
+
+        Each refusal happens before the state directory is made and before
+        any lake runs; the run's own code is never reached, so these
+        assertions already held at the S3-A2 head.
+        """
+
+        def refused(payload: dict[str, Any], status: str, kind: str) -> None:
+            self.assertEqual((payload["comparator_status"], payload["ok"]), (status, False), payload)
+            self.assertEqual([item["kind"] for item in payload["findings"]], [kind], payload)
+            for call in ("resolve-deps", "comparator", "bwrap"):
+                self.assertEqual(self._calls(call), [], call)
+            self.assertFalse(os.path.lexists(self.state))
+
+        old = _core_record(
+            toolchain={"spec": "leanprover/lean4:v4.34.1", "files": dict(self.files)}
+        )
+        old_path, old_sha = _write_record(self.base / "frozen-old", old)
+        payload = self._judge(floor=None, challenge_record=old_path, challenge_record_sha256=old_sha)
+        refused(payload, "unsupported_toolchain", "unsupported_toolchain")
+        # Not even lean --version ran.
+        self.assertEqual(self._calls("lean"), [])
+
+        payload = self._judge(floor=None, challenge_record_sha256="0" * 64)
+        refused(payload, "not_run", "challenge_record_mismatch")
+        self.assertEqual(self._calls("lean"), [])
+
+        self._plan({**_accepted_plan(), "bwrap_preflight_rc": 1})
+        payload = self._judge(floor=None)
+        refused(payload, "tool_unavailable", "sandbox_unavailable")
+        self._plan(_accepted_plan())
+
+        exporter = self.toolchain / "bin" / "leanexport"
+        with _restored(exporter):
+            with exporter.open("a", encoding="utf-8") as handle:
+                handle.write("# rebuilt after the freeze\n")
+            payload = self._judge(floor=None)
+        refused(payload, "tool_unavailable", "toolchain_changed")
+
+        con_ron = self.toolchain / "bin" / "con-ron"
+        with _restored(con_ron):
+            con_ron.unlink()
+            lacking = {name: digest for name, digest in self.files.items() if name != "bin/con-ron"}
+            record = _core_record(toolchain={"spec": DEFAULT_TOOLCHAIN, "files": lacking})
+            lacking_path, lacking_sha = _write_record(self.base / "frozen-lacking", record)
+            payload = self._judge(
+                floor=None,
+                challenge_record=lacking_path,
+                challenge_record_sha256=lacking_sha,
+                paranoid=True,
+            )
+        refused(payload, "tool_unavailable", "paranoid_kernel_missing")
+
+    def test_real_systemd_scope(self) -> None:
+        problem = gate._comparator_memory_preflight("10G")
+        if problem:
+            self.skipTest(f"this host starts no user scope with a memory limit: {problem}")
+        payload = self._judge(memory_limit="10G")
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertEqual(
+            payload["run"]["argv"][:6],
+            [
+                "/usr/bin/systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--unit=aas-comparator-" + payload["run"]["run_id"],
+            ],
+        )
+        self.assertEqual(self._runs(), [])
 
 
 if __name__ == "__main__":

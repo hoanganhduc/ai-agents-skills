@@ -252,8 +252,8 @@ The helper never installs Lean, Lake, mathlib, npm packages, Python packages, cr
 
 `lake comparator`, in Lean v4.35.0 and later, builds and exports a solution
 inside a `bwrap` sandbox and judges it with the same toolchain's `leanexport`
-and `leanchecker`. No verb of this gate runs it yet; `doctor` reports under
-`comparator` whether this host could:
+and `leanchecker`. The `comparator` verb (see "Comparator") runs it; `doctor`
+reports under `comparator` whether this host could:
 
 - `platform_supported`: Linux and not running as root. Any other host gives no
   verdict.
@@ -484,10 +484,74 @@ verdicts; `not_run`, `unsupported_toolchain`, `tool_unavailable` and
 `command_failed` give no verdict. The verb exits 0 only for `accepted`, 1 for
 every other result, and 2 for a usage error.
 
-The judge run is not wired yet. When the host, the record, the toolchain,
-the sandbox and the solution pass their checks, the verb reports
-`command_failed` with the finding `comparator_failed` and the detail
-`run not implemented`.
+When the host, the record, the toolchain, the sandbox and the solution pass
+their checks, the run uses a state directory:
+`$XDG_STATE_HOME/ai-agents-skills/comparator` when `XDG_STATE_HOME` is an
+absolute path, and `~/.local/state/ai-agents-skills/comparator` otherwise. It
+must lie outside `--input` (`state_dir_inside_input`, `not_run`). The run then
+stops at the first of these checks that fails:
+
+- The state directory, its `receipts/` and its `runs/` are made, or set,
+  `0700`. Missing parents are made `0700`, and parents that already exist keep
+  their mode. A symlink or a file in place of one of the three is refused
+  (`comparator_failed`, `command_failed`).
+- At least 2 GiB must be free there (`insufficient_disk`, `tool_unavailable`).
+- Unless `--memory-limit off`, a user scope with the limit and no swap must
+  start within 15 seconds:
+  `systemd-run --user --scope -p MemoryMax=<limit> -p MemorySwapMax=0 -- /bin/true`
+  (`memory_limit_unavailable`, `tool_unavailable`). The judge then runs in a
+  scope of its own, `aas-comparator-<run_id>`, with that limit; when the judge
+  is stopped for its time or its output, its scope is killed too.
+  `systemd-run` gets only `PATH=/usr/bin:/bin` and the gate's
+  `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`. With `off`, the payload's
+  limitations say that no memory limit was applied.
+- `/usr/bin/python3`, which runs the sandbox wrapper, must be an executable
+  file (`wrapper_interpreter_unavailable`, `tool_unavailable`).
+- One run at a time: the run takes the lock `comparator.lock`, a `0600` file in
+  the state directory, and waits for it for at most `--timeout` seconds, and
+  never more than 600 (`host_busy`, `command_failed`).
+
+Each run then gets a private directory `runs/<run_id>/`, where `run_id` is the
+UTC time and eight random hex digits. Its workspace `ws/` first gets the
+generated `lakefile.toml` and `lean-toolchain`, then the `lake-manifest.json`
+that the toolchain's `lake resolve-deps` writes for them, before any byte of
+the solution arrives (`workspace_setup_failed`, `command_failed`, when that
+fails or writes no manifest). Then come `AASChallenge.lean`, the frozen
+challenge bytes, the solution files exactly as the checks read them, and
+`AASSolution.lean`. The files the gate writes are `0600` and its directories
+`0700`. The judge is
+`<toolchain>/bin/lake comparator --config <run>/comparator.json`, with
+`--paranoid` for a paranoid run, under `nice -n 19` and `env -i`, so it gets
+only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
+`TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and `COMPARATOR_BWRAP=<run>/bwrap-wrapper`,
+the sandbox wrapper the gate writes there. `--timeout` bounds the judge
+(`timeout`), and so does a 16 MiB cap on its output (`output_limit`); both
+give `command_failed`.
+
+After the judge, the gate checks that nothing the run relied on changed. A
+change gives `command_failed`, whatever the judge said:
+
+- `input_changed_during_verification`: the solution's files in `--input`;
+  `solution.post_digest` is their digest after the run;
+- `workspace_changed_during_verification`: the workspace outside `.lake`;
+- `toolchain_changed_during_verification`: the toolchain's pinned files, or a
+  stat walk of its whole tree (path, mode, size and modification time);
+- `sandbox_changed_during_verification`: the sandbox wrapper or the bwrap;
+- `challenge_changed_during_verification`: the record or its `Challenge.lean`.
+
+Once the judge has started, the run writes a receipt whatever its result:
+`receipts/<run_id>.json`, a new `0600` file holding a
+`host_comparator_receipt.v1` record. The record names the run and its time,
+the gate file and its sha256, and the platform. It holds the payload's
+toolchain, sandbox, challenge and solution sections, the run's argv, exit
+code, seconds, timeout and phases, and the result. The payload's `receipt`
+gives the file's path and sha256. A receipt that cannot be written gives
+`receipt_write_failed` (`command_failed`), so no acceptance goes unrecorded. A
+run that stops before the judge starts writes no receipt.
+
+The run directory is removed on every path, without following a symlink.
+`--keep-workspace` keeps it and reports its path as `run.workspace_kept`. A
+removal that fails adds `cleanup_failed` and leaves the verdict as it was.
 
 ## Blocking Policy
 

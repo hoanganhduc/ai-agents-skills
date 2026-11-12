@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import signal
 import shutil
 import stat
@@ -280,6 +281,24 @@ COMPARATOR_KERNEL_NAMES = {
     "con-leche": "con-leche",
     "con-ron": "con-ron",
 }
+# A comparator run starts only with this much space free where its state lies.
+COMPARATOR_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+# The host programs a comparator run uses, by absolute path: systemd-run puts
+# the judge in a memory-limited user scope and systemctl stops that scope, nice
+# lowers the judge's priority, env gives it its whole environment, and python3
+# runs the sandbox wrapper. PATH is never searched for them.
+COMPARATOR_SYSTEMD_RUN = "/usr/bin/systemd-run"
+COMPARATOR_SYSTEMCTL = "/usr/bin/systemctl"
+COMPARATOR_NICE = "/usr/bin/nice"
+COMPARATOR_ENV = "/usr/bin/env"
+COMPARATOR_WRAPPER_INTERPRETER = "/usr/bin/python3"
+# The limit on lake resolve-deps, which writes the workspace's manifest from the
+# generated lakefile before any byte of the solution is copied.
+COMPARATOR_RESOLVE_TIMEOUT = 60
+# One comparator run at a time on a host: a run waits for the lock for its
+# timeout, and never longer than this.
+COMPARATOR_LOCK_MAX_WAIT = 600
+COMPARATOR_RECEIPT_SCHEMA = "host_comparator_receipt.v1"
 
 
 class BoundedCommandResult(tuple):
@@ -4032,7 +4051,8 @@ def comparator_payload(
     5. a paranoid run, by the flag or by the record, finds every bundled
        kernel among the record's files (tool_unavailable);
     6. solution_closure reads the solution files once (not_run);
-    7. the state directory lies outside --input (not_run); then the run.
+    7. the state directory lies outside --input (not_run); then
+       _comparator_run checks the host and runs the judge.
 
     The challenge section is filled after step 2, the toolchain after 3, the
     sandbox after 4 and the solution after 6. An unexpected error gives
@@ -5237,13 +5257,754 @@ def _comparator_steps_text(steps: list[tuple[str, str]]) -> str:
 
 
 def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None:
-    """Build the workspace, run the judge and record its result in ``payload``.
+    """Run lake comparator on the admitted solution and record the result in ``payload``.
 
-    Not wired yet: an admitted run ends as command_failed, with the finding
-    comparator_failed and the detail ``run not implemented``.
+    The host comes first, in this order, and each refusal raises
+    ComparatorRefusal: the state directory, its receipts/ and its runs/ are
+    made private (a symlink there is refused); at least
+    COMPARATOR_MIN_FREE_BYTES must be free there (insufficient_disk); unless
+    the memory limit is off, a user scope with that limit must start
+    (memory_limit_unavailable); the wrapper's interpreter must be an
+    executable file (wrapper_interpreter_unavailable); and the host lock must
+    come free within the timeout, and within COMPARATOR_LOCK_MAX_WAIT seconds
+    (host_busy). The run then gets a private directory under runs/, which
+    _comparator_judge fills, runs and judges. The directory is removed on
+    every path unless keep_workspace keeps it, and a removal that fails adds
+    cleanup_failed without changing the verdict. The lock is held to the end.
     """
 
-    raise ComparatorRefusal("command_failed", "comparator_failed", "run not implemented")
+    state = _comparator_state_directories(context.state_root)
+    free = shutil.disk_usage(state).free
+    if free < COMPARATOR_MIN_FREE_BYTES:
+        raise ComparatorRefusal(
+            "tool_unavailable",
+            "insufficient_disk",
+            f"{state} has {free} bytes free; a comparator run needs {COMPARATOR_MIN_FREE_BYTES}",
+        )
+    if context.memory_limit != "off":
+        problem = _comparator_memory_preflight(context.memory_limit)
+        if problem:
+            raise ComparatorRefusal("tool_unavailable", "memory_limit_unavailable", problem)
+    problem = _executable_file_problem(COMPARATOR_WRAPPER_INTERPRETER)
+    if problem:
+        raise ComparatorRefusal(
+            "tool_unavailable",
+            "wrapper_interpreter_unavailable",
+            "the sandbox wrapper's interpreter: " + problem,
+        )
+    lock = _comparator_lock(
+        state / "comparator.lock", min(context.timeout, COMPARATOR_LOCK_MAX_WAIT)
+    )
+    try:
+        run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + secrets.token_hex(4)
+        run_dir = state / "runs" / run_id
+        _comparator_private_directory(run_dir)
+        payload["run"]["run_id"] = run_id
+        try:
+            _comparator_judge(payload, context, run_id, run_dir, state / "receipts")
+        finally:
+            if context.keep_workspace:
+                payload["run"]["workspace_kept"] = str(run_dir)
+            else:
+                problem = _comparator_remove_run(run_dir)
+                if problem:
+                    payload["findings"].append({"kind": "cleanup_failed", "detail": problem[:500]})
+    finally:
+        os.close(lock)
+
+
+class _ComparatorWorkspace(NamedTuple):
+    """A run's workspace and the files beside it, as _comparator_workspace made them."""
+
+    ws: Path
+    home: Path
+    tmp: Path
+    config: Path
+    log: Path
+    wrapper: Path
+    digests: dict[str, str]
+
+
+def _comparator_judge(
+    payload: dict[str, Any],
+    context: ComparatorContext,
+    run_id: str,
+    run_dir: Path,
+    receipts: Path,
+) -> None:
+    """Fill the run directory, run lake comparator in it, judge the run and check what it read.
+
+    A refusal or an unexpected error ends the run without a verdict, with its
+    finding. Once the judge has been started, the run's receipt is written
+    whatever the result (D10), after the checks that follow the run.
+    """
+
+    started = False
+    try:
+        workspace = _comparator_workspace(payload, context, run_dir)
+        toolchain_before = _comparator_tree_fingerprint(Path(context.toolchain_dir))
+        argv = _comparator_argv(context, run_id, workspace)
+        payload["run"]["argv"] = argv
+        started = True
+        _comparator_execute(payload, context, run_id, argv, workspace)
+        _comparator_integrity(payload, context, workspace, toolchain_before)
+    except ComparatorRefusal as exc:
+        _comparator_fail(payload, exc.status, exc.kind, exc.detail)
+    except Exception as exc:  # no verdict, never a crash
+        _comparator_fail(
+            payload, "command_failed", "comparator_failed", f"{type(exc).__name__}: {exc}"
+        )
+    if started:
+        _comparator_receipt(payload, context, run_id, receipts)
+
+
+def _comparator_workspace(
+    payload: dict[str, Any], context: ComparatorContext, run_dir: Path
+) -> _ComparatorWorkspace:
+    """Make the run's workspace and files, then take W0 (design section 7).
+
+    ws/ gets the generated lakefile.toml and lean-toolchain, then the
+    manifest that lake resolve-deps writes for them, before any byte of the
+    solution; then AASChallenge.lean, the solution's files and
+    AASSolution.lean, from the bytes admission read. The run directory gets
+    comparator.json, an empty phases.jsonl, the wrapper program and its
+    wrapper.json. Each file is new (O_EXCL) and 0600, the wrapper program
+    0700, and each directory 0700. A resolve-deps that fails, or that leaves
+    no manifest, is workspace_setup_failed. W0 maps what ws/ holds outside
+    .lake.
+    """
+
+    ws, home, tmp = run_dir / "ws", run_dir / "home", run_dir / "tmp"
+    for directory in (ws, home, tmp):
+        _comparator_private_directory(directory)
+    created: list[Path] = []
+    modules = [relative[: -len(".lean")].replace("/", ".") for relative in context.closure]
+    _write_new_private_file(
+        ws / "lakefile.toml", comparator_lakefile(modules).encode("utf-8"), created
+    )
+    _write_new_private_file(
+        ws / "lean-toolchain", (context.record["toolchain"]["spec"] + "\n").encode("utf-8"), created
+    )
+    bin_dir = os.path.join(context.toolchain_dir, "bin")
+    environment = {
+        "PATH": os.pathsep.join([bin_dir, "/usr/bin", "/bin"]),
+        "HOME": str(home),
+        "TMPDIR": str(tmp),
+        "LANG": "C.UTF-8",
+    }
+    try:
+        resolved = run_bounded_command(
+            [os.path.join(bin_dir, "lake"), "resolve-deps"],
+            timeout=COMPARATOR_RESOLVE_TIMEOUT,
+            cwd=ws,
+            max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ComparatorRefusal(
+            "command_failed",
+            "workspace_setup_failed",
+            f"lake resolve-deps: timeout after {COMPARATOR_RESOLVE_TIMEOUT} seconds",
+        ) from exc
+    except (CommandOutputLimitExceeded, OSError) as exc:
+        raise ComparatorRefusal(
+            "command_failed",
+            "workspace_setup_failed",
+            f"lake resolve-deps: {type(exc).__name__}: {exc}",
+        ) from exc
+    if resolved.returncode != 0:
+        raise ComparatorRefusal(
+            "command_failed",
+            "workspace_setup_failed",
+            f"lake resolve-deps exited {resolved.returncode}: {resolved.stderr.strip()[-300:]}",
+        )
+    if not _regular_file(ws / "lake-manifest.json"):
+        raise ComparatorRefusal(
+            "command_failed",
+            "workspace_setup_failed",
+            "lake resolve-deps wrote no lake-manifest.json",
+        )
+    _write_new_private_file(ws / f"{CHALLENGE_MODULE}.lean", context.challenge_bytes, created)
+    for relative, data in context.closure.items():
+        *parts, name = relative.split("/")
+        directory = ws
+        for part in parts:
+            directory = directory / part
+            if not os.path.lexists(directory):
+                _comparator_private_directory(directory)
+        _write_new_private_file(directory / name, data, created)
+    _write_new_private_file(
+        ws / f"{COMPARATOR_SOLUTION_MODULE}.lean",
+        comparator_solution_source(context.modules).encode("utf-8"),
+        created,
+    )
+    config = run_dir / "comparator.json"
+    _write_new_private_file(config, comparator_config(context.record), created)
+    log = run_dir / "phases.jsonl"
+    _write_new_private_file(log, b"", created)
+    wrapper = run_dir / "bwrap-wrapper"
+    program = f"#!{COMPARATOR_WRAPPER_INTERPRETER} -I\n{COMPARATOR_WRAPPER_SOURCE}".encode("utf-8")
+    _write_new_private_file(wrapper, program, created)
+    os.chmod(wrapper, 0o700)
+    payload["sandbox"]["wrapper_sha256"] = hashlib.sha256(program).hexdigest()
+    settings = {
+        "bwrap": context.bwrap,
+        "log": str(log),
+        "toolchain_dir": context.toolchain_dir,
+        "run_dir": str(run_dir),
+        "writable": str(ws / ".lake"),
+    }
+    _write_new_private_file(
+        run_dir / "wrapper.json",
+        (json.dumps(settings, sort_keys=True) + "\n").encode("ascii"),
+        created,
+    )
+    return _ComparatorWorkspace(
+        ws, home, tmp, config, log, wrapper, _comparator_workspace_digests(ws)
+    )
+
+
+def _comparator_argv(
+    context: ComparatorContext, run_id: str, workspace: _ComparatorWorkspace
+) -> list[str]:
+    """The judge's argv (design section 9).
+
+    Unless the memory limit is off, systemd-run puts the judge in a user
+    scope of its own with that limit and no swap (D3). nice lowers its
+    priority when COMPARATOR_NICE is there (D5). env -i gives it exactly
+    PATH, HOME, TMPDIR, LANG and COMPARATOR_BWRAP, so no LEAN_*, LAKE_*,
+    ELAN_* or LD_* variable can choose another Lean for it.
+    """
+
+    argv: list[str] = []
+    if context.memory_limit != "off":
+        argv += [
+            COMPARATOR_SYSTEMD_RUN,
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            f"--unit={_comparator_unit(run_id)}",
+            "-p",
+            f"MemoryMax={context.memory_limit}",
+            "-p",
+            "MemorySwapMax=0",
+            "--",
+        ]
+    if not _executable_file_problem(COMPARATOR_NICE):
+        argv += [COMPARATOR_NICE, "-n", "19"]
+    bin_dir = os.path.join(context.toolchain_dir, "bin")
+    argv += [
+        COMPARATOR_ENV,
+        "-i",
+        "PATH=" + os.pathsep.join([bin_dir, "/usr/bin", "/bin"]),
+        f"HOME={workspace.home}",
+        f"TMPDIR={workspace.tmp}",
+        "LANG=C.UTF-8",
+        f"COMPARATOR_BWRAP={workspace.wrapper}",
+        os.path.join(bin_dir, "lake"),
+        "comparator",
+        "--config",
+        str(workspace.config),
+    ]
+    if context.paranoid:
+        argv.append("--paranoid")
+    return argv
+
+
+def _comparator_execute(
+    payload: dict[str, Any],
+    context: ComparatorContext,
+    run_id: str,
+    argv: list[str],
+    workspace: _ComparatorWorkspace,
+) -> None:
+    """Run the judge in the workspace and judge the run (design sections 9 and 10).
+
+    The judge runs under the timeout, with at most COMMAND_OUTPUT_MAX_BYTES
+    of output and the outer environment of D3. A timeout, an output flood or
+    a judge that cannot be run is no verdict (timeout, output_limit,
+    comparator_failed), and the judge's scope, when it has one, is stopped.
+    Otherwise classify_comparator_run judges the run from its exit code, its
+    output and the wrapper's phase log.
+    """
+
+    run = payload["run"]
+    started = time.monotonic()
+    try:
+        completed = run_bounded_command(
+            argv,
+            timeout=context.timeout,
+            cwd=workspace.ws,
+            max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
+            env=_comparator_outer_environment(),
+        )
+    except (subprocess.TimeoutExpired, CommandOutputLimitExceeded, OSError) as exc:
+        _comparator_stop_scope(context, run_id)
+        run["seconds"] = round(time.monotonic() - started, 3)
+        run["phases"] = _comparator_phase_log(workspace.log) or []
+        if isinstance(exc, subprocess.TimeoutExpired):
+            run.update(
+                stdout_tail=_output_tail(exc.output, 4000),
+                stderr_tail=_output_tail(exc.stderr, 4000),
+            )
+            _comparator_fail(
+                payload,
+                "command_failed",
+                "timeout",
+                f"lake comparator did not finish within {context.timeout} seconds",
+            )
+        elif isinstance(exc, CommandOutputLimitExceeded):
+            run.update(stdout_tail=exc.stdout[-4000:], stderr_tail=exc.stderr[-4000:])
+            _comparator_fail(payload, "command_failed", "output_limit", str(exc))
+        else:
+            _comparator_fail(
+                payload, "command_failed", "comparator_failed", f"{type(exc).__name__}: {exc}"
+            )
+        return
+    run["seconds"] = round(time.monotonic() - started, 3)
+    phases = _comparator_phase_log(workspace.log)
+    run.update(
+        returncode=completed.returncode,
+        phases=phases if phases is not None else [],
+        stdout_tail=completed.stdout[-4000:],
+        stderr_tail=completed.stderr[-4000:],
+    )
+    status, kind, detail, finding = classify_comparator_run(
+        completed.returncode, completed.stdout, completed.stderr, phases, context.paranoid
+    )
+    payload.update(
+        ok=status == "accepted",
+        comparator_status=status,
+        comparator_rejection_kind=kind,
+        comparator_detail=detail,
+    )
+    if finding is not None:
+        payload["findings"].append(finding)
+
+
+def _comparator_integrity(
+    payload: dict[str, Any],
+    context: ComparatorContext,
+    workspace: _ComparatorWorkspace,
+    toolchain_before: str,
+) -> None:
+    """Check after the run that nothing it relied on changed (design section 11).
+
+    Each change found is a finding that makes the result command_failed: the
+    solution's files in --input (S1 against S0, giving post_digest), the
+    workspace outside .lake (W1 against W0), the toolchain's pinned files or
+    its stat walk, the wrapper program or the bwrap binary, and the record or
+    its Challenge.lean.
+    """
+
+    after: dict[str, str] = {}
+    for relative in context.closure:
+        *parts, name = relative.split("/")
+        try:
+            directory = stable_directory_chain(context.input_root, tuple(parts))
+            after[relative] = stable_regular_file_sha256(
+                directory / name, max_bytes=COMPARATOR_SOLUTION_MAX_FILE_BYTES
+            )
+        except StableReadError:
+            after[relative] = ""
+    payload["solution"]["post_digest"] = files_digest(after)
+    problems: list[tuple[str, str]] = []
+    before = payload["solution"]["files"]
+    changed = sorted(relative for relative, digest in after.items() if digest != before[relative])
+    if changed:
+        problems.append(
+            (
+                "input_changed_during_verification",
+                "the solution's files in --input changed during the run: " + ", ".join(changed[:5]),
+            )
+        )
+    try:
+        workspace_after: dict[str, str] | None = _comparator_workspace_digests(workspace.ws)
+    except OSError:
+        workspace_after = None
+    if workspace_after != workspace.digests:
+        problems.append(
+            (
+                "workspace_changed_during_verification",
+                "the workspace changed outside .lake during the run",
+            )
+        )
+    toolchain = Path(context.toolchain_dir)
+    reasons = []
+    pinned = toolchain_file_digests(toolchain)
+    if pinned["status"] != "ok" or pinned["files"] != context.record["toolchain"]["files"]:
+        reasons.append("its pinned files no longer match the record")
+    try:
+        toolchain_after = _comparator_tree_fingerprint(toolchain)
+    except OSError:
+        toolchain_after = ""
+    if toolchain_after != toolchain_before:
+        reasons.append("an entry's path, mode, size or modification time changed (stat walk)")
+    if reasons:
+        problems.append(
+            (
+                "toolchain_changed_during_verification",
+                "the toolchain changed during the run: " + "; ".join(reasons),
+            )
+        )
+    reasons = []
+    if _comparator_sha256(workspace.wrapper) != payload["sandbox"]["wrapper_sha256"]:
+        reasons.append("the wrapper program")
+    if _comparator_sha256(Path(context.bwrap)) != context.bwrap_sha256:
+        reasons.append("the bwrap binary")
+    if reasons:
+        problems.append(
+            (
+                "sandbox_changed_during_verification",
+                " and ".join(reasons) + " changed during the run",
+            )
+        )
+    reasons = []
+    if _comparator_sha256(context.record_path) != hashlib.sha256(context.record_bytes).hexdigest():
+        reasons.append("the challenge record")
+    if _comparator_sha256(context.challenge_path) != context.record["challenge_sha256"]:
+        reasons.append(CHALLENGE_FILE)
+    if reasons:
+        problems.append(
+            (
+                "challenge_changed_during_verification",
+                " and ".join(reasons) + " changed during the run",
+            )
+        )
+    for kind, detail in problems:
+        _comparator_fail(payload, "command_failed", kind, detail)
+
+
+def _comparator_receipt(
+    payload: dict[str, Any], context: ComparatorContext, run_id: str, receipts: Path
+) -> None:
+    """Write the run's host_comparator_receipt.v1 under receipts/ (D10).
+
+    The receipt is new (O_EXCL) and 0600, its JSON has sorted keys and
+    compact separators, and the payload's receipt gets its path and sha256.
+    A receipt that cannot be written makes the result command_failed with
+    receipt_write_failed (D11), and what was written of it is removed.
+    """
+
+    created: list[Path] = []
+    try:
+        gate_file = Path(os.path.realpath(__file__))
+        machine = os.uname()
+        solution = payload["solution"]
+        receipt = {
+            "schema_version": COMPARATOR_RECEIPT_SCHEMA,
+            "run_id": run_id,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "gate": {
+                "path": str(gate_file),
+                "sha256": stable_regular_file_sha256(gate_file, max_bytes=SOURCE_MAX_BYTES),
+            },
+            "platform": {"system": machine.sysname, "machine": machine.machine},
+            "toolchain": dict(payload["toolchain"]),
+            "sandbox": dict(payload["sandbox"]),
+            "challenge": dict(payload["challenge"]),
+            "solution": {
+                "input": str(context.input_root),
+                "modules": solution["modules"],
+                "files": solution["files"],
+                "digest": solution["digest"],
+                "post_digest": solution["post_digest"],
+            },
+            "run": {
+                key: payload["run"][key]
+                for key in ("argv", "returncode", "seconds", "timeout_seconds", "phases")
+            },
+            "result": {
+                key: payload[key]
+                for key in (
+                    "comparator_status",
+                    "comparator_rejection_kind",
+                    "comparator_detail",
+                    "findings",
+                )
+            },
+        }
+        data = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        path = receipts / f"{run_id}.json"
+        _write_new_private_file(path, data, created)
+    except Exception as exc:  # no acceptance goes unrecorded
+        for leftover in created:
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
+        _comparator_fail(
+            payload, "command_failed", "receipt_write_failed", f"{type(exc).__name__}: {exc}"
+        )
+        return
+    payload["receipt"] = {"path": str(path), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _comparator_fail(payload: dict[str, Any], status: str, kind: str, detail: str) -> None:
+    """End a run with ``status`` and no rejection kind, adding the finding ``kind``."""
+
+    payload.update(ok=False, comparator_status=status, comparator_rejection_kind="")
+    payload["findings"].append({"kind": kind, "detail": detail[:500]})
+
+
+def _comparator_state_directories(state_root: Path) -> Path:
+    """Make the comparator's state directory, its receipts/ and runs/; return its real path.
+
+    Each directory made, missing parents included, is 0700; a parent that
+    already exists keeps its mode. The state directory, receipts/ and runs/
+    are set to 0700 even when they exist, and each must be a directory, not
+    a symlink: anything else is refused with comparator_failed.
+    """
+
+    root = Path(state_root)
+    missing = []
+    current = root
+    while not os.path.lexists(current):
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        _comparator_private_directory(directory)
+    for directory in (root, root / "receipts", root / "runs"):
+        if not os.path.lexists(directory):
+            _comparator_private_directory(directory)
+        if not stat.S_ISDIR(os.lstat(directory).st_mode):
+            raise ComparatorRefusal(
+                "command_failed",
+                "comparator_failed",
+                f"{directory} is a symlink or not a directory; the comparator's state "
+                "directories must be real directories",
+            )
+        os.chmod(directory, 0o700)
+    return Path(os.path.realpath(root))
+
+
+def _comparator_private_directory(path: Path) -> None:
+    """Make a new directory with mode 0700, whatever the umask."""
+
+    os.mkdir(path, 0o700)
+    os.chmod(path, 0o700)
+
+
+def _comparator_lock(path: Path, wait: int) -> int:
+    """Take the host's comparator lock (D8) and return its descriptor.
+
+    The lock file is opened without following a symlink and kept 0600. A run
+    that cannot take the lock within ``wait`` seconds is host_busy.
+    """
+
+    import fcntl  # POSIX only, like the comparator run
+
+    descriptor = os.open(
+        path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return descriptor
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ComparatorRefusal(
+                        "command_failed",
+                        "host_busy",
+                        f"another comparator run holds the lock {path}; this run waited {wait} s",
+                    ) from None
+                time.sleep(0.5)
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _comparator_memory_preflight(limit: str) -> str:
+    """"" when a user scope with MemoryMax=``limit`` and no swap starts, else why it did not."""
+
+    command = [
+        COMPARATOR_SYSTEMD_RUN,
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "-p",
+        f"MemoryMax={limit}",
+        "-p",
+        "MemorySwapMax=0",
+        "--",
+        "/bin/true",
+    ]
+    try:
+        completed = run_bounded_command(
+            command,
+            timeout=15,
+            max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
+            env=_comparator_outer_environment(),
+        )
+    except subprocess.TimeoutExpired:
+        return "systemd-run: timeout after 15 seconds"
+    except (CommandOutputLimitExceeded, OSError) as exc:
+        return f"systemd-run: {type(exc).__name__}: {exc}"[:500]
+    if completed.returncode != 0:
+        output = (completed.stderr or completed.stdout).strip()
+        return f"systemd-run exited {completed.returncode}: {output[-300:]}"
+    return ""
+
+
+def _comparator_outer_environment() -> dict[str, str]:
+    """The whole environment of systemd-run and the judge's outer process (D3).
+
+    PATH=/usr/bin:/bin, with the gate's XDG_RUNTIME_DIR and
+    DBUS_SESSION_BUS_ADDRESS when they are set, since systemd-run --user
+    needs them to reach the user's service manager. env -i clears all of it
+    for the judge.
+    """
+
+    environment = {"PATH": "/usr/bin:/bin"}
+    for name in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    return environment
+
+
+def _comparator_unit(run_id: str) -> str:
+    return "aas-comparator-" + run_id
+
+
+def _comparator_stop_scope(context: ComparatorContext, run_id: str) -> None:
+    """Kill what is left in the judge's scope, when it has one; best effort.
+
+    bwrap's --new-session takes each sandboxed step out of the judge's
+    process group, so killing that group relies on --die-with-parent.
+    """
+
+    if context.memory_limit == "off":
+        return
+    try:
+        run_bounded_command(
+            [
+                COMPARATOR_SYSTEMCTL,
+                "--user",
+                "kill",
+                "--signal=KILL",
+                _comparator_unit(run_id) + ".scope",
+            ],
+            timeout=15,
+            max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
+            env=_comparator_outer_environment(),
+        )
+    except (subprocess.TimeoutExpired, CommandOutputLimitExceeded, OSError):
+        pass
+
+
+def _comparator_phase_log(path: Path) -> list[dict[str, Any]] | None:
+    """The wrapper's phase log; None when it is missing, too large or malformed."""
+
+    try:
+        data = stable_regular_file_bytes(path, max_bytes=COMPARATOR_PHASE_LOG_MAX_BYTES)
+    except StableReadError:
+        return None
+    return parse_phase_log(data)
+
+
+def _comparator_sha256(path: Path) -> str:
+    """sha256 of a file a run relies on, read as one stable regular file; "" when it cannot be."""
+
+    try:
+        return stable_regular_file_sha256(Path(path), max_bytes=COMPILED_MODULE_MAX_BYTES)
+    except StableReadError:
+        return ""
+
+
+def _comparator_workspace_digests(ws: Path) -> dict[str, str]:
+    """W: what ws/ holds outside its .lake, by POSIX relative path.
+
+    A regular file maps to its sha256 (or to why it could not be read), a
+    directory to "directory", a symlink to "symlink" and anything else to
+    "special". Nothing is followed.
+    """
+
+    digests: dict[str, str] = {}
+    pending = [ws]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                relative = path.relative_to(ws).as_posix()
+                if relative == ".lake":
+                    continue
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode):
+                    digests[relative] = "directory"
+                    pending.append(path)
+                elif stat.S_ISREG(mode):
+                    try:
+                        digests[relative] = stable_regular_file_sha256(
+                            path, max_bytes=COMPARATOR_SOLUTION_MAX_FILE_BYTES
+                        )
+                    except StableReadError as exc:
+                        digests[relative] = "unreadable: " + exc.kind
+                else:
+                    digests[relative] = "symlink" if stat.S_ISLNK(mode) else "special"
+    return digests
+
+
+def _comparator_tree_fingerprint(root: Path) -> str:
+    """A stat walk of ``root``: sha256 over each entry's path, mode, size and mtime.
+
+    The walk never follows a symlink, and an entry or a directory it cannot
+    read raises OSError.
+    """
+
+    def fail(error: OSError) -> None:
+        raise error
+
+    hasher = hashlib.sha256()
+    for directory, directories, files in os.walk(root, onerror=fail):
+        directories.sort()
+        for name in sorted(directories + files):
+            path = os.path.join(directory, name)
+            info = os.lstat(path)
+            hasher.update(
+                f"{os.path.relpath(path, root)}\0{info.st_mode}\0{info.st_size}\0"
+                f"{info.st_mtime_ns}\n".encode("utf-8", "surrogateescape")
+            )
+    return hasher.hexdigest()
+
+
+def _comparator_remove_run(run_dir: Path) -> str:
+    """Remove a run directory without following a symlink; "" or why it could not be.
+
+    An entry that cannot be removed gets one retry: its parent, and the entry
+    itself when it is a directory, are made readable, writable and
+    searchable by their owner first, since a solution may lock away what it
+    wrote under .lake.
+    """
+
+    def retry(function: Any, path: str, _error: Any) -> None:
+        parent = os.path.dirname(path)
+        os.chmod(parent, stat.S_IMODE(os.lstat(parent).st_mode) | stat.S_IRWXU)
+        info = os.lstat(path)
+        if stat.S_ISDIR(info.st_mode):
+            os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
+            shutil.rmtree(path)
+        else:
+            function(path)
+
+    try:
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(run_dir, onexc=retry)
+        else:
+            shutil.rmtree(run_dir, onerror=retry)
+    except OSError as exc:
+        return f"{run_dir} was not removed: {type(exc).__name__}: {exc}"
+    if os.path.lexists(run_dir):
+        return f"{run_dir} is still there after its removal"
+    return ""
 
 
 def emit(payload: dict[str, Any]) -> None:
