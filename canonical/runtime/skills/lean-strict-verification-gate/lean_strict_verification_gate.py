@@ -192,6 +192,62 @@ TOOLCHAIN_LIBRARY_MAX_FILES = 32
 READINESS_OUTPUT_MAX_BYTES = 64 * 1024
 # Elan stores leanprover/lean4:<release> as toolchains/leanprover--lean4---<release>.
 _ELAN_LEAN4_PREFIX = "leanprover--lean4---"
+# The comparator verb's defaults come from the Mathlib spike: 300 s for a
+# core run, and a 10 GiB memory limit, about 1.5 times the largest cold peak
+# it measured.
+COMPARATOR_DEFAULT_TIMEOUT = 300
+COMPARATOR_DEFAULT_MEMORY_LIMIT = "10G"
+CHALLENGE_RECORD_MAX_BYTES = 1024 * 1024
+# The module the comparator workspace generates to import the solution's
+# named modules.
+COMPARATOR_SOLUTION_MODULE = "AASSolution"
+# Module names the workspace owns: its two generated modules and lakefile,
+# because a copied lakefile.lean would win over the generated lakefile.toml.
+# A solution module may not be one, nor lie below the first two.
+COMPARATOR_RESERVED_MODULES = (CHALLENGE_MODULE, COMPARATOR_SOLUTION_MODULE, "lakefile")
+# The solution files one run copies, within the remote formal lane's budget.
+COMPARATOR_SOLUTION_MAX_FILES = 240
+COMPARATOR_SOLUTION_MAX_TOTAL_BYTES = 15 * 1024 * 1024
+COMPARATOR_SOLUTION_MAX_FILE_BYTES = 16 * 1024 * 1024
+# The kernels bundled with Lean that `lake comparator --paranoid` runs, in
+# its order, before Lean's own leanchecker.
+COMPARATOR_PARANOID_KERNELS = (
+    "leanchecker-paranoid",
+    "lean4lean",
+    "nanoda_bin",
+    "con-leche",
+    "con-ron",
+)
+COMPARATOR_PAYLOAD_KEYS = frozenset(
+    {
+        "schema_version",
+        "ok",
+        "mode",
+        "input",
+        "comparator_status",
+        "comparator_rejection_kind",
+        "comparator_detail",
+        "findings",
+        "challenge",
+        "toolchain",
+        "sandbox",
+        "solution",
+        "run",
+        "receipt",
+        "limitations",
+    }
+)
+COMPARATOR_LIMITATIONS = (
+    "the comparator decides statement match, axiom use and kernel acceptance; whether "
+    "the challenge states the intended claim is still a review step",
+    "statement comparison is exact: an equivalent statement written differently is rejected",
+    "a process running as the same user can change the toolchain, bwrap, the gate or a "
+    "receipt; the digests detect a change made during a run, not one made before the "
+    "freeze or after the receipt",
+    "the solution's own build directory is writable inside the sandbox, so a solution can "
+    "fill the disk; the disk floor and cleanup bound this only after the fact",
+    "core profile: imports outside Init, Std, Lean and Lake are refused",
+)
 
 
 class BoundedCommandResult(tuple):
@@ -406,6 +462,57 @@ def main(argv: list[str] | None = None) -> int:
         help="directory for Challenge.lean and challenge.json: absent under an existing parent, or empty",
     )
 
+    comparator = sub.add_parser(
+        "comparator",
+        help="judge a solution project with lake comparator against a frozen challenge; Linux only",
+    )
+    comparator.add_argument(
+        "--input", required=True, help="solution project directory, not a symlink"
+    )
+    comparator.add_argument(
+        "--challenge-record",
+        required=True,
+        help="challenge.json from challenge-freeze, outside --input, with Challenge.lean beside it",
+    )
+    comparator.add_argument(
+        "--challenge-record-sha256",
+        required=True,
+        type=sha256_argument,
+        help="the record_sha256 challenge-freeze reported: 64 lowercase hex digits",
+    )
+    comparator.add_argument(
+        "--solution-module",
+        action="append",
+        required=True,
+        help="module of --input that declares the record's theorems; repeatable",
+    )
+    comparator.add_argument(
+        "--timeout",
+        type=positive_timeout,
+        default=COMPARATOR_DEFAULT_TIMEOUT,
+        help=f"wall limit of the run in seconds (default {COMPARATOR_DEFAULT_TIMEOUT})",
+    )
+    comparator.add_argument(
+        "--paranoid",
+        action="store_true",
+        help=(
+            "also run every external kernel bundled with Lean; a record frozen with "
+            "--paranoid asks for this too"
+        ),
+    )
+    comparator.add_argument(
+        "--keep-workspace", action="store_true", help="keep the run's directory"
+    )
+    comparator.add_argument(
+        "--memory-limit",
+        type=memory_limit_argument,
+        default=COMPARATOR_DEFAULT_MEMORY_LIMIT,
+        help=(
+            "memory limit of the run: a positive whole number with K, M or G, or off "
+            f"(default {COMPARATOR_DEFAULT_MEMORY_LIMIT})"
+        ),
+    )
+
     args = parser.parse_args(argv)
     if args.command == "doctor":
         emit(doctor_payload(project_root=Path(args.project_root) if args.project_root else Path.cwd(), probe=args.probe))
@@ -582,6 +689,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         emit(payload)
         return 0 if payload["ok"] else 1
+    if args.command == "comparator":
+        payload = comparator_payload(
+            Path(args.input),
+            challenge_record=Path(args.challenge_record),
+            challenge_record_sha256=args.challenge_record_sha256,
+            solution_modules=list(args.solution_module),
+            timeout=args.timeout,
+            paranoid=bool(args.paranoid),
+            keep_workspace=bool(args.keep_workspace),
+            memory_limit=args.memory_limit,
+        )
+        emit(payload)
+        # Only accepted is a verdict a caller may build on; rejected and
+        # every no verdict exit 1.
+        return 0 if payload["ok"] and payload["comparator_status"] == "accepted" else 1
     raise AssertionError(args.command)
 
 
@@ -3794,6 +3916,744 @@ def _remove_created_outputs(
     files.clear()
     directories.clear()
     modes.clear()
+
+
+def sha256_argument(value: str) -> str:
+    """argparse type: a sha256 written as 64 lowercase hex digits."""
+
+    if not _is_sha256(value):
+        raise argparse.ArgumentTypeError("must be 64 lowercase hex digits")
+    return value
+
+
+def memory_limit_argument(value: str) -> str:
+    """argparse type: ``off``, or a positive whole number followed by K, M or G."""
+
+    if value != "off" and not re.fullmatch(r"[1-9][0-9]*[KMG]", value):
+        raise argparse.ArgumentTypeError(
+            "must be off, or a positive whole number followed by K, M or G, such as 10G"
+        )
+    return value
+
+
+class ComparatorRefusal(Exception):
+    """A comparator check that ends the run: the status, finding kind and detail it gives."""
+
+    def __init__(self, status: str, kind: str, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.kind = kind
+        self.detail = detail
+
+
+class ComparatorContext(NamedTuple):
+    """What the checks before the run admitted, for the run to use."""
+
+    input_root: Path
+    record_path: Path
+    record: dict[str, Any]
+    record_bytes: bytes
+    challenge_path: Path
+    challenge_bytes: bytes
+    toolchain_dir: str
+    toolchain_files: dict[str, str]
+    bwrap: str
+    bwrap_sha256: str
+    modules: list[str]
+    closure: dict[str, bytes]
+    state_root: Path
+    paranoid: bool
+    timeout: int
+    keep_workspace: bool
+    memory_limit: str
+
+
+def comparator_payload(
+    input_path: Path,
+    *,
+    challenge_record: Path,
+    challenge_record_sha256: str,
+    solution_modules: list[str],
+    timeout: int,
+    paranoid: bool,
+    keep_workspace: bool,
+    memory_limit: str,
+) -> dict[str, Any]:
+    """Judge a solution project with ``lake comparator`` against a frozen challenge.
+
+    The checks run in this order. The first that fails ends the run with its
+    status and finding, and nothing after it runs:
+
+    1. the host is Linux and the gate is not root (tool_unavailable);
+    2. --input is a directory, not a symlink, and the record and its
+       Challenge.lean are admitted by admit_challenge_record (not_run);
+    3. the record's toolchain resolves outside --input, and its attestation
+       matches the record's files and version (unsupported_toolchain or
+       tool_unavailable);
+    4. the pinned bwrap reports a supported version, starts its sandbox and
+       is hashed (tool_unavailable);
+    5. a paranoid run, by the flag or by the record, finds every bundled
+       kernel among the record's files (tool_unavailable);
+    6. solution_closure reads the solution files once (not_run);
+    7. the state directory lies outside --input (not_run); then the run.
+
+    The challenge section is filled after step 2, the toolchain after 3, the
+    sandbox after 4 and the solution after 6. An unexpected error gives
+    command_failed with comparator_failed. ``ok`` is true only for accepted.
+    """
+
+    payload: dict[str, Any] = {
+        "schema_version": "lean-strict-verification-gate.v1",
+        "ok": False,
+        "mode": "comparator",
+        "input": str(input_path),
+        "comparator_status": "not_run",
+        "comparator_rejection_kind": "",
+        "comparator_detail": "",
+        "findings": [],
+        "challenge": {
+            "record": "",
+            "record_sha256": "",
+            "challenge_sha256": "",
+            "theorem_names": [],
+            "permitted_axioms": [],
+            "paranoid": False,
+            "workspace": {},
+        },
+        "toolchain": {"spec": "", "dir": "", "lean_version": "", "files_sha256": ""},
+        "sandbox": {
+            "bwrap": "",
+            "bwrap_version": "",
+            "bwrap_sha256": "",
+            "wrapper_sha256": "",
+            "memory_limit": memory_limit,
+        },
+        "solution": {"modules": [], "files": {}, "digest": "", "post_digest": ""},
+        "run": {
+            "run_id": "",
+            "argv": [],
+            "returncode": None,
+            "seconds": 0,
+            "timeout_seconds": timeout,
+            "phases": [],
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "workspace_kept": "",
+        },
+        "receipt": {"path": "", "sha256": ""},
+        "limitations": list(COMPARATOR_LIMITATIONS),
+    }
+    if memory_limit == "off":
+        payload["limitations"].append("no memory limit was applied")
+
+    def fail(status: str, kind: str, detail: str) -> dict[str, Any]:
+        payload["ok"] = False
+        payload["comparator_status"] = status
+        payload["findings"].append({"kind": kind, "detail": detail})
+        return payload
+
+    try:
+        if sys.platform != "linux":
+            return fail(
+                "tool_unavailable",
+                "platform_unsupported",
+                "lake comparator sandboxes the solution with Linux namespaces; "
+                f"this host is {sys.platform}",
+            )
+        geteuid = getattr(os, "geteuid", None)
+        if geteuid is None:
+            return fail(
+                "tool_unavailable",
+                "running_as_root",
+                "this host reports no effective user id, so the gate cannot tell it is not root",
+            )
+        if geteuid() == 0:
+            return fail("tool_unavailable", "running_as_root", "the comparator never runs as root")
+
+        try:
+            input_info = os.lstat(input_path)
+        except (OSError, ValueError) as exc:
+            reason = getattr(exc, "strerror", None) or type(exc).__name__
+            return fail("not_run", "input_invalid", f"--input cannot be examined: {reason}")
+        # lstat reports a symlink as a symlink, never as a directory.
+        if not stat.S_ISDIR(input_info.st_mode):
+            return fail(
+                "not_run", "input_invalid", "--input must be a directory, not a symlink or a file"
+            )
+        input_root = Path(os.path.abspath(input_path))
+        record_path = Path(os.path.abspath(challenge_record))
+        record, record_bytes, challenge_bytes = admit_challenge_record(
+            record_path, challenge_record_sha256, input_root
+        )
+        payload["challenge"].update(
+            record=str(record_path),
+            record_sha256=hashlib.sha256(record_bytes).hexdigest(),
+            challenge_sha256=record["challenge_sha256"],
+            theorem_names=record["theorem_names"],
+            permitted_axioms=record["permitted_axioms"],
+            paranoid=record["paranoid"],
+            workspace=record["workspace"],
+        )
+
+        spec = record["toolchain"]["spec"]
+        pinned = record["toolchain"]["files"]
+        resolved = resolve_comparator_toolchain(spec, input_root=input_root)
+        if resolved["status"] == "unsupported_toolchain":
+            return fail("unsupported_toolchain", "unsupported_toolchain", resolved["detail"])
+        if resolved["status"] != "available":
+            return fail("tool_unavailable", "toolchain_unavailable", resolved["detail"])
+        attested = toolchain_attestation(resolved["path"])
+        if attested["status"] == "unsupported_toolchain":
+            return fail("unsupported_toolchain", "unsupported_toolchain", attested["detail"])
+        if attested["status"] != "ok":
+            return fail("tool_unavailable", "toolchain_unavailable", attested["detail"])
+        differing = sorted(
+            name
+            for name in set(pinned) | set(attested["files"])
+            if pinned.get(name) != attested["files"].get(name)
+        )
+        if differing:
+            more = f" and {len(differing) - 5} more" if len(differing) > 5 else ""
+            return fail(
+                "tool_unavailable",
+                "toolchain_changed",
+                "the installed toolchain differs from the record's pins at "
+                + ", ".join(differing[:5])
+                + more
+                + "; a changed toolchain needs a new freeze",
+            )
+        if attested["version"] != _version_text(parse_lean_version(spec)):
+            return fail(
+                "tool_unavailable",
+                "toolchain_changed",
+                f"lean --version reports {attested['lean_version']!r}, not the release "
+                f"{spec} that the record names",
+            )
+        payload["toolchain"].update(
+            spec=spec,
+            dir=resolved["path"],
+            lean_version=attested["lean_version"],
+            files_sha256=files_digest(pinned),
+        )
+
+        bwrap = bwrap_status(probe=True)
+        if bwrap["status"] != "available":
+            return fail("tool_unavailable", "sandbox_unavailable", "bwrap: " + bwrap["detail"])
+        preflight = bwrap_preflight(bwrap["path"])
+        if preflight["status"] != "ok":
+            return fail(
+                "tool_unavailable", "sandbox_unavailable", "bwrap preflight: " + preflight["detail"]
+            )
+        try:
+            bwrap_sha256 = stable_regular_file_sha256(
+                Path(bwrap["path"]), max_bytes=COMPILED_MODULE_MAX_BYTES
+            )
+        except StableReadError as exc:
+            return fail(
+                "tool_unavailable",
+                "sandbox_unavailable",
+                f"{bwrap['path']}: {exc.kind}: {exc.detail}",
+            )
+        payload["sandbox"].update(
+            bwrap=bwrap["path"], bwrap_version=bwrap["version"], bwrap_sha256=bwrap_sha256
+        )
+
+        run_paranoid = bool(paranoid) or record["paranoid"]
+        if run_paranoid:
+            missing = [
+                kernel
+                for kernel in COMPARATOR_PARANOID_KERNELS
+                if "bin/" + executable_name(kernel) not in pinned
+            ]
+            if missing:
+                return fail(
+                    "tool_unavailable",
+                    "paranoid_kernel_missing",
+                    "a paranoid run needs "
+                    + ", ".join(missing)
+                    + ", which the record's toolchain lacks",
+                )
+
+        closure = solution_closure(input_root, solution_modules, record["allowed_import_roots"])
+        files = {relative: hashlib.sha256(data).hexdigest() for relative, data in closure.items()}
+        modules = sorted(set(solution_modules))
+        payload["solution"].update(modules=modules, files=files, digest=files_digest(files))
+
+        state_root = comparator_state_root()
+        state_real = Path(os.path.realpath(state_root))
+        input_real = Path(os.path.realpath(input_root))
+        if state_real == input_real or input_real in state_real.parents:
+            return fail(
+                "not_run",
+                "state_dir_inside_input",
+                f"the comparator state directory {state_root} lies inside --input",
+            )
+        _comparator_run(
+            payload,
+            ComparatorContext(
+                input_root=input_root,
+                record_path=record_path,
+                record=record,
+                record_bytes=record_bytes,
+                challenge_path=record_path.parent / CHALLENGE_FILE,
+                challenge_bytes=challenge_bytes,
+                toolchain_dir=resolved["path"],
+                toolchain_files=attested["files"],
+                bwrap=bwrap["path"],
+                bwrap_sha256=bwrap_sha256,
+                modules=modules,
+                closure=closure,
+                state_root=state_root,
+                paranoid=run_paranoid,
+                timeout=timeout,
+                keep_workspace=bool(keep_workspace),
+                memory_limit=memory_limit,
+            ),
+        )
+    except ComparatorRefusal as exc:
+        return fail(exc.status, exc.kind, exc.detail)
+    except Exception as exc:  # no verdict, never a crash
+        return fail("command_failed", "comparator_failed", f"{type(exc).__name__}: {exc}"[:500])
+    return payload
+
+
+def admit_challenge_record(
+    record_path: Path, expected_sha256: str, input_root: Path
+) -> tuple[dict[str, Any], bytes, bytes]:
+    """Admit a frozen challenge: the pinned record and the Challenge.lean beside it.
+
+    The record must not lie in ``input_root`` or under it, by real path. It
+    must pass _private_file_problem(), be read once within
+    CHALLENGE_RECORD_MAX_BYTES, hash to ``expected_sha256`` and hold exactly
+    what challenge-freeze writes. Challenge.lean beside it must pass the same
+    file rules, be read once within CHALLENGE_SOURCE_MAX_BYTES and hash to
+    the record's challenge_sha256. Returns the record and the exact bytes of
+    both files. A refusal raises ComparatorRefusal with status not_run,
+    except unsupported_workspace, which is tool_unavailable.
+    """
+
+    record_real = Path(os.path.realpath(record_path))
+    root = Path(os.path.realpath(input_root))
+    if record_real == root or root in record_real.parents:
+        raise ComparatorRefusal(
+            "not_run",
+            "challenge_record_inside_input",
+            f"{record_path} lies inside --input, which the solution controls",
+        )
+    problem = _private_file_problem(record_path)
+    if problem:
+        raise ComparatorRefusal("not_run", "challenge_record_unreadable", problem)
+    try:
+        record_bytes = stable_regular_file_bytes(record_path, max_bytes=CHALLENGE_RECORD_MAX_BYTES)
+    except StableReadError as exc:
+        raise ComparatorRefusal(
+            "not_run", "challenge_record_unreadable", f"{record_path}: {exc.kind}: {exc.detail}"
+        ) from exc
+    if hashlib.sha256(record_bytes).hexdigest() != expected_sha256:
+        raise ComparatorRefusal(
+            "not_run",
+            "challenge_record_mismatch",
+            f"{record_path} does not hash to --challenge-record-sha256",
+        )
+    record = _challenge_record_content(record_bytes)
+    challenge_path = Path(record_path).parent / CHALLENGE_FILE
+    problem = _private_file_problem(challenge_path)
+    if problem:
+        raise ComparatorRefusal("not_run", "challenge_unreadable", problem)
+    try:
+        challenge_bytes = stable_regular_file_bytes(
+            challenge_path, max_bytes=CHALLENGE_SOURCE_MAX_BYTES
+        )
+    except StableReadError as exc:
+        raise ComparatorRefusal(
+            "not_run", "challenge_unreadable", f"{challenge_path}: {exc.kind}: {exc.detail}"
+        ) from exc
+    if hashlib.sha256(challenge_bytes).hexdigest() != record["challenge_sha256"]:
+        raise ComparatorRefusal(
+            "not_run",
+            "challenge_mismatch",
+            f"{challenge_path} does not hash to the record's challenge_sha256",
+        )
+    return record, record_bytes, challenge_bytes
+
+
+def _private_file_problem(path: Path) -> str:
+    """"" when ``path`` may hold a frozen challenge file, else what is wrong with it.
+
+    The file must be a regular file, not a symlink, with one link. On POSIX
+    it must also belong to the user the gate runs as and be private to that
+    user (mode 0600, as challenge-freeze writes it), so a record another user
+    could write, or a copy that lost its mode, is refused.
+    """
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return f"{path} does not exist"
+    except (OSError, ValueError) as exc:
+        reason = getattr(exc, "strerror", None) or type(exc).__name__
+        return f"{path} cannot be examined: {reason}"
+    if stat.S_ISLNK(info.st_mode):
+        return f"{path} is a symlink"
+    if not stat.S_ISREG(info.st_mode):
+        return f"{path} is not a regular file"
+    if info.st_nlink != 1:
+        return f"{path} has {info.st_nlink} hard links; it must have one"
+    if os.name == "posix":
+        if info.st_uid != os.geteuid():
+            return f"{path} is not owned by the user the gate runs as"
+        mode = stat.S_IMODE(info.st_mode)
+        if mode & 0o077:
+            return (
+                f"{path} has mode {mode:04o}; it must be private to its owner, mode 0600 as "
+                "challenge-freeze writes it (a copy that lost its mode needs chmod 0600)"
+            )
+    return ""
+
+
+def _challenge_record_content(data: bytes) -> dict[str, Any]:
+    """The record ``data`` holds, which must be exactly what challenge-freeze writes.
+
+    Each violation is challenge_record_invalid with the rule as its detail.
+    A workspace other than {"kind": "core"} is unsupported_workspace, after
+    the shape checks; the core import roots are checked only for a core
+    workspace.
+    """
+
+    def invalid(rule: str) -> ComparatorRefusal:
+        return ComparatorRefusal("not_run", "challenge_record_invalid", rule)
+
+    try:
+        record = json.loads(data.decode("utf-8"))
+        canonical = (
+            json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+        ).encode("ascii")
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise invalid("the record is not JSON text") from exc
+    if canonical != data:
+        raise invalid("the record is not in the canonical form challenge-freeze writes")
+    if not isinstance(record, dict) or set(record) != CHALLENGE_RECORD_KEYS:
+        raise invalid(
+            f"the record is not an object with exactly the keys of {CHALLENGE_RECORD_SCHEMA}"
+        )
+    if record["schema_version"] != CHALLENGE_RECORD_SCHEMA:
+        raise invalid(f"schema_version is not {CHALLENGE_RECORD_SCHEMA}")
+    if record["challenge_module"] != CHALLENGE_MODULE:
+        raise invalid(f"challenge_module is not {CHALLENGE_MODULE}")
+    if not _is_sha256(record["challenge_sha256"]):
+        raise invalid("challenge_sha256 is not 64 lowercase hex digits")
+    theorems = record["theorem_names"]
+    if not _sorted_distinct_strings(theorems):
+        raise invalid("theorem_names is not a non-empty, sorted list of distinct strings")
+    for name in theorems:
+        if not _plain_lean_name(name):
+            raise invalid(
+                f"theorem_names holds {name!r}, not a valid Lean name without a _root_ component"
+            )
+    if record["definition_names"] != []:
+        raise invalid("definition_names is not empty")
+    axioms = record["permitted_axioms"]
+    if not _sorted_distinct_strings(axioms):
+        raise invalid("permitted_axioms is not a non-empty, sorted list of distinct strings")
+    for axiom in axioms:
+        if axiom in NEVER_SANCTIONED_AXIOMS:
+            raise invalid(f"permitted_axioms holds {axiom}, which is never permitted")
+        compiler_trust = valid_lean_name(axiom) and is_compiler_trust_axiom(axiom)
+        if axiom not in SANCTIONED_AXIOMS and not compiler_trust:
+            raise invalid(
+                f"permitted_axioms holds {axiom!r}, which is neither sanctioned nor compiler trust"
+            )
+    if not isinstance(record["paranoid"], bool):
+        raise invalid("paranoid is not a boolean")
+    toolchain = record["toolchain"]
+    if not (
+        isinstance(toolchain, dict)
+        and set(toolchain) == {"spec", "files"}
+        and isinstance(toolchain["spec"], str)
+        and isinstance(toolchain["files"], dict)
+        and all(_is_sha256(digest) for digest in toolchain["files"].values())
+    ):
+        raise invalid('toolchain is not {"spec": <string>, "files": {<path>: <sha256>}}')
+    workspace = record["workspace"]
+    if not isinstance(workspace, dict) or not isinstance(workspace.get("kind"), str):
+        raise invalid("workspace is not an object with a string kind")
+    if workspace != {"kind": "core"}:
+        raise ComparatorRefusal(
+            "tool_unavailable",
+            "unsupported_workspace",
+            (
+                f"the record's workspace is {json.dumps(workspace, sort_keys=True)}; "
+                'this gate judges only {"kind": "core"}'
+            )[:500],
+        )
+    if record["allowed_import_roots"] != list(CORE_IMPORT_ROOTS):
+        raise invalid(
+            f"allowed_import_roots is not {', '.join(CORE_IMPORT_ROOTS)}, as a core workspace has"
+        )
+    return record
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _sorted_distinct_strings(values: object) -> bool:
+    return (
+        isinstance(values, list)
+        and bool(values)
+        and all(isinstance(value, str) for value in values)
+        and values == sorted(set(values))
+    )
+
+
+def _plain_lean_name(name: str) -> bool:
+    """A valid Lean name without a _root_ component."""
+
+    return valid_lean_name(name) and "_root_" not in name.split(".")
+
+
+def _comparator_reserved_module(name: str) -> bool:
+    return name in COMPARATOR_RESERVED_MODULES or name.startswith(
+        (CHALLENGE_MODULE + ".", COMPARATOR_SOLUTION_MODULE + ".")
+    )
+
+
+def solution_closure(
+    input_root: Path, modules: list[str], allowed_roots: list[str]
+) -> dict[str, bytes]:
+    """The solution files a comparator workspace receives: POSIX path to exact bytes.
+
+    The walk is breadth first from the sorted, distinct ``modules``, and the
+    map is in walk order. Module ``A.B`` is the file ``A/B.lean`` under
+    ``input_root``. Each file is read once, and these bytes are the ones the
+    workspace gets. Each import of a file is one of:
+
+    - a module under a root in ``allowed_roots``: the toolchain's, never
+      copied; refused when ``input_root`` also holds a file for it;
+    - a module the workspace owns (COMPARATOR_RESERVED_MODULES, or a name
+      below its first two), or not a valid module name: refused;
+    - otherwise a file of ``input_root``, which the walk follows; refused
+      when there is no such file.
+
+    A named module must be a valid Lean name without a _root_ component,
+    neither reserved nor under a root in ``allowed_roots``, and its file must
+    exist. Every file must be a regular file with one link, under directories
+    that are not symlinks, in UTF-8 that the scanner's lexer reads to its end
+    (otherwise its imports cannot be trusted). The file count, the total size
+    and each file's size are capped; the walk refuses past a cap and never
+    truncates. A refusal raises ComparatorRefusal with status not_run.
+    """
+
+    root = Path(input_root)
+    trusted = set(allowed_roots)
+
+    def refuse(kind: str, detail: str) -> ComparatorRefusal:
+        return ComparatorRefusal("not_run", kind, detail)
+
+    named = sorted(set(modules))
+    if not named:
+        raise refuse("solution_module_invalid", "no --solution-module was given")
+    for module in named:
+        if not _plain_lean_name(module):
+            raise refuse(
+                "solution_module_invalid",
+                f"{module!r} is not a valid Lean module name without a _root_ component",
+            )
+        if _comparator_reserved_module(module):
+            raise refuse(
+                "solution_module_invalid",
+                f"{module} is a module name the comparator workspace owns",
+            )
+        if module.split(".")[0] in trusted:
+            raise refuse(
+                "solution_module_invalid", f"{module} lies under a trusted root of the toolchain"
+            )
+
+    closure: dict[str, bytes] = {}
+    total = 0
+    queue = list(named)
+    seen = set(named)
+    position = 0
+    while position < len(queue):
+        module = queue[position]
+        position += 1
+        *package, name = module.split(".")
+        relative = "/".join([*package, name + ".lean"])
+        try:
+            directory = stable_directory_chain(root, tuple(package), missing_ok=True)
+        except StableReadError as exc:
+            raise refuse("solution_file_unsafe", f"{relative}: {exc.kind}: {exc.detail}") from exc
+        path = root.joinpath(*package, name + ".lean")
+        try:
+            info = os.lstat(path) if directory is not None else None
+        except FileNotFoundError:
+            info = None
+        except OSError as exc:
+            raise refuse(
+                "solution_file_unsafe",
+                f"{relative} cannot be examined: {exc.strerror or type(exc).__name__}",
+            ) from exc
+        if info is None:
+            if position <= len(named):
+                raise refuse("solution_module_missing", f"{module}: --input has no {relative}")
+            raise refuse(
+                "solution_import_not_allowed",
+                f"{module}: neither a file of --input nor a module under "
+                + ", ".join(sorted(trusted)),
+            )
+        if stat.S_ISLNK(info.st_mode):
+            raise refuse("solution_file_unsafe", f"{relative} is a symlink")
+        if not stat.S_ISREG(info.st_mode):
+            raise refuse("solution_file_unsafe", f"{relative} is not a regular file")
+        if info.st_nlink != 1:
+            raise refuse(
+                "solution_file_unsafe",
+                f"{relative} has {info.st_nlink} hard links; it must have one",
+            )
+        if len(closure) >= COMPARATOR_SOLUTION_MAX_FILES:
+            raise refuse(
+                "solution_too_large",
+                f"the solution needs more than {COMPARATOR_SOLUTION_MAX_FILES} files",
+            )
+        try:
+            data = stable_regular_file_bytes(path, max_bytes=COMPARATOR_SOLUTION_MAX_FILE_BYTES)
+        except StableReadError as exc:
+            kind = "solution_too_large" if exc.kind == "input_too_large" else "solution_file_unsafe"
+            raise refuse(kind, f"{relative}: {exc.kind}: {exc.detail}") from exc
+        total += len(data)
+        if total > COMPARATOR_SOLUTION_MAX_TOTAL_BYTES:
+            raise refuse(
+                "solution_too_large",
+                f"the solution files exceed {COMPARATOR_SOLUTION_MAX_TOTAL_BYTES} bytes in total",
+            )
+        closure[relative] = data
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise refuse(
+                "solution_file_unsafe", f"{relative}: invalid_utf8: the file is not UTF-8"
+            ) from exc
+        stripped, lexical_errors = _strip_comments_and_strings(text)
+        if lexical_errors:
+            raise refuse(
+                "solution_file_unsafe",
+                f"{relative}: lexical_scan_incomplete: {lexical_errors[0]}",
+            )
+        for imported in imported_modules(stripped):
+            if not _plain_lean_name(imported):
+                raise refuse(
+                    "solution_import_not_allowed",
+                    f"{relative} imports {imported or '<missing>'}: not a valid Lean module name "
+                    "without a _root_ component",
+                )
+            if _comparator_reserved_module(imported):
+                raise refuse(
+                    "solution_import_not_allowed",
+                    f"{relative} imports {imported}, a module name the comparator workspace owns",
+                )
+            if imported.split(".")[0] in trusted:
+                *parts, last = imported.split(".")
+                if os.path.lexists(root.joinpath(*parts, last + ".lean")):
+                    raise refuse(
+                        "solution_shadows_trusted_module",
+                        f"--input holds a file for {imported}, which {relative} imports "
+                        "from the toolchain",
+                    )
+                continue
+            if imported not in seen:
+                seen.add(imported)
+                queue.append(imported)
+    return closure
+
+
+def files_digest(files: dict[str, str]) -> str:
+    """sha256 of a path-to-sha256 map, dumped with sorted keys and compact separators."""
+
+    return hashlib.sha256(
+        json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def comparator_state_root() -> Path:
+    """The directory of comparator runs and receipts; nothing is created here.
+
+    It is $XDG_STATE_HOME/ai-agents-skills/comparator when XDG_STATE_HOME is
+    an absolute path, and ~/.local/state/ai-agents-skills/comparator
+    otherwise.
+    """
+
+    configured = os.environ.get("XDG_STATE_HOME", "")
+    base = Path(configured) if os.path.isabs(configured) else _home_directory() / ".local" / "state"
+    return base / "ai-agents-skills" / "comparator"
+
+
+def comparator_lakefile(closure_modules: list[str]) -> str:
+    """The workspace's lakefile.toml, for the modules of the solution closure.
+
+    TOML runs no configuration code. AASSolution's roots are its own name and
+    the root of each closure module, so Lake finds the solution's imports as
+    local modules. Its globs name AASSolution and each closure module
+    exactly: the default glob of a root would make Lake build a module the
+    closure does not have, such as Sol for Sol.Main. Names are written as
+    TOML basic strings; a JSON string is one for every name valid_lean_name
+    admits, and a character outside the BMP stays raw, since TOML has no
+    surrogate-pair escape.
+    """
+
+    modules = sorted(set(closure_modules))
+    roots = sorted({module.split(".")[0] for module in modules})
+
+    def strings(names: list[str]) -> str:
+        return ", ".join(json.dumps(name, ensure_ascii=False) for name in names)
+
+    return (
+        'name = "aas_comparator"\n'
+        'version = "0.1.0"\n'
+        "\n"
+        "[[lean_lib]]\n"
+        f"name = {json.dumps(CHALLENGE_MODULE)}\n"
+        "\n"
+        "[[lean_lib]]\n"
+        f"name = {json.dumps(COMPARATOR_SOLUTION_MODULE)}\n"
+        f"roots = [{strings([COMPARATOR_SOLUTION_MODULE, *roots])}]\n"
+        f"globs = [{strings([COMPARATOR_SOLUTION_MODULE, *modules])}]\n"
+    )
+
+
+def comparator_solution_source(modules: list[str]) -> str:
+    """AASSolution.lean: one import line for each named solution module, sorted and distinct."""
+
+    return "".join(f"import {module}\n" for module in sorted(set(modules)))
+
+
+def comparator_config(record: dict[str, Any]) -> bytes:
+    """comparator.json for an admitted record.
+
+    It names the record's theorems and permitted axioms, no definition hole
+    and no extra kernel: enable_nanoda and external_kernels are left out, so
+    only Lean's own kernel runs unless --paranoid adds the bundled ones.
+    """
+
+    config = {
+        "challenge_module": CHALLENGE_MODULE,
+        "solution_module": COMPARATOR_SOLUTION_MODULE,
+        "theorem_names": record["theorem_names"],
+        "definition_names": [],
+        "permitted_axioms": record["permitted_axioms"],
+    }
+    return (
+        json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+    ).encode("ascii")
+
+
+def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None:
+    """Build the workspace, run the judge and record its result in ``payload``.
+
+    Not wired yet: an admitted run ends as command_failed, with the finding
+    comparator_failed and the detail ``run not implemented``.
+    """
+
+    raise ComparatorRefusal("command_failed", "comparator_failed", "run not implemented")
 
 
 def emit(payload: dict[str, Any]) -> None:

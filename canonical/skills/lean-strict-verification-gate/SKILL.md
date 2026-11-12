@@ -450,6 +450,45 @@ challenge and the solution. For compiler trust this means:
 `--allow-compiler-trust` therefore really admits compiler trust, and the
 statement review must see it.
 
+## Comparator
+
+`comparator` judges a solution project with `lake comparator` against a
+challenge that `challenge-freeze` wrote. It runs only on Linux, and never as
+root:
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh comparator \
+  --input /path/to/solution/project \
+  --challenge-record formal/challenge/frozen/challenge.json \
+  --challenge-record-sha256 "$RECORD_SHA256" \
+  --solution-module Solution
+```
+
+- `--input`: the solution project, a directory that is not a symlink.
+- `--challenge-record`: the `challenge.json` that `challenge-freeze` wrote,
+  with its `Challenge.lean` beside it, outside `--input`.
+- `--challenge-record-sha256`: the `record_sha256` that `challenge-freeze`
+  reported, as 64 lowercase hex digits. The record must still hash to it.
+- `--solution-module`: a module of `--input` that declares the record's
+  theorems; repeatable, at least one.
+- `--timeout`: the run's limit in seconds, 300 by default.
+- `--paranoid`: also run every external kernel bundled with Lean. A record
+  frozen with `--paranoid` asks for this too.
+- `--keep-workspace`: keep the run's directory.
+- `--memory-limit`: the run's memory limit, `10G` by default. A size is a
+  positive whole number followed by `K`, `M` or `G`; `off` sets no limit.
+
+`comparator_status` is the verdict field. Only `accepted` and `rejected` are
+verdicts; `not_run`, `unsupported_toolchain`, `tool_unavailable` and
+`command_failed` give no verdict. The verb exits 0 only for `accepted`, 1 for
+every other result, and 2 for a usage error.
+
+The judge run is not wired yet. When the host, the record, the toolchain,
+the sandbox and the solution pass their checks, the verb reports
+`command_failed` with the finding `comparator_failed` and the detail
+`run not implemented`.
+
 ## Blocking Policy
 
 Before any typecheck, the scanner blocks active:
