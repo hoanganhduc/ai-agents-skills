@@ -3580,6 +3580,18 @@ def challenge_freeze_payload(
             for pattern_name, pattern in SAFETY_PATTERNS.items():
                 if pattern.search(stripped):
                     findings.append({"kind": "challenge_unsafe_construct", "detail": pattern_name})
+            # A solution may declare the same axiom as the challenge, so an
+            # axiom the challenge declares under a permitted compiler-trust
+            # name proves anything: lake comparator v4.35.0 accepted `1 = 2`
+            # that way. No other axiom can be permitted, so a challenge
+            # declares none.
+            if TRUST_BASE_PATTERNS["axiom"].search(stripped):
+                findings.append(
+                    {
+                        "kind": "challenge_unsafe_construct",
+                        "detail": "axiom: a challenge may not declare an axiom",
+                    }
+                )
             declarations = scan_declarations(text)
             if declarations.unparsed:
                 # A line the walk cannot read may open the namespace Lean puts

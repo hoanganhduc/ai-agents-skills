@@ -398,7 +398,9 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   as `#eval` or `run_cmd`, or a source the scanner's lexer cannot read to its
   end, with the detail `lexical_scan_incomplete: ...`. That lexer does not
   read raw strings, so `r#"a"b"#` leaves it in a string that never ends, and
-  an `#eval` after it would hide from the patterns;
+  an `#eval` after it would hide from the patterns. The same kind covers an
+  `axiom` declaration: a challenge may not declare an axiom (see compiler
+  trust below);
 - `output_dir_unusable`: `--out` is a symlink, a file or a non-empty
   directory, or its parent is missing or not a directory;
 - `output_write_failed`: a write failed. What the run created is removed, and
@@ -435,6 +437,15 @@ challenge and the solution. For compiler trust this means:
 - An axiom of the `_native.bv_decide` form is not classed as compiler trust
   by the gate's pattern, so the freeze refuses it even with
   `--allow-compiler-trust`.
+- The challenge must not declare such an axiom itself. A challenge declared
+  `axiom helper._native.native_decide.ax_1_1 : False`, the record permitted
+  that name, and a solution that declared the same axiom could then prove
+  `1 = 2`: the comparator accepted it (observed on v4.35.0). A challenge
+  could declare `Lean.ofReduceBool` the same way. The freeze therefore
+  refuses any `axiom` declaration in the challenge. It finds one with the
+  scanner's lexer, so an axiom hidden from that lexer, for example between
+  two raw strings, is not seen: when compiler trust is permitted, the
+  statement review must still look for one.
 
 `--allow-compiler-trust` therefore really admits compiler trust, and the
 statement review must see it.

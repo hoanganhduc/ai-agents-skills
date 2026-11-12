@@ -1072,6 +1072,93 @@ class ChallengeFreezeTests(unittest.TestCase):
                     [{"kind": "never_sanctioned_axiom", "detail": f"{bv_decide} is not a sanctioned axiom"}],
                 )
 
+    def test_a_challenge_that_declares_an_axiom_is_refused(self) -> None:
+        """A challenge may declare no axiom, since a solution could declare the same one.
+
+        lake comparator v4.35.0 accepted a proof of ``1 = 2`` from a solution
+        that declared ``axiom helper._native.native_decide.ax_1_1 : False``
+        when the challenge declared the same axiom and the record permitted
+        that compiler-trust name. ``Lean.ofReduceBool`` is absent from
+        v4.35.0, so a challenge could declare it the same way. Any other
+        axiom cannot be permitted. The accepted cases are regression checks:
+        ``axiom`` inside a longer name, in comments or in a string is no
+        declaration.
+        """
+
+        trust = "helper._native.native_decide.ax_1_1"
+        sanctioned = ("propext", "Quot.sound", "Classical.choice")
+        refusals = (
+            (
+                "a compiler-trust name the record permits",
+                f"axiom {trust} : False\n\ntheorem target : 1 = 2 := by\n  sorry\n",
+                (*sanctioned, trust),
+                True,
+            ),
+            (
+                "Lean.ofReduceBool declared by hand",
+                "axiom Lean.ofReduceBool : False\ntheorem target : 1 = 2 := sorry\n",
+                ("Lean.ofReduceBool",),
+                True,
+            ),
+            (
+                "an axiom no record can permit",
+                "axiom cheat : False\ntheorem target : 1 = 2 := sorry\n",
+                (),
+                False,
+            ),
+            (
+                "an axiom after modifiers",
+                "@[simp] private axiom fact : True\ntheorem target : True := sorry\n",
+                (),
+                False,
+            ),
+        )
+        for label, text, axioms, allow in refusals:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, text)
+                out = Path(tmp) / "out"
+                payload = _freeze(
+                    source, out, theorems=("target",), axioms=axioms, allow_compiler_trust=allow
+                )
+                self._assert_refused(payload, "challenge_unsafe_construct", out)
+                self.assertEqual(
+                    payload["findings"],
+                    [
+                        {
+                            "kind": "challenge_unsafe_construct",
+                            "detail": "axiom: a challenge may not declare an axiom",
+                        }
+                    ],
+                )
+
+        accepted = (
+            ("axiom inside a longer name", "theorem axiom_free : True := sorry\n", "axiom_free"),
+            (
+                "axiom in comments and a string",
+                "-- axiom a : False\n/-\naxiom b : False\n-/\n"
+                'theorem t : True := sorry\ndef s := "\naxiom c : False"\n',
+                "t",
+            ),
+        )
+        for label, text, theorem in accepted:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, text)
+                payload = _freeze(source, Path(tmp) / "out", theorems=(theorem,))
+                self.assertTrue(payload["ok"], payload)
+
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in (
+            "covers an `axiom` declaration: a challenge may not declare an axiom",
+            "The challenge must not declare such an axiom itself.",
+            "prove `1 = 2`",
+            "The freeze therefore refuses any `axiom` declaration in the challenge.",
+            "an axiom hidden from that lexer",
+            "the statement review must still look for one",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
     def test_an_import_the_toolchain_does_not_ship_is_refused(self) -> None:
         """OC-DS-2: every import is a module the pinned toolchain ships.
 
