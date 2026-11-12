@@ -280,10 +280,10 @@ reported in `comparator.error`; `doctor` still succeeds.
 The gate never looks for `bwrap` on `PATH`, where an older distribution
 `bwrap` may sit. `AAS_BWRAP` names the binary by absolute path; a relative
 name, a missing file or a file that is not executable is refused as
-`tool_unavailable`, with no fallback. When `AAS_BWRAP` is unset, the gate takes
-the highest version among `~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap`, the
-layout of a private bubblewrap build kept off `PATH`; other directory names
-are ignored.
+`tool_unavailable`, with no fallback. An empty or blank `AAS_BWRAP` counts as
+unset. When `AAS_BWRAP` is unset, the gate takes the highest version among
+`~/.local/opt/bubblewrap-X.Y.Z/bin/bwrap`, the layout of a private bubblewrap
+build kept off `PATH`; other directory names are ignored.
 
 The toolchain a challenge names, such as `leanprover/lean4:v4.35.0`, is the
 directory `$ELAN_HOME/toolchains/leanprover--lean4---v4.35.0`: elan turns `/`

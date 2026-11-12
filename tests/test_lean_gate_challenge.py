@@ -1373,6 +1373,15 @@ class ComparatorReadinessTests(unittest.TestCase):
                 },
             )
             self.assertIn("AAS_BWRAP", missing["detail"])
+
+            # Regression check (OC-K-2): an empty or blank AAS_BWRAP counts as
+            # unset, as an empty AAS_LEAN4CHECKER or AAS_LAKE does.
+            for blank in ("", " \t "):
+                with self.subTest(AAS_BWRAP=repr(blank)):
+                    with _readiness_environment(home, AAS_BWRAP=blank, **on_path), _working_directory(
+                        path_dir
+                    ):
+                        self.assertEqual(gate.bwrap_status(), missing)
             self.assertFalse(marker.exists())
 
     def test_bwrap_picks_the_newest_install_and_enforces_the_floor(self) -> None:
@@ -2088,6 +2097,8 @@ class ComparatorReadinessTests(unittest.TestCase):
             "`con-ron`",
             "more than 64 entries",
             "never truncates",
+            # OC-K-2: the convention of AAS_LEAN4CHECKER and AAS_LAKE.
+            "An empty or blank `AAS_BWRAP` counts as unset.",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readiness)
