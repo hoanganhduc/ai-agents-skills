@@ -258,7 +258,9 @@ COMPARATOR_LIMITATIONS = (
 # line: a JSON object with exactly these keys. The log is capped in lines and
 # bytes; COMPARATOR_WRAPPER_SOURCE keeps its own copy of the keys and the line
 # cap, since it runs on its own.
-COMPARATOR_PHASE_LOG_KEYS = frozenset({"phase", "target", "rc", "seconds", "dropped", "refused"})
+COMPARATOR_PHASE_LOG_KEYS = frozenset(
+    {"phase", "target", "rc", "seconds", "dropped", "refused", "oom_kills"}
+)
 COMPARATOR_PHASE_LOG_MAX_LINES = 64
 COMPARATOR_PHASE_LOG_MAX_BYTES = 64 * 1024
 # The only reasons a comparator run rejects a solution. Every other failure,
@@ -283,6 +285,8 @@ COMPARATOR_KERNEL_NAMES = {
 }
 # A comparator run starts only with this much space free where its state lies.
 COMPARATOR_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+# Where the comparator wrapper finds its cgroup's memory.events (cgroup v2).
+COMPARATOR_CGROUP_ROOT = "/sys/fs/cgroup"
 # The host programs a comparator run uses, by absolute path: systemd-run puts
 # the judge in a memory-limited user scope and systemctl stops that scope, nice
 # lowers the judge's priority, env gives it its whole environment, and python3
@@ -4747,7 +4751,10 @@ The program checks them against the steps lake comparator takes, drops
 --share-net, runs the pinned bwrap and waits for it, then appends one line for
 the step to the run's phase log and exits as bwrap did. A step it refuses never
 runs and is logged as refused. Its settings are wrapper.json, beside its real
-path. It never writes to stdout: in an export step, stdout is the export.
+path. It never writes to stdout: in an export step, stdout is the export. Each
+line also counts the processes of the program's cgroup that the out-of-memory
+killer stopped while the step ran, from the cgroup's memory.events, or holds -1
+when that file cannot be read.
 """
 
 import json
@@ -4755,8 +4762,10 @@ import os
 import sys
 import time
 
-CONFIG_KEYS = frozenset({"bwrap", "log", "toolchain_dir", "run_dir", "writable"})
-PHASE_LOG_KEYS = frozenset({"phase", "target", "rc", "seconds", "dropped", "refused"})
+CONFIG_KEYS = frozenset({"bwrap", "log", "toolchain_dir", "run_dir", "writable", "cgroup_root"})
+PHASE_LOG_KEYS = frozenset(
+    {"phase", "target", "rc", "seconds", "dropped", "refused", "oom_kills"}
+)
 PHASE_LOG_MAX_LINES = 64
 REFUSED_EXIT = 125
 EXEC_FAILED_EXIT = 127
@@ -4879,7 +4888,7 @@ def validate_bwrap_argv(args, config):
     raise Refused(" ".join([name, *rest[:3]]) + " is not a step lake comparator runs")
 
 
-def phase_record(phase, target, rc, seconds, dropped, refused):
+def phase_record(phase, target, rc, seconds, dropped, refused, oom_kills):
     """One phase-log line: a JSON object with exactly PHASE_LOG_KEYS and a newline, as bytes."""
     entry = {
         "phase": phase,
@@ -4888,6 +4897,7 @@ def phase_record(phase, target, rc, seconds, dropped, refused):
         "seconds": seconds,
         "dropped": list(dropped),
         "refused": refused,
+        "oom_kills": oom_kills,
     }
     return (json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
 
@@ -4895,6 +4905,37 @@ def phase_record(phase, target, rc, seconds, dropped, refused):
 def read_flags():
     """Flags that open a file to read, never through a symlink."""
     return os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | getattr(os, "O_BINARY", 0)
+
+
+def oom_kills(config):
+    """oom_kill from the memory.events of this program's cgroup, or -1 when it cannot be read.
+
+    The cgroup is the cgroup v2 entry of /proc/self/cgroup, under config's
+    cgroup_root. The count covers every process of the cgroup, the sandboxed
+    step's included.
+    """
+    try:
+        descriptor = os.open("/proc/self/cgroup", read_flags())
+        try:
+            data = os.read(descriptor, 65536)
+        finally:
+            os.close(descriptor)
+        paths = [line[3:] for line in data.decode("utf-8").splitlines() if line.startswith("0::")]
+        if len(paths) != 1 or not paths[0].startswith("/"):
+            return -1
+        events = os.path.join(config["cgroup_root"], paths[0].lstrip("/"), "memory.events")
+        descriptor = os.open(events, read_flags())
+        try:
+            text = os.read(descriptor, 65536).decode("ascii")
+        finally:
+            os.close(descriptor)
+        for line in text.splitlines():
+            key, _, value = line.partition(" ")
+            if key == "oom_kill":
+                return int(value)
+    except (OSError, ValueError):
+        pass
+    return -1
 
 
 def load_config(program):
@@ -4954,7 +4995,7 @@ def refuse(log, reason):
     report("refused: " + reason)
     if log is not None:
         try:
-            append(log, phase_record("refused", "", REFUSED_EXIT, 0.0, [], reason[:500]))
+            append(log, phase_record("refused", "", REFUSED_EXIT, 0.0, [], reason[:500], 0))
         except OSError:
             pass
     return REFUSED_EXIT
@@ -4978,6 +5019,7 @@ def main(argv=None):
         opts, cmd, phase, target, dropped = validate_bwrap_argv(args, config)
     except Refused as exc:
         return refuse(log, str(exc))
+    before = oom_kills(config)
     started = time.monotonic()
     pid = os.fork()
     if pid == 0:
@@ -4988,8 +5030,10 @@ def main(argv=None):
     _, status = os.waitpid(pid, 0)
     rc = os.waitstatus_to_exitcode(status)
     seconds = round(time.monotonic() - started, 3)
+    after = oom_kills(config)
+    killed = after - before if 0 <= before <= after else -1
     try:
-        append(log, phase_record(phase, target, rc, seconds, dropped, ""))
+        append(log, phase_record(phase, target, rc, seconds, dropped, "", killed))
     except OSError as exc:
         report(f"the step ran, but the phase log cannot be written: {exc}")
         return REFUSED_EXIT
@@ -5050,7 +5094,8 @@ def parse_phase_log(data: bytes) -> list[dict[str, Any]] | None:
     build, export, kernel or refused; target is "", one of the two generated
     modules or a kernel's executable; rc is an integer, negative for a signal;
     seconds is a finite float that is not negative; dropped is a list of
-    strings; refused is a string. An empty log holds no step.
+    strings; refused is a string; oom_kills is an integer, -1 when the
+    wrapper could not read the count. An empty log holds no step.
     """
 
     if len(data) > COMPARATOR_PHASE_LOG_MAX_BYTES:
@@ -5089,6 +5134,9 @@ def parse_phase_log(data: bytes) -> list[dict[str, Any]] | None:
             or not isinstance(dropped, list)
             or not all(isinstance(option, str) for option in dropped)
             or not isinstance(entry["refused"], str)
+            or not isinstance(entry["oom_kills"], int)
+            or isinstance(entry["oom_kills"], bool)
+            or entry["oom_kills"] < -1
         ):
             return None
         phases.append(entry)
@@ -5103,6 +5151,48 @@ def classify_comparator_run(
     paranoid: bool,
 ) -> tuple[str, str, str, dict[str, str] | None]:
     """Judge a finished lake comparator run: (status, rejection kind, detail, finding).
+
+    _comparator_judgment judges the run from its exit code, its output and
+    the phase log. An out-of-memory kill then takes a verdict back: a killed
+    process can make a build or a kernel fail as a wrong solution would. When
+    the phase log counts a kill during any step, an acceptance or a rejection
+    is out_of_memory, no verdict. A build_failed or kernel_rejected rejection
+    whose count the wrapper could not read (-1) is oom_check_unavailable, no
+    verdict. Other judgments come after builds and exports that succeeded,
+    so an unread count leaves them as they are.
+    """
+
+    status, kind, detail, finding = _comparator_judgment(
+        returncode, stdout, stderr, phases, paranoid
+    )
+    if status not in ("accepted", "rejected") or not phases:
+        return status, kind, detail, finding
+    killed = [(step["phase"], step["target"]) for step in phases if step["oom_kills"] > 0]
+    if killed:
+        return "command_failed", "", detail, {
+            "kind": "out_of_memory",
+            "detail": "the out-of-memory killer stopped a process of the run during "
+            + _comparator_steps_text(killed),
+        }
+    if kind in ("build_failed", "kernel_rejected") and any(
+        step["oom_kills"] < 0 for step in phases
+    ):
+        return "command_failed", "", detail, {
+            "kind": "oom_check_unavailable",
+            "detail": "the run's cgroup memory.events could not be read, so an out-of-memory "
+            "kill cannot be ruled out",
+        }
+    return status, kind, detail, finding
+
+
+def _comparator_judgment(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    phases: list[dict[str, Any]] | None,
+    paranoid: bool,
+) -> tuple[str, str, str, dict[str, str] | None]:
+    """Judge a run from its exit code, its output and its phase log, before the OOM rule.
 
     ``phases`` is the wrapper's phase log as parse_phase_log gives it, and
     ``paranoid`` says whether the run asked for the bundled kernels. The
@@ -5381,6 +5471,7 @@ def _comparator_judge(
         started = True
         _comparator_execute(payload, context, run_id, argv, workspace)
         _comparator_integrity(payload, context, workspace, toolchain_before)
+        _comparator_disk_after_run(payload, run_dir)
     except ComparatorRefusal as exc:
         _comparator_fail(payload, exc.status, exc.kind, exc.detail)
     except Exception as exc:  # no verdict, never a crash
@@ -5395,6 +5486,31 @@ def _comparator_judge(
             _comparator_fail(payload, "command_failed", "cleanup_failed", problem)
     if started:
         _comparator_receipt(payload, context, run_id, receipts)
+
+
+def _comparator_disk_after_run(payload: dict[str, Any], run_dir: Path) -> None:
+    """Take back a build_failed rejection when the disk is below the floor after the run.
+
+    The solution's build can fill the disk, and a build that runs out of
+    space fails like one that does not compile. With less than
+    COMPARATOR_MIN_FREE_BYTES free before the cleanup, the result is
+    insufficient_disk, no verdict.
+    """
+
+    if (payload["comparator_status"], payload["comparator_rejection_kind"]) != (
+        "rejected",
+        "build_failed",
+    ):
+        return
+    free = shutil.disk_usage(run_dir).free
+    if free < COMPARATOR_MIN_FREE_BYTES:
+        _comparator_fail(
+            payload,
+            "command_failed",
+            "insufficient_disk",
+            f"{run_dir} has {free} bytes free after the run, below {COMPARATOR_MIN_FREE_BYTES}; "
+            "the build may have failed for want of space",
+        )
 
 
 def _comparator_workspace(
@@ -5494,6 +5610,7 @@ def _comparator_workspace(
         "toolchain_dir": context.toolchain_dir,
         "run_dir": str(run_dir),
         "writable": str(ws / ".lake"),
+        "cgroup_root": COMPARATOR_CGROUP_ROOT,
     }
     settings_bytes = (json.dumps(settings, sort_keys=True) + "\n").encode("ascii")
     _write_new_private_file(run_dir / "wrapper.json", settings_bytes, created)

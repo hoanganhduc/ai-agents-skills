@@ -1649,7 +1649,7 @@ KERNEL_NAMES = {
     "con-leche": "con-leche",
     "con-ron": "con-ron",
 }
-PHASE_LOG_KEYS = {"phase", "target", "rc", "seconds", "dropped", "refused"}
+PHASE_LOG_KEYS = {"phase", "target", "rc", "seconds", "dropped", "refused", "oom_kills"}
 REJECTION_KINDS = (
     "statement_mismatch",
     "kind_mismatch",
@@ -1707,6 +1707,15 @@ if "symlink" in scenario:
     link, target = scenario["symlink"]
     os.unlink(link)
     os.symlink(target, link)
+if "oom" in scenario:
+    # The OOM killer stopping processes of the cgroup: memory.events counts them.
+    events, count = scenario["oom"]
+    with open(events, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    with open(events, "w", encoding="utf-8") as handle:
+        for line in lines:
+            key, _, value = line.partition(" ")
+            handle.write(f"{key} {int(value) + count}\\n" if key == "oom_kill" else line + "\\n")
 if "signal" in scenario:
     os.kill(os.getpid(), scenario["signal"])
 sys.exit(scenario.get("rc", 0))
@@ -1731,7 +1740,32 @@ def _wrapper_namespace() -> dict[str, Any]:
     return namespace
 
 
-def _phase(phase: str, target: str, rc: int = 0, refused: str = "") -> dict[str, Any]:
+def _fake_cgroup(root: Path) -> Path | None:
+    """A fake cgroup v2 tree under ``root``, with memory.events for this process's cgroup.
+
+    The wrapper reads its cgroup from /proc/self/cgroup and, under its
+    cgroup_root, that cgroup's memory.events. Returns the file, or None on a
+    host that gives this process no cgroup v2 path, where the wrapper logs -1.
+    """
+
+    try:
+        lines = Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    paths = [line[3:] for line in lines if line.startswith("0::")]
+    if not paths or not paths[0].startswith("/"):
+        return None
+    events = root / paths[0].lstrip("/") / "memory.events"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", encoding="utf-8"
+    )
+    return events
+
+
+def _phase(
+    phase: str, target: str, rc: int = 0, refused: str = "", oom_kills: int = 0
+) -> dict[str, Any]:
     """One parsed phase-log entry."""
 
     return {
@@ -1741,6 +1775,7 @@ def _phase(phase: str, target: str, rc: int = 0, refused: str = "") -> dict[str,
         "seconds": 0.25,
         "dropped": ["--share-net"] if phase == "resolve" else [],
         "refused": refused,
+        "oom_kills": oom_kills,
     }
 
 
@@ -1786,7 +1821,13 @@ class ComparatorWrapperTests(unittest.TestCase):
             "toolchain_dir": str(self.toolchain),
             "run_dir": str(self.run),
             "writable": str(self.ws / ".lake"),
+            "cgroup_root": str(self.base / "cgroup"),
         }
+        (self.base / "cgroup").mkdir()
+        # The wrapper counts OOM kills from its cgroup's memory.events: 0 here,
+        # or -1 on a host that gives this process no cgroup v2 path.
+        self.events = _fake_cgroup(self.base / "cgroup")
+        self.oom = 0 if self.events is not None else -1
         self.wrapper = _wrapper_namespace()
 
     def _tool(self, name: str) -> str:
@@ -1941,8 +1982,8 @@ class ComparatorWrapperTests(unittest.TestCase):
         )
         # What the wrapper logs, the gate parses back.
         record = namespace["phase_record"]
-        line = record("resolve", "", 0, 1.5, ["--share-net"], "")
-        refusal = record("refused", "", 125, 0.0, [], "r\u00e9fus\u00e9")
+        line = record("resolve", "", 0, 1.5, ["--share-net"], "", 0)
+        refusal = record("refused", "", 125, 0.0, [], "r\u00e9fus\u00e9", 0)
         self.assertTrue(line.endswith(b"\n") and refusal.isascii())
         self.assertEqual(
             gate.parse_phase_log(line + refusal),
@@ -1954,6 +1995,7 @@ class ComparatorWrapperTests(unittest.TestCase):
                     "seconds": 1.5,
                     "dropped": ["--share-net"],
                     "refused": "",
+                    "oom_kills": 0,
                 },
                 {
                     "phase": "refused",
@@ -1962,6 +2004,7 @@ class ComparatorWrapperTests(unittest.TestCase):
                     "seconds": 0.0,
                     "dropped": [],
                     "refused": "r\u00e9fus\u00e9",
+                    "oom_kills": 0,
                 },
             ],
         )
@@ -2230,7 +2273,14 @@ class ComparatorWrapperTests(unittest.TestCase):
         self.assertGreaterEqual(entry.pop("seconds"), 0.0)
         self.assertEqual(
             entry,
-            {"phase": "resolve", "target": "", "rc": 0, "dropped": ["--share-net"], "refused": ""},
+            {
+                "phase": "resolve",
+                "target": "",
+                "rc": 0,
+                "dropped": ["--share-net"],
+                "refused": "",
+                "oom_kills": self.oom,
+            },
         )
         # The step's exit code is the wrapper's; a signal is logged as its
         # negative number, and the wrapper exits with 128 plus the number.
@@ -2255,6 +2305,25 @@ class ComparatorWrapperTests(unittest.TestCase):
         self.assertEqual((completed.returncode, calls), (127, []), completed.stderr)
         (entry,) = self._logged()
         self.assertEqual((entry["phase"], entry["rc"]), ("kernel", 127))
+
+    @unittest.skipUnless(*POSIX_WRAPPER)
+    def test_main_logs_out_of_memory_kills(self) -> None:
+        """Each entry counts the OOM kills in the wrapper's cgroup while its step ran."""
+
+        if self.events is None:
+            self.skipTest("this host gives the test process no cgroup v2 path")
+        program = self._install()
+        kernel = self._upstream_shapes()[5][1]
+        completed, calls = self._call(program, kernel, {"oom": [str(self.events), 2], "rc": 137})
+        self.assertEqual((completed.returncode, len(calls)), (137, 1), completed.stderr)
+        (entry,) = self._logged()
+        self.assertEqual((entry["phase"], entry["rc"], entry["oom_kills"]), ("kernel", 137, 2))
+        # A cgroup whose memory.events cannot be read is logged as -1.
+        program = self._install(dict(self.config, cgroup_root=str(self.base / "no-cgroup")))
+        completed, calls = self._call(program, kernel)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        (entry,) = self._logged()
+        self.assertEqual(entry["oom_kills"], -1)
 
     @unittest.skipUnless(*POSIX_WRAPPER)
     def test_main_logs_a_refused_step_and_never_runs_it(self) -> None:
@@ -2327,7 +2396,7 @@ class ComparatorWrapperTests(unittest.TestCase):
     @unittest.skipUnless(*POSIX_WRAPPER)
     def test_main_keeps_its_log_bounded_and_never_creates_or_follows_it(self) -> None:
         resolve = self._upstream_shapes()[0][1]
-        line = self.wrapper["phase_record"]("kernel", "leanchecker", 0, 0.5, [], "")
+        line = self.wrapper["phase_record"]("kernel", "leanchecker", 0, 0.5, [], "", 0)
         with self.subTest(case="64 lines already"):
             program = self._install()
             self.log.write_bytes(line * 64)
@@ -2766,9 +2835,86 @@ class ComparatorClassificationTests(unittest.TestCase):
         self.assertIn("signal 9", classify(*run(-9, "", []))[3]["detail"])
         self.assertIn("137", classify(*run(137, "", []))[3]["detail"])
 
+    def test_out_of_memory_takes_a_verdict_back(self) -> None:
+        """An OOM kill in any step is no verdict; an unread count is one for a failed build or kernel."""
+
+        classify = gate.classify_comparator_run
+        build = "output of the build\nerror: Child exited with 1\n"
+        mismatch = "error: Challenge and solution theorem statement do not match: 'comm'\n"
+        kernel = "error: Lean default exited with 1\n"
+        statement = "Challenge and solution theorem statement do not match: 'comm'"
+
+        def counted(phases: list[dict[str, Any]], index: int, count: int) -> list[dict[str, Any]]:
+            changed = [dict(step) for step in phases]
+            changed[index]["oom_kills"] = count
+            return changed
+
+        accepted = _phases(0, 0, 0, 0, 0, 0)
+        failed_build = _phases(0, 0, 0, 1)
+        judged = _phases(0, 0, 0, 0, 0)
+        rejected_by_kernel = _phases(0, 0, 0, 0, 0, 1)
+        # Without a kill, each verdict stands.
+        self._check(classify(0, self.ACCEPTED_STDOUT, "", accepted, False), "accepted")
+        self._check(
+            classify(1, "", build, failed_build, False),
+            "rejected",
+            "build_failed",
+            "Child exited with 1",
+        )
+        # A kill in any step takes any verdict back.
+        for label, result, detail in (
+            ("accepted", classify(0, self.ACCEPTED_STDOUT, "", counted(accepted, 2, 1), False), ""),
+            (
+                "build",
+                classify(1, "", build, counted(failed_build, 3, 1), False),
+                "Child exited with 1",
+            ),
+            ("judgment", classify(1, "", mismatch, counted(judged, 0, 3), False), statement),
+            (
+                "kernel",
+                classify(1, "", kernel, counted(rejected_by_kernel, 5, 1), False),
+                "Lean default exited with 1",
+            ),
+        ):
+            with self.subTest(killed=label):
+                self._check(result, "command_failed", "", detail, "out_of_memory")
+        # A count the wrapper could not read (-1) takes back only what a kill
+        # could have caused: a failed build or a kernel's rejection.
+        self._check(
+            classify(1, "", build, counted(failed_build, 1, -1), False),
+            "command_failed",
+            "",
+            "Child exited with 1",
+            "oom_check_unavailable",
+        )
+        self._check(
+            classify(1, "", kernel, counted(rejected_by_kernel, 5, -1), False),
+            "command_failed",
+            "",
+            "Lean default exited with 1",
+            "oom_check_unavailable",
+        )
+        self._check(
+            classify(1, "", mismatch, counted(judged, 3, -1), False),
+            "rejected",
+            "statement_mismatch",
+            statement,
+        )
+        self._check(
+            classify(0, self.ACCEPTED_STDOUT, "", counted(accepted, 3, -1), False), "accepted"
+        )
+        # A run that is already no verdict keeps its own finding.
+        self._check(
+            classify(1, "", "error: Child exited with 1\n", counted(_phases(0, 1), 1, 1), False),
+            "command_failed",
+            "",
+            "Child exited with 1",
+            "challenge_build_failed",
+        )
+
     def test_parse_phase_log(self) -> None:
         record = _wrapper_namespace()["phase_record"]
-        good = record("build", "AASSolution", 1, 2.5, [], "")
+        good = record("build", "AASSolution", 1, 2.5, [], "", 0)
         entry = {
             "phase": "build",
             "target": "AASSolution",
@@ -2776,19 +2922,20 @@ class ComparatorClassificationTests(unittest.TestCase):
             "seconds": 2.5,
             "dropped": [],
             "refused": "",
+            "oom_kills": 0,
         }
         self.assertEqual(gate.parse_phase_log(b""), [])
         self.assertEqual(gate.parse_phase_log(good), [entry])
         # The line cap and the byte cap, at and past their limits.
-        line = record("kernel", "leanchecker", 0, 0.5, [], "")
+        line = record("kernel", "leanchecker", 0, 0.5, [], "", 0)
         self.assertEqual(len(gate.parse_phase_log(line * 64)), 64)
         self.assertIsNone(gate.parse_phase_log(line * 65))
-        plain = len(record("refused", "", 125, 0.0, [], ""))
+        plain = len(record("refused", "", 125, 0.0, [], "", 0))
         lines = 8
         padding = 64 * 1024 - lines * plain
         share = padding // lines
-        sized = [record("refused", "", 125, 0.0, [], "r" * share) for _ in range(lines - 1)]
-        sized.append(record("refused", "", 125, 0.0, [], "r" * (padding - (lines - 1) * share)))
+        sized = [record("refused", "", 125, 0.0, [], "r" * share, 0) for _ in range(lines - 1)]
+        sized.append(record("refused", "", 125, 0.0, [], "r" * (padding - (lines - 1) * share), 0))
         full = b"".join(sized)
         self.assertEqual(len(full), 64 * 1024)
         self.assertEqual(len(gate.parse_phase_log(full)), lines)
@@ -2831,6 +2978,11 @@ class ComparatorClassificationTests(unittest.TestCase):
             "dropped as a string": line_with(dropped="--share-net"),
             "dropped holding a number": line_with(dropped=[1]),
             "refused as a number": line_with(refused=1),
+            "a missing oom_kills": line_with(oom_kills=_DROP),
+            "oom_kills as a bool": line_with(oom_kills=True),
+            "oom_kills as a string": line_with(oom_kills="0"),
+            "oom_kills as a float": line_with(oom_kills=0.0),
+            "oom_kills below -1": line_with(oom_kills=-2),
             "an unterminated last line": good[:-1],
             "a blank line": good + b"\n" + good,
             "a good line, then a bad one": good + line_with(rc=None),
@@ -3201,6 +3353,15 @@ def main():
     else:
         step = "kernel " + tool
     record({"call": "step", "step": step, "args": args})
+    kills = PLAN.get("oom", {}).get(step, 0)
+    if kills:
+        # The OOM killer stopping processes of the run's cgroup during this step.
+        with open(SETTINGS["memory_events"], encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        with open(SETTINGS["memory_events"], "w", encoding="utf-8") as handle:
+            for line in lines:
+                key, _, value = line.partition(" ")
+                handle.write(f"{key} {int(value) + kills}\n" if key == "oom_kill" else line + "\n")
     return PLAN.get("rcs", {}).get(step, 0)
 
 
@@ -3386,9 +3547,20 @@ class ComparatorRunTests(unittest.TestCase):
         self.record_path, self.record_sha = _write_record(self.frozen, self.record)
         self.state = self.base / "state"
         self.comparator_state = self.state / "ai-agents-skills" / "comparator"
+        # The wrapper counts OOM kills from its cgroup's memory.events under the
+        # gate's COMPARATOR_CGROUP_ROOT; a fake tree stands in for /sys/fs/cgroup.
+        self.cgroup_root = self.base / "cgroup"
+        self.cgroup_root.mkdir()
+        self.events = _fake_cgroup(self.cgroup_root)
+        if self.events is None:
+            self.skipTest(
+                "the run's wrapper reads its cgroup's memory.events, which needs a cgroup v2 path"
+            )
+        stack.enter_context(mock.patch.object(gate, "COMPARATOR_CGROUP_ROOT", str(self.cgroup_root)))
         (self.fake / "settings.json").write_text(
             json.dumps(
                 {
+                    "memory_events": str(self.events),
                     "toolchain": str(self.toolchain),
                     "banner": BANNER,
                     "manifest": FAKE_MANIFEST,
@@ -3659,6 +3831,7 @@ class ComparatorRunTests(unittest.TestCase):
                 "toolchain_dir": str(self.toolchain),
                 "run_dir": str(run),
                 "writable": str(ws / ".lake"),
+                "cgroup_root": str(self.cgroup_root),
             },
         )
         self.assertEqual(
@@ -4281,6 +4454,51 @@ class ComparatorRunTests(unittest.TestCase):
                 paranoid=True,
             )
         refused(payload, "tool_unavailable", "paranoid_kernel_missing")
+
+    def test_out_of_memory_and_a_full_disk_are_no_verdict(self) -> None:
+        """An OOM kill during the run, or a disk below the floor after a failed build, is no verdict."""
+
+        steps, rcs, message = REJECTION_PLANS["build_failed"]
+        # Without a kill, the failed build is a rejection.
+        self._plan(_failed_plan(steps, message, rcs))
+        payload = self._judge()
+        self.assertEqual(
+            (payload["comparator_status"], payload["comparator_rejection_kind"]),
+            ("rejected", "build_failed"),
+            payload,
+        )
+        self.assertEqual([step["oom_kills"] for step in payload["run"]["phases"]], [0, 0, 0, 0])
+        # The OOM killer stops a process of the solution's build: no verdict.
+        self._plan({**_failed_plan(steps, message, rcs), "oom": {"build AASSolution": 1}})
+        payload = self._judge()
+        self._assert_no_verdict(payload, "out_of_memory", "build AASSolution")
+        self.assertEqual(payload["comparator_detail"], message)
+        self.assertEqual([step["oom_kills"] for step in payload["run"]["phases"]], [0, 0, 0, 1])
+        receipt = self._receipt(payload)
+        self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+        self.assertEqual(self._runs(), [])
+        # A disk below the floor after the run takes a failed build back too:
+        # a build that runs out of space fails like one that does not compile.
+        usage = gate.shutil.disk_usage(self.base)
+        seen: list[Any] = []
+
+        def disk_usage(path: Any) -> Any:
+            seen.append(path)
+            return usage if len(seen) == 1 else usage._replace(free=0)
+
+        self._plan(_failed_plan(steps, message, rcs))
+        with mock.patch.object(gate.shutil, "disk_usage", side_effect=disk_usage):
+            payload = self._judge()
+        self._assert_no_verdict(payload, "insufficient_disk", "after the run")
+        self.assertEqual(
+            self._receipt(payload)["result"], {key: payload[key] for key in RESULT_KEYS}
+        )
+        # An acceptance is not taken back by a full disk.
+        seen.clear()
+        self._plan(_accepted_plan())
+        with mock.patch.object(gate.shutil, "disk_usage", side_effect=disk_usage):
+            payload = self._judge()
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
 
     def test_removal_of_deep_long_and_locked_trees(self) -> None:
         """A run directory goes however deep it is, however long its paths, whatever it locks.

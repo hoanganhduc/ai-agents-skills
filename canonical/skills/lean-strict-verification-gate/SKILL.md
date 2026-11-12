@@ -628,7 +628,9 @@ It drops `--share-net`, which lake comparator asks for when it resolves the
 workspace, so no step gets a network; a core workspace has nothing to fetch.
 It then runs the step in the pinned `bwrap` and appends one line to
 `phases.jsonl` in the run directory: the phase, the target, the exit code,
-the seconds and the options it dropped. A step it refuses never runs and is
+the seconds, the options it dropped, and how many processes of the run's
+cgroup the out-of-memory killer stopped while the step ran (`oom_kills`, from
+the cgroup's `memory.events`, or -1 when that file cannot be read). A step it refuses never runs and is
 logged with the reason. The log takes at most 64 lines, and the wrapper never
 writes to standard output, which carries an export.
 
@@ -641,7 +643,11 @@ judge. A run that outgrows `--memory-limit` is
 killed inside its scope. On the host where this was tried (systemd 255,
 whose `DefaultOOMPolicy` is `stop`), systemd then stopped the whole scope,
 and the judge ended with `SIGTERM`, which gives `comparator_exit`, no
-verdict.
+verdict. Where systemd stops only the killed process, Lake reports a failed
+build, so the gate does not rely on the scope's policy: a step during which
+the out-of-memory killer stopped a process makes any result
+`out_of_memory`, no verdict, and so does a run with no memory limit that the
+host's own out-of-memory killer hits.
 
 ### Verdicts
 
@@ -705,6 +711,14 @@ Once the checks before the run have passed, every other result is
 - `sandbox_failed`: a `bwrap: ` line came with a would-be rejection;
 - `timeout`, `output_limit` and `comparator_failed`, the last for an
   unexpected error or a judge that cannot be started;
+- `out_of_memory`: the out-of-memory killer stopped a process of the run
+  during a step, which can fail a build or a kernel as a wrong solution
+  would; this takes back an acceptance or a rejection;
+- `oom_check_unavailable`: a `build_failed` or `kernel_rejected` rejection
+  whose out-of-memory count the wrapper could not read;
+- `insufficient_disk` after the run: a `build_failed` rejection with less than
+  the 2 GiB floor free before the cleanup, since a build that runs out of
+  space fails like one that does not compile;
 - `workspace_setup_failed` from the workspace above, and the checks after
   the run below.
 
