@@ -373,10 +373,15 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
 - `definition_hole_not_allowed`: any `--definition`. A definition hole lets
   the solution choose the definition, so a challenge names theorems only;
 - `theorem_not_declared`: a `--theorem` that the declaration walk does not
-  find as a public `theorem` or `lemma` under that fully qualified name. A
-  `def`, a `private` theorem, a commented-out one, one on a line the walk
-  cannot read, and a name with `«»` escapes are all refused; the detail counts
-  the unread lines;
+  find as a public `theorem` under that fully qualified name. A `def`, a
+  `private` theorem, a commented-out one and a name with `«»` escapes are all
+  refused. So is every source with a line the walk cannot read, such as
+  `namespace «A B»`, because a name the walk reports may then sit in another
+  namespace than the one Lean gives it; the detail counts those lines and
+  shows the first. A `--theorem` with a `_root_` component is refused rather
+  than rewritten, because Lean drops it: `theorem _root_.foo` inside
+  `namespace N` declares `foo`. `lemma` is not a core Lean command, so a core
+  challenge that declares anything with it cannot build and is refused;
 - `source_unreadable`: the source is missing, a symlink, not a regular file,
   larger than 1 MiB, or not UTF-8;
 - `challenge_import_not_trusted`: an import outside `allowed_import_roots`,

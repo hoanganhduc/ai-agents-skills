@@ -928,6 +928,86 @@ class ChallengeFreezeTests(unittest.TestCase):
         self.assertIn("--out", usage.stdout)
         self.assertNotIn("symlink", usage.stdout)
 
+    def test_a_theorem_lean_would_not_declare_is_refused(self) -> None:
+        """N3S12-F5: the record never pins a theorem name the comparator cannot find.
+
+        A line the walk cannot read may change the namespace Lean puts a name
+        in. ``theorem _root_.foo`` inside ``namespace N`` declares ``foo``, so a
+        name with a ``_root_`` component is refused, not rewritten. ``lemma``
+        is not a core Lean command, so a core challenge that declares anything
+        with it does not build. The accepted cases guard against a check that
+        reads too much.
+        """
+
+        refusals = (
+            (
+                "an unparsed scope line",
+                "namespace «A B»\ntheorem foo : True := sorry\nend «A B»\n",
+                "foo",
+                ("unparsed declaration lines: 2", "namespace «A B»"),
+            ),
+            (
+                "a _root_ component inside a namespace",
+                "namespace N\ntheorem _root_.foo : True := sorry\nend N\n",
+                "N._root_.foo",
+                ("N._root_.foo", "_root_ component"),
+            ),
+            (
+                "a _root_ name at the top level",
+                "theorem _root_.foo : True := sorry\n",
+                "_root_.foo",
+                ("_root_.foo", "_root_ component"),
+            ),
+            (
+                "the named theorem declared with lemma",
+                "lemma l : True := sorry\n",
+                "l",
+                ("not a core Lean command", "lemma l : True := sorry"),
+            ),
+            (
+                "another declaration made with lemma",
+                "theorem t : True := sorry\n@[simp] lemma helper : True := trivial\n",
+                "t",
+                ("not a core Lean command", "@[simp] lemma helper : True := trivial"),
+            ),
+        )
+        for label, text, theorem, details in refusals:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, text)
+                out = Path(tmp) / "out"
+                payload = _freeze(source, out, theorems=(theorem,))
+                self._assert_refused(payload, "theorem_not_declared", out)
+                self.assertEqual(_kinds(payload), ["theorem_not_declared"], payload)
+                for detail in details:
+                    self.assertIn(detail, payload["findings"][0]["detail"], payload)
+
+        accepted = (
+            ("lemma inside a longer name", "theorem lemma_count : True := sorry\n", "lemma_count"),
+            (
+                "lemma in comments and a string",
+                "-- lemma l : True\n/-\nlemma hidden : True := sorry\n-/\n"
+                'theorem t : True := sorry\ndef s := "\nlemma quoted : True"\n',
+                "t",
+            ),
+            ("_root_ inside a longer component", "theorem my_root_name : True := sorry\n", "my_root_name"),
+        )
+        for label, text, theorem in accepted:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, text)
+                payload = _freeze(source, Path(tmp) / "out", theorems=(theorem,))
+                self.assertTrue(payload["ok"], payload)
+
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in (
+            "a line the walk cannot read",
+            "`_root_` component",
+            "`lemma` is not a core Lean command",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+        self.assertNotIn("public `theorem` or `lemma`", section)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""

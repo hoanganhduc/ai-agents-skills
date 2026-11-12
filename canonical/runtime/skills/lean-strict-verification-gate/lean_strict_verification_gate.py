@@ -3502,6 +3502,18 @@ def challenge_freeze_payload(
                 findings.append(
                     {"kind": "theorem_not_declared", "detail": f"{name} is not a valid Lean name"}
                 )
+            elif "_root_" in name.split("."):
+                # `theorem _root_.foo` inside `namespace N` declares `foo`, which
+                # the line walk reports as `N._root_.foo`.
+                findings.append(
+                    {
+                        "kind": "theorem_not_declared",
+                        "detail": (
+                            f"{name} has a _root_ component; the line walk cannot tell "
+                            "which name Lean declares for it"
+                        ),
+                    }
+                )
 
         source_bytes = b""
         text: str | None = None
@@ -3538,6 +3550,37 @@ def challenge_freeze_payload(
                 if pattern.search(stripped):
                     findings.append({"kind": "challenge_unsafe_construct", "detail": pattern_name})
             declarations = scan_declarations(text)
+            if declarations.unparsed:
+                # A line the walk cannot read may open the namespace Lean puts
+                # a name in, as `namespace «A B»` does, so no name it reports
+                # can be trusted.
+                findings.append(
+                    {
+                        "kind": "theorem_not_declared",
+                        "detail": (
+                            f"unparsed declaration lines: {len(declarations.unparsed)}; "
+                            f"the first is: {declarations.unparsed[0]}"
+                        ),
+                    }
+                )
+            # `lemma` is not a core Lean command, so a core challenge that
+            # declares anything with it does not build.
+            lemma_lines = [
+                line.strip()
+                for line in stripped.splitlines()
+                if _DECLARATION_RE.match(line)
+                and _DECLARATION_KEYWORD_RE.findall(line) == ["lemma"]
+            ]
+            if lemma_lines:
+                findings.append(
+                    {
+                        "kind": "theorem_not_declared",
+                        "detail": (
+                            "lemma is not a core Lean command, so this core challenge cannot "
+                            f"build: {lemma_lines[0]}"
+                        ),
+                    }
+                )
             for name in theorem_names:
                 if valid_lean_name(name) and name not in declarations.names:
                     findings.append(
