@@ -568,6 +568,12 @@ the run with its status and finding, and nothing after it runs.
      file in the state directory, and waits for it for at most `--timeout`
      seconds, and never more than 600 (`host_busy`, `command_failed`).
 
+   The gate does not check the host's load; its caller does, before it
+   starts a run. A run starts only when the 1-minute load average is at most
+   the number of CPU cores minus one and `MemAvailable` is at least the
+   memory limit. Otherwise the caller records the check as not run, which is
+   no verdict.
+
 ### The run
 
 Each run then gets a private directory `runs/<run_id>/`, where `run_id` is the
@@ -585,7 +591,11 @@ challenge bytes, the solution files exactly as the checks read them, and
   `AASSolution` and the first component of each module of the solution's
   closure, and whose `globs` name `AASSolution` and each of those modules.
   The globs matter: by default Lake builds each root's own module, such as a
-  module `Sol` that does not exist for `Sol.Main`.
+  module `Sol` that does not exist for `Sol.Main`. The generated file
+  carries none of the solution project's own Lake options, such as
+  `leanOptions` (`maxHeartbeats`, for one) or `moreLeanArgs`, so a proof that
+  builds only with them is rejected as `build_failed`. Such an option belongs
+  in the source, as `set_option maxHeartbeats <n> in`.
 - `AASSolution.lean` starts with `prelude` and holds one `import` line for
   each `--solution-module`. `prelude` keeps `Init` out of the file itself, so
   a `prelude` solution that declares a name `Init` also declares is judged by

@@ -474,6 +474,8 @@ class ComparatorCliTests(unittest.TestCase):
             "comparator_failed",
             "receipt_write_failed",
             "cleanup_failed",
+            "out_of_memory",
+            "oom_check_unavailable",
         )
         messages = (
             "`Challenge and solution theorem statement do not match: '<name>'`",
@@ -501,6 +503,8 @@ class ComparatorCliTests(unittest.TestCase):
             "`axiom helper._native.native_decide.ax_1_1 : False`",
             "`1 = 2`",
             "`has_comparator` reads directory listings",
+            "carries none of the solution project's own Lake options",
+            "The gate does not check the host's load",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
