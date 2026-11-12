@@ -40,6 +40,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -120,7 +121,7 @@ LIMITATIONS = [
     "receipt; the digests detect a change made during a run, not one made before the "
     "freeze or after the receipt",
     "the solution's own build directory is writable inside the sandbox, so a solution can "
-    "fill the disk; the disk floor and cleanup bound this only after the fact",
+    "fill the disk; --min-free-disk, when set, and the cleanup bound this only after the fact",
     "core profile: imports outside Init, Std, Lean and Lake are refused",
 ]
 NO_MEMORY_LIMIT = "no memory limit was applied"
@@ -307,6 +308,12 @@ class ComparatorCliTests(unittest.TestCase):
                 (f"memory limit {value!r}", [*self._argv(), "--memory-limit", value], "--memory-limit")
             )
         usage_errors.append(("timeout 0", [*self._argv(), "--timeout", "0"], "--timeout"))
+        for value in ("0G", "1", "1.5G", "1g", "G"):
+            usage_errors.append(
+                (f"min free disk {value!r}", [*self._argv(), "--min-free-disk", value], "--min-free-disk")
+            )
+        for value in ("0", "20", "-5", "x"):
+            usage_errors.append((f"nice {value!r}", [*self._argv(), "--nice", value], "--nice"))
         for label, argv, flag in usage_errors:
             with self.subTest(case=label):
                 code, emitted, stderr = self._main(*argv)
@@ -321,6 +328,12 @@ class ComparatorCliTests(unittest.TestCase):
         for value in ("off", "1K", "512M", "10G", "1234567G"):
             with self.subTest(memory_limit=value):
                 self.assertEqual(gate.memory_limit_argument(value), value)
+        for value, expected in (("1K", 1024), ("3G", 3 * 1024**3), ("2T", 2 * 1024**4)):
+            with self.subTest(min_free_disk=value):
+                self.assertEqual(gate.size_bytes_argument(value), expected)
+        for value in ("1", "19"):
+            with self.subTest(nice=value):
+                self.assertEqual(gate.nice_argument(value), int(value))
         for function, value in (
             (gate.sha256_argument, "F" * 64),
             (gate.memory_limit_argument, "0M"),
@@ -343,10 +356,12 @@ class ComparatorCliTests(unittest.TestCase):
                 "challenge_record": Path("frozen/challenge.json"),
                 "challenge_record_sha256": "a" * 64,
                 "solution_modules": ["Solution", "Other"],
-                "timeout": 300,
+                "timeout": None,
                 "paranoid": False,
                 "keep_workspace": False,
-                "memory_limit": "10G",
+                "memory_limit": "off",
+                "min_free_disk": None,
+                "nice": None,
             },
         )
         with mock.patch.object(gate, "comparator_payload", return_value=accepted) as payload:
@@ -358,14 +373,27 @@ class ComparatorCliTests(unittest.TestCase):
                 "--keep-workspace",
                 "--memory-limit",
                 "512M",
+                "--min-free-disk",
+                "3G",
+                "--nice",
+                "10",
             )
         self.assertEqual(code, 0)
         self.assertEqual(
             {
                 key: payload.call_args.kwargs[key]
-                for key in ("timeout", "paranoid", "keep_workspace", "memory_limit")
+                for key in (
+                    "timeout", "paranoid", "keep_workspace", "memory_limit", "min_free_disk", "nice"
+                )
             },
-            {"timeout": 7, "paranoid": True, "keep_workspace": True, "memory_limit": "512M"},
+            {
+                "timeout": 7,
+                "paranoid": True,
+                "keep_workspace": True,
+                "memory_limit": "512M",
+                "min_free_disk": 3 * 1024**3,
+                "nice": 10,
+            },
         )
         for result in (
             {"ok": False, "comparator_status": "rejected"},
@@ -1581,9 +1609,6 @@ class ComparatorPayloadTests(unittest.TestCase):
         self.assertEqual(
             gate.COMPARATOR_RESERVED_MODULES, ("AASChallenge", "AASSolution", "lakefile")
         )
-        self.assertEqual(
-            (gate.COMPARATOR_DEFAULT_TIMEOUT, gate.COMPARATOR_DEFAULT_MEMORY_LIMIT), (300, "10G")
-        )
         self.assertEqual(gate.CHALLENGE_RECORD_MAX_BYTES, 1024 * 1024)
         self.assertEqual(
             (
@@ -1594,7 +1619,6 @@ class ComparatorPayloadTests(unittest.TestCase):
             (240, 15 * 1024 * 1024, 16 * 1024 * 1024),
         )
         # The run tests patch these, so their own values are pinned here too.
-        self.assertEqual(gate.COMPARATOR_MIN_FREE_BYTES, 2 * 1024 * 1024 * 1024)
         self.assertEqual(
             (
                 gate.COMPARATOR_SYSTEMD_RUN,
@@ -1611,8 +1635,34 @@ class ComparatorPayloadTests(unittest.TestCase):
                 "/usr/bin/python3",
             ),
         )
-        self.assertEqual((gate.COMPARATOR_RESOLVE_TIMEOUT, gate.COMPARATOR_LOCK_MAX_WAIT), (60, 600))
         self.assertEqual(gate.COMPARATOR_RECEIPT_SCHEMA, "host_comparator_receipt.v1")
+
+    def test_no_setting_has_a_default(self) -> None:
+        """No wall limit, memory limit, disk floor or priority applies unless the caller sets it.
+
+        The user asked on 2026-11-13 that no number the agent chose be a default:
+        each of these is off until --timeout, --memory-limit, --min-free-disk or
+        --nice sets it.
+        """
+
+        import inspect
+
+        for name in (
+            "COMPARATOR_DEFAULT_TIMEOUT",
+            "COMPARATOR_DEFAULT_MEMORY_LIMIT",
+            "COMPARATOR_MIN_FREE_BYTES",
+            "COMPARATOR_LOCK_MAX_WAIT",
+            "COMPARATOR_RESOLVE_TIMEOUT",
+            "TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(gate, name))
+        for function in (gate.bwrap_preflight, gate.toolchain_attestation, gate._comparator_memory_preflight):
+            with self.subTest(function=function.__name__):
+                self.assertIsNone(inspect.signature(function).parameters["timeout"].default)
+        parameters = inspect.signature(gate.comparator_payload).parameters
+        self.assertIsNone(parameters["min_free_disk"].default)
+        self.assertIsNone(parameters["nice"].default)
 
     def test_state_root_follows_xdg_state_home(self) -> None:
         default = self.home / ".local" / "state" / "ai-agents-skills" / "comparator"
@@ -3032,7 +3082,7 @@ class ComparatorAttestationTimeoutTests(unittest.TestCase):
     """
 
     def test_attestation_timeout_constant(self) -> None:
-        self.assertEqual(gate.TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS, 5)
+        # No timeout of its own: the caller's, or none (2026-11-13).
         with tempfile.TemporaryDirectory() as tmp:
             toolchain = challenge_tests._comparator_toolchain(
                 Path(tmp) / "leanprover--lean4---v4.35.0"
@@ -3047,15 +3097,14 @@ class ComparatorAttestationTimeoutTests(unittest.TestCase):
                 timeouts.append(options["timeout"])
                 raise subprocess.TimeoutExpired(command, options["timeout"])
 
-            # A value of its own, so a call site that kept a literal shows.
-            with mock.patch.object(gate, "TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS", 7):
-                with mock.patch.object(gate, "run_bounded_command", side_effect=answer):
-                    attested = gate.toolchain_attestation(toolchain)
-                self.assertEqual(attested["status"], "ok", attested)
-                self.assertEqual(timeouts, [7])
-                with mock.patch.object(gate, "run_bounded_command", side_effect=stall):
-                    stalled = gate.toolchain_attestation(toolchain)
-            self.assertEqual(timeouts, [7, 7])
+            with mock.patch.object(gate, "run_bounded_command", side_effect=answer):
+                unbounded = gate.toolchain_attestation(toolchain)
+                attested = gate.toolchain_attestation(toolchain, timeout=7)
+            self.assertEqual((unbounded["status"], attested["status"]), ("ok", "ok"), attested)
+            self.assertEqual(timeouts, [None, 7])
+            with mock.patch.object(gate, "run_bounded_command", side_effect=stall):
+                stalled = gate.toolchain_attestation(toolchain, timeout=7)
+            self.assertEqual(timeouts, [None, 7, 7])
             self.assertEqual(
                 (stalled["status"], stalled["detail"]),
                 ("command_failed", "lean --version: timeout after 7 seconds"),
@@ -3612,10 +3661,8 @@ class ComparatorRunTests(unittest.TestCase):
     def _plan(self, plan: dict[str, Any]) -> None:
         (self.fake / "scenario.json").write_text(json.dumps(plan), encoding="utf-8")
 
-    def _judge(
-        self, *, floor: int | None = 1, input_path: Path | None = None, **overrides: Any
-    ) -> dict[str, Any]:
-        """One comparator_payload run. The disk floor is patched to ``floor`` unless it is None."""
+    def _judge(self, *, input_path: Path | None = None, **overrides: Any) -> dict[str, Any]:
+        """One comparator_payload run, with a 60 s test bound unless ``timeout`` says otherwise."""
 
         arguments: dict[str, Any] = {
             "challenge_record": self.record_path,
@@ -3629,10 +3676,7 @@ class ComparatorRunTests(unittest.TestCase):
         arguments.update(overrides)
         # Emptied, not removed: the fakes append to it under any umask.
         (self.fake / "calls.jsonl").write_bytes(b"")
-        with contextlib.ExitStack() as stack:
-            if floor is not None:
-                stack.enter_context(mock.patch.object(gate, "COMPARATOR_MIN_FREE_BYTES", floor))
-            return gate.comparator_payload(input_path or self.input, **arguments)
+        return gate.comparator_payload(input_path or self.input, **arguments)
 
     def _main(self) -> tuple[Any, dict[str, Any]]:
         """The verb through gate.main, with emit captured: (exit code, payload)."""
@@ -3652,9 +3696,7 @@ class ComparatorRunTests(unittest.TestCase):
             "--memory-limit",
             "off",
         ]
-        with mock.patch.object(gate, "emit", side_effect=emitted.append), mock.patch.object(
-            gate, "COMPARATOR_MIN_FREE_BYTES", 1
-        ):
+        with mock.patch.object(gate, "emit", side_effect=emitted.append):
             code = gate.main(argv)
         self.assertEqual(len(emitted), 1)
         return code, emitted[0]
@@ -3738,7 +3780,8 @@ class ComparatorRunTests(unittest.TestCase):
             [(phase, target, 0) for phase, target in [*STEPS_BEFORE_KERNELS, ("kernel", "leanchecker")]],
         )
         self.assertRegex(run["run_id"], r"\A[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
-        self.assertEqual((run["returncode"], run["timeout_seconds"], run["workspace_kept"]), (0, 300, ""))
+        # No --timeout was given, so the run had no wall limit.
+        self.assertEqual((run["returncode"], run["timeout_seconds"], run["workspace_kept"]), (0, None, ""))
         self.assertIsInstance(run["seconds"], float)
         self.assertTrue(run["stdout_tail"].endswith(OKAY_LINE + "\n"), run["stdout_tail"])
         self.assertEqual(payload["solution"]["post_digest"], payload["solution"]["digest"])
@@ -3969,13 +4012,18 @@ class ComparatorRunTests(unittest.TestCase):
         self.assertEqual((target.read_text(encoding="utf-8"), _mode(target)), ("not a lock\n", 0o644))
         lock.unlink()
 
-        # The disk floor is a floor: exactly that much free space is enough.
-        floor = gate.COMPARATOR_MIN_FREE_BYTES
-        for free, status in ((floor, "accepted"), (floor - 1, "tool_unavailable")):
-            with self.subTest(free=free), mock.patch.object(
+        # --min-free-disk is a floor: exactly that much free space is enough.
+        # Without it, free space is not checked at all.
+        floor = 5 * 1024**3
+        for free, setting, status in (
+            (floor, floor, "accepted"),
+            (floor - 1, floor, "tool_unavailable"),
+            (0, None, "accepted"),
+        ):
+            with self.subTest(free=free, setting=setting), mock.patch.object(
                 gate.shutil, "disk_usage", return_value=mock.Mock(free=free)
             ):
-                payload = self._judge(floor=None)
+                payload = self._judge(min_free_disk=setting)
                 self.assertEqual(payload["comparator_status"], status, payload)
 
         # A state directory reached through a symlinked parent: the run uses real paths.
@@ -4048,10 +4096,10 @@ class ComparatorRunTests(unittest.TestCase):
             ("resolve-deps writes no manifest", {"manifest": False}, "lake-manifest.json"),
             ("resolve-deps hangs", {"resolve_deps_sleep": 30}, "timeout after 1 seconds"),
         ):
-            with self.subTest(case=label), mock.patch.object(gate, "COMPARATOR_RESOLVE_TIMEOUT", 1):
+            with self.subTest(case=label):
                 self._plan({**_accepted_plan(), **change})
                 started = time.monotonic()
-                payload = self._judge()
+                payload = self._judge(timeout=1)
                 self.assertLess(time.monotonic() - started, 20)
                 self._assert_no_verdict(payload, "workspace_setup_failed", detail)
                 self.assertNotEqual(payload["run"]["run_id"], "")
@@ -4145,7 +4193,7 @@ class ComparatorRunTests(unittest.TestCase):
 
         # The disk floor comes before the memory preflight, and both before the lock.
         with mock.patch.object(gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)):
-            payload = self._judge(floor=2**62, memory_limit="512M")
+            payload = self._judge(min_free_disk=2**62, memory_limit="512M")
         self._assert_guard(payload, "tool_unavailable", "insufficient_disk", "bytes free")
         self.assertEqual(self._calls("systemd-run"), [])
         self.assertFalse(os.path.lexists(lock))
@@ -4203,19 +4251,19 @@ class ComparatorRunTests(unittest.TestCase):
         self._assert_guard(payload, "command_failed", "host_busy", "waited 1 s")
         self.assertGreaterEqual(waited, 1.0)
         self.assertLess(waited, 30)
-        # The wait is the timeout, and never more than COMPARATOR_LOCK_MAX_WAIT.
+        # Without --timeout the run waits for the lock as long as it is held.
         descriptor = os.open(lock, os.O_RDWR)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        releaser = threading.Timer(1.5, os.close, args=(descriptor,))
+        started = time.monotonic()
+        releaser.start()
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            started = time.monotonic()
-            with mock.patch.object(gate, "COMPARATOR_LOCK_MAX_WAIT", 1):
-                payload = self._judge(timeout=8)
-            waited = time.monotonic() - started
+            payload = self._judge(timeout=None)
         finally:
-            os.close(descriptor)
-        self._assert_guard(payload, "command_failed", "host_busy", "waited 1 s")
-        self.assertGreaterEqual(waited, 1.0)
-        self.assertLess(waited, 6)
+            releaser.join()
+        waited = time.monotonic() - started
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertGreaterEqual(waited, 1.4)
 
         # Once the judge has started, a run without a verdict still gets a receipt (D10).
         self._plan({**_accepted_plan(), "before": [["sleep", "30"]]})
@@ -4268,9 +4316,6 @@ class ComparatorRunTests(unittest.TestCase):
                 "-p",
                 "MemorySwapMax=0",
                 "--",
-                "/usr/bin/nice",
-                "-n",
-                "19",
                 "/usr/bin/env",
                 "-i",
             ]
@@ -4334,9 +4379,6 @@ class ComparatorRunTests(unittest.TestCase):
         self.assertEqual(
             payload["run"]["argv"],
             [
-                "/usr/bin/nice",
-                "-n",
-                "19",
                 "/usr/bin/env",
                 "-i",
                 f"PATH={path}",
@@ -4456,17 +4498,17 @@ class ComparatorRunTests(unittest.TestCase):
             toolchain={"spec": "leanprover/lean4:v4.34.1", "files": dict(self.files)}
         )
         old_path, old_sha = _write_record(self.base / "frozen-old", old)
-        payload = self._judge(floor=None, challenge_record=old_path, challenge_record_sha256=old_sha)
+        payload = self._judge(challenge_record=old_path, challenge_record_sha256=old_sha)
         refused(payload, "unsupported_toolchain", "unsupported_toolchain")
         # Not even lean --version ran.
         self.assertEqual(self._calls("lean"), [])
 
-        payload = self._judge(floor=None, challenge_record_sha256="0" * 64)
+        payload = self._judge(challenge_record_sha256="0" * 64)
         refused(payload, "not_run", "challenge_record_mismatch")
         self.assertEqual(self._calls("lean"), [])
 
         self._plan({**_accepted_plan(), "bwrap_preflight_rc": 1})
-        payload = self._judge(floor=None)
+        payload = self._judge()
         refused(payload, "tool_unavailable", "sandbox_unavailable")
         self._plan(_accepted_plan())
 
@@ -4474,7 +4516,7 @@ class ComparatorRunTests(unittest.TestCase):
         with _restored(exporter):
             with exporter.open("a", encoding="utf-8") as handle:
                 handle.write("# rebuilt after the freeze\n")
-            payload = self._judge(floor=None)
+            payload = self._judge()
         refused(payload, "tool_unavailable", "toolchain_changed")
 
         con_ron = self.toolchain / "bin" / "con-ron"
@@ -4484,7 +4526,6 @@ class ComparatorRunTests(unittest.TestCase):
             record = _core_record(toolchain={"spec": DEFAULT_TOOLCHAIN, "files": lacking})
             lacking_path, lacking_sha = _write_record(self.base / "frozen-lacking", record)
             payload = self._judge(
-                floor=None,
                 challenge_record=lacking_path,
                 challenge_record_sha256=lacking_sha,
                 paranoid=True,
@@ -4524,16 +4565,21 @@ class ComparatorRunTests(unittest.TestCase):
 
         self._plan(_failed_plan(steps, message, rcs))
         with mock.patch.object(gate.shutil, "disk_usage", side_effect=disk_usage):
-            payload = self._judge()
+            payload = self._judge(min_free_disk=1)
         self._assert_no_verdict(payload, "insufficient_disk", "after the run")
         self.assertEqual(
             self._receipt(payload)["result"], {key: payload[key] for key in RESULT_KEYS}
         )
+        # Without --min-free-disk, free space is not checked after the run either.
+        seen.clear()
+        with mock.patch.object(gate.shutil, "disk_usage", side_effect=disk_usage):
+            payload = self._judge()
+        self.assertEqual(payload["comparator_rejection_kind"], "build_failed", payload)
         # An acceptance is not taken back by a full disk.
         seen.clear()
         self._plan(_accepted_plan())
         with mock.patch.object(gate.shutil, "disk_usage", side_effect=disk_usage):
-            payload = self._judge()
+            payload = self._judge(min_free_disk=1)
         self.assertEqual(payload["comparator_status"], "accepted", payload)
 
     def test_removal_of_deep_long_and_locked_trees(self) -> None:
@@ -4582,6 +4628,38 @@ class ComparatorRunTests(unittest.TestCase):
         self.assertEqual(gate._comparator_remove_run(link), "")
         self.assertFalse(os.path.lexists(link))
         self.assertTrue((outside / "kept").exists())
+
+    def test_settings_are_off_unless_set(self) -> None:
+        """Without --timeout, --memory-limit, --min-free-disk and --nice, none of them applies."""
+
+        calls: list[tuple[list[str], Any]] = []
+        real = gate.run_bounded_command
+
+        def recording(command: list[str], **options: Any) -> Any:
+            calls.append((command, options.get("timeout")))
+            return real(command, **options)
+
+        def timeouts() -> set[Any]:
+            # bwrap --version goes through doctor's version probe, which had its
+            # own limit in the repository before this work.
+            return {timeout for command, timeout in calls if command[1:] != ["--version"]}
+
+        with mock.patch.object(gate, "run_bounded_command", side_effect=recording), mock.patch.object(
+            gate.shutil, "disk_usage", return_value=mock.Mock(free=0)
+        ):
+            payload = self._judge(timeout=None)
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertIsNone(payload["run"]["timeout_seconds"])
+        self.assertEqual(payload["sandbox"]["memory_limit"], "off")
+        self.assertEqual(payload["run"]["argv"][:2], ["/usr/bin/env", "-i"])
+        self.assertEqual(timeouts(), {None}, calls)
+        # Each setting, once given, applies.
+        calls.clear()
+        with mock.patch.object(gate, "run_bounded_command", side_effect=recording):
+            payload = self._judge(timeout=7, nice=10)
+        self.assertEqual(payload["comparator_status"], "accepted", payload)
+        self.assertEqual(payload["run"]["argv"][:3], ["/usr/bin/nice", "-n", "10"])
+        self.assertEqual(timeouts(), {7}, calls)
 
     def test_interrupt_before_the_wait_kills_the_child(self) -> None:
         """Ctrl-C between the child's start and the wait still kills it with kill_on_interrupt."""
@@ -4706,14 +4784,6 @@ class RealComparatorTests(unittest.TestCase):
         )
         if check.returncode != 0:
             raise unittest.SkipTest("the run's wrapper program needs /usr/bin/python3 3.9 or later")
-        free = gate.shutil.disk_usage(tempfile.gettempdir()).free
-        if free < gate.COMPARATOR_MIN_FREE_BYTES:
-            raise unittest.SkipTest(
-                f"the temporary directory has {free} bytes free; a run needs "
-                f"{gate.COMPARATOR_MIN_FREE_BYTES}"
-            )
-        limit = gate.COMPARATOR_DEFAULT_MEMORY_LIMIT
-        cls.memory_limit = "off" if gate._comparator_memory_preflight(limit) else limit
 
     def _judge(
         self, files: dict[str, str], *modules: str, umask: int | None = None
@@ -4747,10 +4817,10 @@ class RealComparatorTests(unittest.TestCase):
                     challenge_record=Path(frozen["challenge_record"]),
                     challenge_record_sha256=frozen["record_sha256"],
                     solution_modules=list(modules or ("Solution",)),
-                    timeout=gate.COMPARATOR_DEFAULT_TIMEOUT,
+                    timeout=None,
                     paranoid=False,
                     keep_workspace=False,
-                    memory_limit=self.memory_limit,
+                    memory_limit="off",
                 )
         finally:
             if previous is not None:
@@ -4783,7 +4853,7 @@ class RealComparatorTests(unittest.TestCase):
             payload["toolchain"]["lean_version"].startswith("Lean (version 4.35.0,"),
             payload["toolchain"],
         )
-        self.assertEqual(payload["sandbox"]["memory_limit"], self.memory_limit)
+        self.assertEqual(payload["sandbox"]["memory_limit"], "off")
         self.assertEqual(payload["solution"]["post_digest"], payload["solution"]["digest"])
         return payload
 

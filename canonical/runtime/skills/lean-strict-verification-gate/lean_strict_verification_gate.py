@@ -191,18 +191,8 @@ TOOLCHAIN_BIN_MAX_FILES = 64
 # hashes those libraries too; a toolchain with more is refused, not truncated.
 TOOLCHAIN_LIBRARY_MAX_FILES = 32
 READINESS_OUTPUT_MAX_BYTES = 64 * 1024
-# The limit on the attestation's `lean --version`. With the toolchain's files
-# dropped from the page cache, Lean v4.35.0 took at most 0.73 s to answer; the
-# limit is at least three times the slowest cold start, rounded up, and never
-# below 5 s.
-TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS = 5
 # Elan stores leanprover/lean4:<release> as toolchains/leanprover--lean4---<release>.
 _ELAN_LEAN4_PREFIX = "leanprover--lean4---"
-# The comparator verb's defaults come from the Mathlib spike: 300 s for a
-# core run, and a 10 GiB memory limit, about 1.5 times the largest cold peak
-# it measured.
-COMPARATOR_DEFAULT_TIMEOUT = 300
-COMPARATOR_DEFAULT_MEMORY_LIMIT = "10G"
 CHALLENGE_RECORD_MAX_BYTES = 1024 * 1024
 # The module the comparator workspace generates to import the solution's
 # named modules.
@@ -251,7 +241,7 @@ COMPARATOR_LIMITATIONS = (
     "receipt; the digests detect a change made during a run, not one made before the "
     "freeze or after the receipt",
     "the solution's own build directory is writable inside the sandbox, so a solution can "
-    "fill the disk; the disk floor and cleanup bound this only after the fact",
+    "fill the disk; --min-free-disk, when set, and the cleanup bound this only after the fact",
     "core profile: imports outside Init, Std, Lean and Lake are refused",
 )
 # The comparator's sandbox wrapper logs each step it runs or refuses as one
@@ -283,25 +273,24 @@ COMPARATOR_KERNEL_NAMES = {
     "con-leche": "con-leche",
     "con-ron": "con-ron",
 }
-# A comparator run starts only with this much space free where its state lies.
-COMPARATOR_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
 # Where the comparator wrapper finds its cgroup's memory.events (cgroup v2).
 COMPARATOR_CGROUP_ROOT = "/sys/fs/cgroup"
 # The host programs a comparator run uses, by absolute path: systemd-run puts
 # the judge in a memory-limited user scope and systemctl stops that scope, nice
-# lowers the judge's priority, env gives it its whole environment, and python3
+# lowers the judge's priority when --nice asks for it, env gives it its whole
+# environment, and python3
 # runs the sandbox wrapper. PATH is never searched for them.
 COMPARATOR_SYSTEMD_RUN = "/usr/bin/systemd-run"
 COMPARATOR_SYSTEMCTL = "/usr/bin/systemctl"
 COMPARATOR_NICE = "/usr/bin/nice"
 COMPARATOR_ENV = "/usr/bin/env"
 COMPARATOR_WRAPPER_INTERPRETER = "/usr/bin/python3"
-# The limit on lake resolve-deps, which writes the workspace's manifest from the
-# generated lakefile before any byte of the solution is copied.
-COMPARATOR_RESOLVE_TIMEOUT = 60
-# One comparator run at a time on a host: a run waits for the lock for its
-# timeout, and never longer than this.
-COMPARATOR_LOCK_MAX_WAIT = 600
+# A comparator run sets no wall limit, memory limit, disk floor or priority of
+# its own (user decision, 2026-11-13: no number the agent chose is a default).
+# --timeout, --memory-limit, --min-free-disk and --nice set them, and each is off
+# until set. --timeout also bounds each program the run starts (the sandbox
+# preflight, lean --version, lake resolve-deps, systemd-run and systemctl) and
+# the wait for the host lock, which lets one run go at a time.
 COMPARATOR_RECEIPT_SCHEMA = "host_comparator_receipt.v1"
 # The umask of the processes a comparator run starts, lake resolve-deps and
 # the judge, whatever the gate's own umask is. Lake makes the workspace's
@@ -550,8 +539,11 @@ def main(argv: list[str] | None = None) -> int:
     comparator.add_argument(
         "--timeout",
         type=positive_timeout,
-        default=COMPARATOR_DEFAULT_TIMEOUT,
-        help=f"wall limit of the run in seconds (default {COMPARATOR_DEFAULT_TIMEOUT})",
+        default=None,
+        help=(
+            "wall limit in seconds for the run, for each program it starts and for the wait "
+            "for the host lock; no limit unless set"
+        ),
     )
     comparator.add_argument(
         "--paranoid",
@@ -567,11 +559,27 @@ def main(argv: list[str] | None = None) -> int:
     comparator.add_argument(
         "--memory-limit",
         type=memory_limit_argument,
-        default=COMPARATOR_DEFAULT_MEMORY_LIMIT,
+        default="off",
         help=(
-            "memory limit of the run: a positive whole number with K, M or G, or off "
-            f"(default {COMPARATOR_DEFAULT_MEMORY_LIMIT})"
+            "memory limit of the run, applied in a systemd user scope: a positive whole number "
+            "with K, M or G; off (no limit) unless set"
         ),
+    )
+    comparator.add_argument(
+        "--min-free-disk",
+        type=size_bytes_argument,
+        default=None,
+        help=(
+            "free space the state directory needs, as a positive whole number with K, M, G or "
+            "T: with less before the run it is refused, and with less after a failed build that "
+            "rejection is taken back; not checked unless set"
+        ),
+    )
+    comparator.add_argument(
+        "--nice",
+        type=nice_argument,
+        default=None,
+        help="run the judge under nice -n N, N from 1 to 19; not used unless set",
     )
 
     args = parser.parse_args(argv)
@@ -760,6 +768,8 @@ def main(argv: list[str] | None = None) -> int:
             paranoid=bool(args.paranoid),
             keep_workspace=bool(args.keep_workspace),
             memory_limit=args.memory_limit,
+            min_free_disk=args.min_free_disk,
+            nice=args.nice,
         )
         emit(payload)
         # Only accepted is a verdict a caller may build on; rejected and
@@ -1035,7 +1045,7 @@ def bwrap_status(*, probe: bool = False) -> dict[str, Any]:
     return result
 
 
-def bwrap_preflight(path: str, *, timeout: float = 5) -> dict[str, Any]:
+def bwrap_preflight(path: str, *, timeout: float | None = None) -> dict[str, Any]:
     """Start the sandbox once with every namespace unshared.
 
     The argv is fixed, ``<path> --ro-bind / / --unshare-all --die-with-parent
@@ -1271,7 +1281,9 @@ def toolchain_file_digests(toolchain_dir: Path | str) -> dict[str, Any]:
     return result
 
 
-def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
+def toolchain_attestation(
+    toolchain_dir: Path | str, *, timeout: float | None = None
+) -> dict[str, Any]:
     """Hash a comparator toolchain and read the version its lean reports.
 
     ``files`` is the map toolchain_file_digests() gives: every file directly
@@ -1283,7 +1295,8 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
     LANG=C.UTF-8, so no LEAN_*, ELAN_* or LAKE_* variable reaches it; nothing
     from an input is read or run. A banner that is not a stable release at
     v4.35.0 or later is ``unsupported_toolchain``, and a non-zero exit or an
-    unreadable banner is ``command_failed``. Never raises.
+    unreadable banner is ``command_failed``. ``lean --version`` has no time
+    limit unless ``timeout`` gives one. Never raises.
     """
 
     result: dict[str, Any] = {
@@ -1305,7 +1318,7 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
         try:
             completed = run_bounded_command(
                 command,
-                timeout=TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS,
+                timeout=timeout,
                 cwd=root,
                 max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
                 env={"PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]), "LANG": "C.UTF-8"},
@@ -1313,9 +1326,7 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
         except subprocess.TimeoutExpired:
             result.update(
                 status="command_failed",
-                detail=(
-                    f"lean --version: timeout after {TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS} seconds"
-                ),
+                detail=f"lean --version: timeout after {timeout} seconds",
             )
             return result
         except CommandOutputLimitExceeded as exc:
@@ -2273,7 +2284,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
 def run_bounded_command(
     command: list[str],
     *,
-    timeout: float,
+    timeout: float | None,
     cwd: Path | None = None,
     max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     capture_evidence: bool = False,
@@ -2287,10 +2298,11 @@ def run_bounded_command(
     inherits this process's environment. ``umask``, when not negative, is the
     child's umask on POSIX; this process's own umask stays as it is. With
     ``kill_on_interrupt``, a KeyboardInterrupt (Ctrl-C) that arrives while the
-    child runs kills the child's process group before it goes on.
+    child runs kills the child's process group before it goes on. A ``timeout``
+    of None waits for the child without a limit.
     """
 
-    if timeout <= 0:
+    if timeout is not None and timeout <= 0:
         raise ValueError("timeout must be positive")
     if max_output_bytes <= 0:
         raise ValueError("max_output_bytes must be positive")
@@ -4023,9 +4035,32 @@ def memory_limit_argument(value: str) -> str:
 
     if value != "off" and not re.fullmatch(r"[1-9][0-9]*[KMG]", value):
         raise argparse.ArgumentTypeError(
-            "must be off, or a positive whole number followed by K, M or G, such as 10G"
+            "must be off, or a positive whole number followed by K, M or G"
         )
     return value
+
+
+def size_bytes_argument(value: str) -> int:
+    """argparse type: a positive whole number followed by K, M, G or T, as bytes (1024-based)."""
+
+    match = re.fullmatch(r"([1-9][0-9]*)([KMGT])", value)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            "must be a positive whole number followed by K, M, G or T"
+        )
+    return int(match.group(1)) * 1024 ** ("KMGT".index(match.group(2)) + 1)
+
+
+def nice_argument(value: str) -> int:
+    """argparse type: a niceness increment from 1 to 19, the range a user may raise it by."""
+
+    try:
+        parsed = int(value)
+    except ValueError:
+        parsed = 0
+    if not 1 <= parsed <= 19:
+        raise argparse.ArgumentTypeError("must be a whole number from 1 to 19")
+    return parsed
 
 
 class ComparatorRefusal(Exception):
@@ -4055,9 +4090,11 @@ class ComparatorContext(NamedTuple):
     closure: dict[str, bytes]
     state_root: Path
     paranoid: bool
-    timeout: int
+    timeout: int | None
     keep_workspace: bool
     memory_limit: str
+    min_free_disk: int | None = None
+    nice: int | None = None
 
 
 def comparator_payload(
@@ -4066,10 +4103,12 @@ def comparator_payload(
     challenge_record: Path,
     challenge_record_sha256: str,
     solution_modules: list[str],
-    timeout: int,
+    timeout: int | None,
     paranoid: bool,
     keep_workspace: bool,
     memory_limit: str,
+    min_free_disk: int | None = None,
+    nice: int | None = None,
 ) -> dict[str, Any]:
     """Judge a solution project with ``lake comparator`` against a frozen challenge.
 
@@ -4196,7 +4235,7 @@ def comparator_payload(
             return fail("unsupported_toolchain", "unsupported_toolchain", resolved["detail"])
         if resolved["status"] != "available":
             return fail("tool_unavailable", "toolchain_unavailable", resolved["detail"])
-        attested = toolchain_attestation(resolved["path"])
+        attested = toolchain_attestation(resolved["path"], timeout=timeout)
         if attested["status"] == "unsupported_toolchain":
             return fail("unsupported_toolchain", "unsupported_toolchain", attested["detail"])
         if attested["status"] != "ok":
@@ -4233,7 +4272,7 @@ def comparator_payload(
         bwrap = bwrap_status(probe=True)
         if bwrap["status"] != "available":
             return fail("tool_unavailable", "sandbox_unavailable", "bwrap: " + bwrap["detail"])
-        preflight = bwrap_preflight(bwrap["path"])
+        preflight = bwrap_preflight(bwrap["path"], timeout=timeout)
         if preflight["status"] != "ok":
             return fail(
                 "tool_unavailable", "sandbox_unavailable", "bwrap preflight: " + preflight["detail"]
@@ -4302,6 +4341,8 @@ def comparator_payload(
                 timeout=timeout,
                 keep_workspace=bool(keep_workspace),
                 memory_limit=memory_limit,
+                min_free_disk=min_free_disk,
+                nice=nice,
             ),
         )
     except ComparatorRefusal as exc:
@@ -5392,12 +5433,13 @@ def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None
 
     The host comes first, in this order, and each refusal raises
     ComparatorRefusal: the state directory, its receipts/ and its runs/ are
-    made private (a symlink there is refused); at least
-    COMPARATOR_MIN_FREE_BYTES must be free there (insufficient_disk); unless
-    the memory limit is off, a user scope with that limit must start
+    made private (a symlink there is refused); with --min-free-disk, at least
+    that much must be free there (insufficient_disk); unless the memory limit
+    is off, a user scope with that limit must start
     (memory_limit_unavailable); the wrapper's interpreter must be an
-    executable file (wrapper_interpreter_unavailable); and the host lock must
-    come free within the timeout, and within COMPARATOR_LOCK_MAX_WAIT seconds
+    executable file (wrapper_interpreter_unavailable); with --nice,
+    /usr/bin/nice must be one too (nice_unavailable); and the host lock must
+    come free within --timeout, or whenever it does when there is none
     (host_busy). The run then gets a private directory under runs/, which
     _comparator_judge fills, runs, judges and removes, unless keep_workspace
     keeps it. An interrupt that ends the judge before its own removal is
@@ -5405,15 +5447,16 @@ def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None
     """
 
     state = _comparator_state_directories(context.state_root)
-    free = shutil.disk_usage(state).free
-    if free < COMPARATOR_MIN_FREE_BYTES:
-        raise ComparatorRefusal(
-            "tool_unavailable",
-            "insufficient_disk",
-            f"{state} has {free} bytes free; a comparator run needs {COMPARATOR_MIN_FREE_BYTES}",
-        )
+    if context.min_free_disk is not None:
+        free = shutil.disk_usage(state).free
+        if free < context.min_free_disk:
+            raise ComparatorRefusal(
+                "tool_unavailable",
+                "insufficient_disk",
+                f"{state} has {free} bytes free; --min-free-disk asks for {context.min_free_disk}",
+            )
     if context.memory_limit != "off":
-        problem = _comparator_memory_preflight(context.memory_limit)
+        problem = _comparator_memory_preflight(context.memory_limit, context.timeout)
         if problem:
             raise ComparatorRefusal("tool_unavailable", "memory_limit_unavailable", problem)
     problem = _executable_file_problem(COMPARATOR_WRAPPER_INTERPRETER)
@@ -5423,9 +5466,13 @@ def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None
             "wrapper_interpreter_unavailable",
             "the sandbox wrapper's interpreter: " + problem,
         )
-    lock = _comparator_lock(
-        state / "comparator.lock", min(context.timeout, COMPARATOR_LOCK_MAX_WAIT)
-    )
+    if context.nice is not None:
+        problem = _executable_file_problem(COMPARATOR_NICE)
+        if problem:
+            raise ComparatorRefusal(
+                "tool_unavailable", "nice_unavailable", f"--nice asks for {COMPARATOR_NICE}: {problem}"
+            )
+    lock = _comparator_lock(state / "comparator.lock", context.timeout)
     try:
         run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + secrets.token_hex(4)
         run_dir = state / "runs" / run_id
@@ -5481,7 +5528,7 @@ def _comparator_judge(
         started = True
         _comparator_execute(payload, context, run_id, argv, workspace)
         _comparator_integrity(payload, context, workspace, toolchain_before)
-        _comparator_disk_after_run(payload, run_dir)
+        _comparator_disk_after_run(payload, run_dir, context.min_free_disk)
     except ComparatorRefusal as exc:
         _comparator_fail(payload, exc.status, exc.kind, exc.detail)
     except Exception as exc:  # no verdict, never a crash
@@ -5498,27 +5545,31 @@ def _comparator_judge(
         _comparator_receipt(payload, context, run_id, receipts)
 
 
-def _comparator_disk_after_run(payload: dict[str, Any], run_dir: Path) -> None:
+def _comparator_disk_after_run(
+    payload: dict[str, Any], run_dir: Path, min_free_disk: int | None
+) -> None:
     """Take back a build_failed rejection when the disk is below the floor after the run.
 
     The solution's build can fill the disk, and a build that runs out of
     space fails like one that does not compile. With less than
-    COMPARATOR_MIN_FREE_BYTES free before the cleanup, the result is
-    insufficient_disk, no verdict.
+    --min-free-disk free before the cleanup, the result is insufficient_disk,
+    no verdict. Without --min-free-disk nothing is checked.
     """
 
+    if min_free_disk is None:
+        return
     if (payload["comparator_status"], payload["comparator_rejection_kind"]) != (
         "rejected",
         "build_failed",
     ):
         return
     free = shutil.disk_usage(run_dir).free
-    if free < COMPARATOR_MIN_FREE_BYTES:
+    if free < min_free_disk:
         _comparator_fail(
             payload,
             "command_failed",
             "insufficient_disk",
-            f"{run_dir} has {free} bytes free after the run, below {COMPARATOR_MIN_FREE_BYTES}; "
+            f"{run_dir} has {free} bytes free after the run, below {min_free_disk}; "
             "the build may have failed for want of space",
         )
 
@@ -5560,7 +5611,7 @@ def _comparator_workspace(
     try:
         resolved = run_bounded_command(
             [os.path.join(bin_dir, "lake"), "resolve-deps"],
-            timeout=COMPARATOR_RESOLVE_TIMEOUT,
+            timeout=context.timeout,
             cwd=ws,
             max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
             env=environment,
@@ -5570,7 +5621,7 @@ def _comparator_workspace(
         raise ComparatorRefusal(
             "command_failed",
             "workspace_setup_failed",
-            f"lake resolve-deps: timeout after {COMPARATOR_RESOLVE_TIMEOUT} seconds",
+            f"lake resolve-deps: timeout after {context.timeout} seconds",
         ) from exc
     except (CommandOutputLimitExceeded, OSError) as exc:
         raise ComparatorRefusal(
@@ -5643,8 +5694,8 @@ def _comparator_argv(
     """The judge's argv (design section 9).
 
     Unless the memory limit is off, systemd-run puts the judge in a user
-    scope of its own with that limit and no swap (D3). nice lowers its
-    priority when COMPARATOR_NICE is there (D5). env -i gives it exactly
+    scope of its own with that limit and no swap (D3). With --nice N, nice -n N
+    lowers its priority. env -i gives it exactly
     PATH, HOME, TMPDIR, LANG and COMPARATOR_BWRAP, so no LEAN_*, LAKE_*,
     ELAN_* or LD_* variable can choose another Lean for it.
     """
@@ -5664,8 +5715,8 @@ def _comparator_argv(
             "MemorySwapMax=0",
             "--",
         ]
-    if not _executable_file_problem(COMPARATOR_NICE):
-        argv += [COMPARATOR_NICE, "-n", "19"]
+    if context.nice is not None:
+        argv += [COMPARATOR_NICE, "-n", str(context.nice)]
     bin_dir = os.path.join(context.toolchain_dir, "bin")
     argv += [
         COMPARATOR_ENV,
@@ -5970,11 +6021,12 @@ def _comparator_private_directory(path: Path) -> None:
     os.chmod(path, 0o700)
 
 
-def _comparator_lock(path: Path, wait: int) -> int:
+def _comparator_lock(path: Path, wait: int | None) -> int:
     """Take the host's comparator lock (D8) and return its descriptor.
 
     The lock file is opened without following a symlink and kept 0600. A run
-    that cannot take the lock within ``wait`` seconds is host_busy.
+    that cannot take the lock within ``wait`` seconds is host_busy; with a
+    ``wait`` of None the run waits for the lock as long as it is held.
     """
 
     import fcntl  # POSIX only, like the comparator run
@@ -5986,6 +6038,9 @@ def _comparator_lock(path: Path, wait: int) -> int:
     )
     try:
         os.fchmod(descriptor, 0o600)
+        if wait is None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            return descriptor
         deadline = time.monotonic() + wait
         while True:
             try:
@@ -6004,7 +6059,7 @@ def _comparator_lock(path: Path, wait: int) -> int:
         raise
 
 
-def _comparator_memory_preflight(limit: str) -> str:
+def _comparator_memory_preflight(limit: str, timeout: float | None = None) -> str:
     """"" when a user scope with MemoryMax=``limit`` and no swap starts, else why it did not."""
 
     command = [
@@ -6023,12 +6078,12 @@ def _comparator_memory_preflight(limit: str) -> str:
     try:
         completed = run_bounded_command(
             command,
-            timeout=15,
+            timeout=timeout,
             max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
             env=_comparator_outer_environment(),
         )
     except subprocess.TimeoutExpired:
-        return "systemd-run: timeout after 15 seconds"
+        return f"systemd-run: timeout after {timeout} seconds"
     except (CommandOutputLimitExceeded, OSError) as exc:
         return f"systemd-run: {type(exc).__name__}: {exc}"[:500]
     if completed.returncode != 0:
@@ -6076,7 +6131,7 @@ def _comparator_stop_scope(context: ComparatorContext, run_id: str) -> None:
                 "--signal=KILL",
                 _comparator_unit(run_id) + ".scope",
             ],
-            timeout=15,
+            timeout=context.timeout,
             max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
             env=_comparator_outer_environment(),
         )

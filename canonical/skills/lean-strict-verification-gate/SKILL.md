@@ -273,8 +273,8 @@ Plain `doctor` reads directory listings and runs nothing, so the `bwrap`
 version comes from its `bubblewrap-X.Y.Z` directory name. `doctor --probe`
 runs `bwrap --version`, which then decides the version, and for a supported
 `bwrap` it adds `sandbox_probe`: one run of
-`bwrap --ro-bind / / --unshare-all --die-with-parent -- /bin/true` with a
-5-second timeout and `PATH=/usr/bin:/bin` as the whole environment. Its
+`bwrap --ro-bind / / --unshare-all --die-with-parent -- /bin/true` with no
+time limit and `PATH=/usr/bin:/bin` as the whole environment. Its
 `status` is `ok` when the sandbox started, `command_failed` when it did not
 (for example when unprivileged user namespaces are disabled), and
 `tool_unavailable` when nothing ran. An unexpected error in this section is
@@ -474,12 +474,29 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   reported, as 64 lowercase hex digits. The record must still hash to it.
 - `--solution-module`: a module of `--input` that declares the record's
   theorems; repeatable, at least one.
-- `--timeout`: the run's limit in seconds, 300 by default.
+- `--timeout`: the run's wall limit in seconds. It also bounds each program
+  the run starts (the sandbox preflight, `lean --version`, `lake
+  resolve-deps`, `systemd-run` and `systemctl`) and the wait for the host
+  lock. No limit unless set.
 - `--paranoid`: also run every external kernel bundled with Lean. A record
   frozen with `--paranoid` asks for this too.
 - `--keep-workspace`: keep the run's directory.
-- `--memory-limit`: the run's memory limit, `10G` by default. A size is a
-  positive whole number followed by `K`, `M` or `G`; `off` sets no limit.
+- `--memory-limit`: the run's memory limit, applied in a systemd user scope
+  with no swap. A size is a positive whole number followed by `K`, `M` or
+  `G`. No limit unless set; `off` says so explicitly.
+- `--min-free-disk`: the free space the state directory needs, as a positive
+  whole number followed by `K`, `M`, `G` or `T`. With less before the run,
+  the run is refused; with less after a failed build, that rejection is
+  taken back. Not checked unless set.
+- `--nice`: run the judge under `nice -n N`, with N from 1 to 19. Not used
+  unless set.
+
+None of these four has a default: the user decided on 2026-11-13 that no
+number the agent chose is a default. Without them a run has no wall limit, no
+memory limit, no disk check and no lowered priority, so a judge that never
+finishes runs until someone stops it. `bwrap --version` still runs through
+doctor's version probe, whose 5-second limit was in the repository before
+this work.
 
 `comparator_status` is the verdict field. Only `accepted` and `rejected` are
 verdicts; `not_run`, `unsupported_toolchain`, `tool_unavailable` and
@@ -553,20 +570,23 @@ the run with its status and finding, and nothing after it runs.
      `0700`. Missing parents are made `0700`, and parents that already exist
      keep their mode. A symlink or a file in place of one of the three is
      refused (`comparator_failed`, `command_failed`).
-   - At least 2 GiB must be free there (`insufficient_disk`,
-     `tool_unavailable`).
-   - Unless `--memory-limit off`, a user scope with the limit and no swap
-     must start within 15 seconds:
+   - With `--min-free-disk`, at least that much must be free there
+     (`insufficient_disk`, `tool_unavailable`).
+   - With `--memory-limit`, a user scope with the limit and no swap must
+     start, within `--timeout` when it is set:
      `systemd-run --user --scope -p MemoryMax=<limit> -p MemorySwapMax=0 -- /bin/true`
      (`memory_limit_unavailable`, `tool_unavailable`). `systemd-run` gets
      only `PATH=/usr/bin:/bin` and the gate's `XDG_RUNTIME_DIR` and
-     `DBUS_SESSION_BUS_ADDRESS`. With `off`, the payload's limitations say
-     that no memory limit was applied.
+     `DBUS_SESSION_BUS_ADDRESS`. Without a memory limit, the payload's
+     limitations say that no memory limit was applied.
    - `/usr/bin/python3`, which runs the sandbox wrapper, must be an
      executable file (`wrapper_interpreter_unavailable`, `tool_unavailable`).
+   - With `--nice`, `/usr/bin/nice` must be an executable file too
+     (`nice_unavailable`, `tool_unavailable`).
    - One run at a time: the run takes the lock `comparator.lock`, a `0600`
-     file in the state directory, and waits for it for at most `--timeout`
-     seconds, and never more than 600 (`host_busy`, `command_failed`).
+     file in the state directory. It waits for it for at most `--timeout`
+     seconds (`host_busy`, `command_failed`), or for as long as the lock is
+     held when there is no `--timeout`.
 
    The gate does not check the host's load; its caller does, before it
    starts a run. A run starts only when the 1-minute load average is at most
@@ -606,8 +626,8 @@ challenge bytes, the solution files exactly as the checks read them, and
   definition holes and no extra kernels.
 
 The judge is `<toolchain>/bin/lake comparator --config <run>/comparator.json`,
-with `--paranoid` for a paranoid run, under `nice -n 19` when `/usr/bin/nice`
-is an executable file, and under `env -i`, so it
+with `--paranoid` for a paranoid run, under `nice -n N` when `--nice` gives
+N, and under `env -i`, so it
 gets only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
 `TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and
 `COMPARATOR_BWRAP=<run>/bwrap-wrapper`. lake comparator writes its temporary
@@ -728,9 +748,9 @@ Once the checks before the run have passed, every other result is
   would; this takes back an acceptance or a rejection;
 - `oom_check_unavailable`: a `build_failed` or `kernel_rejected` rejection
   whose out-of-memory count the wrapper could not read;
-- `insufficient_disk` after the run: a `build_failed` rejection with less than
-  the 2 GiB floor free before the cleanup, since a build that runs out of
-  space fails like one that does not compile;
+- `insufficient_disk` after the run: with `--min-free-disk`, a `build_failed`
+  rejection with less than that free before the cleanup, since a build that
+  runs out of space fails like one that does not compile;
 - `workspace_setup_failed` from the workspace above, and the checks after
   the run below.
 
@@ -781,12 +801,12 @@ The payload's `limitations` always lists:
   gate or a receipt; the digests detect a change made during a run, not one
   made before the freeze or after the receipt
 - the solution's own build directory is writable inside the sandbox, so a
-  solution can fill the disk; the disk floor and cleanup bound this only
-  after the fact
+  solution can fill the disk; --min-free-disk, when set, and the cleanup bound
+  this only after the fact
 - core profile: imports outside Init, Std, Lean and Lake are refused
 
-With `--memory-limit off`, it adds "no memory limit was applied". Two more
-limits hold:
+Without a memory limit, which is the default, it adds "no memory limit was
+applied". Two more limits hold:
 
 - Compiler trust can hide in the challenge. `challenge-freeze` refuses an
   `axiom` in a challenge, but it finds one with the scanner's lexer, and two
@@ -802,6 +822,30 @@ limits hold:
 - `doctor`'s `has_comparator` reads directory listings only, so it can say
   `true` for a toolchain whose attestation fails. The comparator's own checks
   of the record's toolchain decide whether a run starts.
+
+### Bounds the agent chose
+
+These bounds keep the gate from reading or writing too much; none of them
+limits a run. The agent chose their values, and no source fixes them except
+where noted. To use other values, change the constants in
+`lean_strict_verification_gate.py`.
+
+- `challenge.json` and `Challenge.lean`: at most 1 MiB each
+  (`CHALLENGE_RECORD_MAX_BYTES`, `CHALLENGE_SOURCE_MAX_BYTES`).
+- The toolchain listing: at most 64 files in `bin/` and 32 libraries in
+  `lib/lean/` (`TOOLCHAIN_BIN_MAX_FILES`, `TOOLCHAIN_LIBRARY_MAX_FILES`).
+- The output of the sandbox preflight, `lean --version`, `lake
+  resolve-deps`, `systemd-run` and `systemctl`: at most 64 KiB each
+  (`READINESS_OUTPUT_MAX_BYTES`).
+- The phase log: at most 64 lines and 64 KiB
+  (`COMPARATOR_PHASE_LOG_MAX_LINES`, `COMPARATOR_PHASE_LOG_MAX_BYTES`).
+- Details are cut to 500 characters, and output tails to 4000.
+- Waits inside the gate: up to 5 seconds to reap a killed process and 1
+  second for its output readers, and a 0.5-second poll while another run
+  holds the lock.
+- Older than this work: the judge's output cap of 16 MiB
+  (`COMMAND_OUTPUT_MAX_BYTES`), and the solution caps of 240 files, 15 MiB in
+  all and 16 MiB a file, which mirror the remote formal lane.
 
 ## Blocking Policy
 
