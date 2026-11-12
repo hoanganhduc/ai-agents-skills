@@ -3608,7 +3608,7 @@ class ComparatorRunTests(unittest.TestCase):
             judged["workspace"],
             {
                 "AASChallenge.lean": [CHALLENGE_BYTES.decode("utf-8"), 0o600],
-                "AASSolution.lean": ["import Sol.Main\n", 0o600],
+                "AASSolution.lean": ["prelude\nimport Sol.Main\n", 0o600],
                 "Sol": [None, 0o700],
                 "Sol/Lemmas.lean": [files["Sol/Lemmas.lean"], 0o600],
                 "Sol/Main.lean": [files["Sol/Main.lean"], 0o600],
