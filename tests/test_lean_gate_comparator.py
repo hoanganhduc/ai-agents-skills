@@ -2960,6 +2960,7 @@ sandboxed step, which exits with the code the scenario gives it.
 
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -3101,6 +3102,9 @@ def apply(hook, places):
         os.chmod(argument, 0 if action == "locked_directory" else 0o500)
     elif action == "sleep":
         time.sleep(float(argument))
+    elif action == "interrupt":
+        # Ctrl-C reaching the gate, whose process id is the argument.
+        os.kill(int(argument), signal.SIGINT)
     elif action == "flood":
         chunk = b"x" * 65536
         for _ in range(int(argument) // len(chunk) + 1):
@@ -4249,6 +4253,37 @@ class ComparatorRunTests(unittest.TestCase):
                 paranoid=True,
             )
         refused(payload, "tool_unavailable", "paranoid_kernel_missing")
+
+    def test_interrupt_stops_the_judge(self) -> None:
+        """Ctrl-C during the judge kills it and its scope, removes the run and writes no receipt."""
+
+        host = self.base / "host"
+        systemd_run = _host_tool(host / "systemd-run", self.fake, "systemd-run")
+        systemctl = _host_tool(host / "systemctl", self.fake, "systemctl")
+        survivor = self.comparator_state / "survived"
+        self._plan(
+            {
+                **_accepted_plan(),
+                "before": [
+                    ["interrupt", str(os.getpid())],
+                    ["sleep", "3"],
+                    ["write", str(survivor)],
+                ],
+            }
+        )
+        with mock.patch.object(gate, "COMPARATOR_SYSTEMD_RUN", str(systemd_run)), mock.patch.object(
+            gate, "COMPARATOR_SYSTEMCTL", str(systemctl)
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self._judge(memory_limit="512M")
+        # The judge would write its marker 3 s after the interrupt, had it survived.
+        time.sleep(4)
+        self.assertFalse(survivor.exists(), "the judge kept running after Ctrl-C")
+        (kill,) = self._calls("systemctl")
+        self.assertEqual(kill["args"][:3], ["--user", "kill", "--signal=KILL"])
+        self.assertTrue(kill["args"][3].startswith("aas-comparator-"), kill)
+        self.assertEqual(self._runs(), [])
+        self.assertEqual(self._receipts(), [])
 
     def test_real_systemd_scope(self) -> None:
         problem = gate._comparator_memory_preflight("10G")

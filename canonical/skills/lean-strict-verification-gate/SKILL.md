@@ -634,7 +634,10 @@ writes to standard output, which carries an export.
 
 `--timeout` bounds the judge (`timeout`), and so does a 16 MiB cap on its
 output (`output_limit`); both give `command_failed`, and the judge's scope,
-when it has one, is killed too. A run that outgrows `--memory-limit` is
+when it has one, is killed too. Ctrl-C during the judge kills the judge's
+process group and its scope, removes the run directory and writes no
+receipt. A `SIGTERM` or `SIGKILL` sent to the gate itself does not stop the
+judge. A run that outgrows `--memory-limit` is
 killed inside its scope. On the host where this was tried (systemd 255,
 whose `DefaultOOMPolicy` is `stop`), systemd then stopped the whole scope,
 and the judge ended with `SIGTERM`, which gives `comparator_exit`, no

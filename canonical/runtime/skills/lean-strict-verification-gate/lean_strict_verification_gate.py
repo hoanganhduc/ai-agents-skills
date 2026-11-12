@@ -2275,12 +2275,15 @@ def run_bounded_command(
     capture_evidence: bool = False,
     env: dict[str, str] | None = None,
     umask: int = -1,
+    kill_on_interrupt: bool = False,
 ) -> BoundedCommandResult:
     """Run one isolated child while hard-capping combined stdout and stderr.
 
     ``env``, when given, is the child's whole environment; otherwise the child
     inherits this process's environment. ``umask``, when not negative, is the
-    child's umask on POSIX; this process's own umask stays as it is.
+    child's umask on POSIX; this process's own umask stays as it is. With
+    ``kill_on_interrupt``, a KeyboardInterrupt (Ctrl-C) that arrives while the
+    child runs kills the child's process group before it goes on.
     """
 
     if timeout <= 0:
@@ -2374,6 +2377,21 @@ def run_bounded_command(
     except subprocess.TimeoutExpired:
         timed_out = True
         _terminate_process_tree(process)
+    except KeyboardInterrupt:
+        if kill_on_interrupt:
+            _terminate_process_tree(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            for thread in threads:
+                thread.join(timeout=1)
+            for stream in (process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        raise
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -5539,7 +5557,8 @@ def _comparator_execute(
     of output, the outer environment of D3 and COMPARATOR_UMASK. A timeout,
     an output flood or a judge that cannot be run is no verdict (timeout,
     output_limit, comparator_failed), and the judge's scope, when it has one,
-    is stopped. Otherwise classify_comparator_run judges the run from its
+    is stopped. So is it on Ctrl-C, which kills the judge's process group and
+    then goes on. Otherwise classify_comparator_run judges the run from its
     exit code, its output and the wrapper's phase log.
     """
 
@@ -5553,7 +5572,12 @@ def _comparator_execute(
             max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
             env=_comparator_outer_environment(),
             umask=COMPARATOR_UMASK,
+            kill_on_interrupt=True,
         )
+    except KeyboardInterrupt:
+        # Ctrl-C: the judge's process group is gone; its scope goes too.
+        _comparator_stop_scope(context, run_id)
+        raise
     except (subprocess.TimeoutExpired, CommandOutputLimitExceeded, OSError) as exc:
         _comparator_stop_scope(context, run_id)
         run["seconds"] = round(time.monotonic() - started, 3)
