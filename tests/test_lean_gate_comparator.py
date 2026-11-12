@@ -2692,5 +2692,46 @@ class ComparatorClassificationTests(unittest.TestCase):
                 self.assertIsNone(gate.parse_phase_log(data))
 
 
+class ComparatorAttestationTimeoutTests(unittest.TestCase):
+    """D13: the attestation's ``lean --version`` runs under one measured constant.
+
+    run_bounded_command is captured, so nothing runs and this holds on every
+    platform. The constant's value comes from a cold-start measurement: at
+    least three times the slowest cold ``lean --version`` (0.73 s for Lean
+    v4.35.0 on the aarch64 host, page cache dropped), rounded up, and never
+    below 5 seconds. The value is unchanged from the literal it replaces.
+    """
+
+    def test_attestation_timeout_constant(self) -> None:
+        self.assertEqual(gate.TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS, 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            toolchain = challenge_tests._comparator_toolchain(
+                Path(tmp) / "leanprover--lean4---v4.35.0"
+            )
+            timeouts: list[float] = []
+
+            def answer(command: list[str], **options: Any) -> Any:
+                timeouts.append(options["timeout"])
+                return gate.BoundedCommandResult(0, BANNER + "\n", "", len(BANNER) + 1)
+
+            def stall(command: list[str], **options: Any) -> Any:
+                timeouts.append(options["timeout"])
+                raise subprocess.TimeoutExpired(command, options["timeout"])
+
+            # A value of its own, so a call site that kept a literal shows.
+            with mock.patch.object(gate, "TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS", 7):
+                with mock.patch.object(gate, "run_bounded_command", side_effect=answer):
+                    attested = gate.toolchain_attestation(toolchain)
+                self.assertEqual(attested["status"], "ok", attested)
+                self.assertEqual(timeouts, [7])
+                with mock.patch.object(gate, "run_bounded_command", side_effect=stall):
+                    stalled = gate.toolchain_attestation(toolchain)
+            self.assertEqual(timeouts, [7, 7])
+            self.assertEqual(
+                (stalled["status"], stalled["detail"]),
+                ("command_failed", "lean --version: timeout after 7 seconds"),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

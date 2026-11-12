@@ -190,6 +190,11 @@ TOOLCHAIN_BIN_MAX_FILES = 64
 # hashes those libraries too; a toolchain with more is refused, not truncated.
 TOOLCHAIN_LIBRARY_MAX_FILES = 32
 READINESS_OUTPUT_MAX_BYTES = 64 * 1024
+# The limit on the attestation's `lean --version`. With the toolchain's files
+# dropped from the page cache, Lean v4.35.0 took at most 0.73 s to answer; the
+# limit is at least three times the slowest cold start, rounded up, and never
+# below 5 s.
+TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS = 5
 # Elan stores leanprover/lean4:<release> as toolchains/leanprover--lean4---<release>.
 _ELAN_LEAN4_PREFIX = "leanprover--lean4---"
 # The comparator verb's defaults come from the Mathlib spike: 300 s for a
@@ -1271,13 +1276,18 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
         try:
             completed = run_bounded_command(
                 command,
-                timeout=5,
+                timeout=TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS,
                 cwd=root,
                 max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
                 env={"PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]), "LANG": "C.UTF-8"},
             )
         except subprocess.TimeoutExpired:
-            result.update(status="command_failed", detail="lean --version: timeout after 5 seconds")
+            result.update(
+                status="command_failed",
+                detail=(
+                    f"lean --version: timeout after {TOOLCHAIN_ATTESTATION_TIMEOUT_SECONDS} seconds"
+                ),
+            )
             return result
         except CommandOutputLimitExceeded as exc:
             result.update(status="command_failed", detail=f"lean --version: {exc}")
