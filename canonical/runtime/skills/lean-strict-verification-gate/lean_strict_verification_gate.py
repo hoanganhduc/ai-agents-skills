@@ -859,8 +859,10 @@ def bwrap_preflight(path: str, *, timeout: float = 5) -> dict[str, Any]:
     -- /bin/true``; PATH=/usr/bin:/bin is the whole environment and the output
     is capped at 64 KiB. Nothing is spawned unless
     comparator_platform_supported() holds and ``path`` is an absolute,
-    executable regular file. ``ok`` means the sandbox started; a non-zero
-    exit, a timeout or a failure to run is ``command_failed``. Never raises.
+    executable regular file. A ``path`` that is neither a str nor an
+    os.PathLike is ``tool_unavailable`` with the detail ``invalid path
+    argument``. ``ok`` means the sandbox started; a non-zero exit, a timeout
+    or a failure to run is ``command_failed``. Never raises.
     """
 
     command = [path, "--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "--", "/bin/true"]
@@ -872,6 +874,9 @@ def bwrap_preflight(path: str, *, timeout: float = 5) -> dict[str, Any]:
         "detail": "",
     }
     try:
+        if not isinstance(path, (str, os.PathLike)):
+            result["detail"] = "invalid path argument"
+            return result
         if not comparator_platform_supported():
             result["detail"] = "the comparator sandbox runs only on Linux, and never as root"
             return result
@@ -909,7 +914,7 @@ def bwrap_preflight(path: str, *, timeout: float = 5) -> dict[str, Any]:
                     "unprivileged user namespaces may be unavailable"
                 ),
             )
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         result.update(status="tool_unavailable", detail=f"{type(exc).__name__}: {exc}"[:500])
     return result
 
@@ -927,7 +932,9 @@ def resolve_comparator_toolchain(
     lean-toolchain and are never used. The resolved directory is refused when
     it is ``input_root`` or lies inside it, whichever way it was found, and its
     bin/ must hold lake, lean, leanchecker and leanexport as regular files.
-    Never raises.
+    A ``toolchain``, or an ``input_root`` other than None, that is neither a
+    str nor an os.PathLike is ``tool_unavailable`` with the detail ``invalid
+    path argument``. Never raises.
     """
 
     result: dict[str, Any] = {
@@ -939,6 +946,11 @@ def resolve_comparator_toolchain(
         "detail": "",
     }
     try:
+        if not isinstance(toolchain, (str, os.PathLike)) or not (
+            input_root is None or isinstance(input_root, (str, os.PathLike))
+        ):
+            result["detail"] = "invalid path argument"
+            return result
         version = (
             parse_lean_version(toolchain)
             if isinstance(toolchain, str) and _LEAN_TOOLCHAIN_SPEC_RE.fullmatch(toolchain)
@@ -994,7 +1006,7 @@ def resolve_comparator_toolchain(
             result["detail"] = "bin/ lacks " + ", ".join(missing) + " as regular files"
             return result
         result.update(status="available", bin_dir=bin_dir)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         result.update(status="tool_unavailable", bin_dir="", detail=f"{type(exc).__name__}: {exc}"[:500])
     return result
 
@@ -1012,11 +1024,15 @@ def toolchain_file_digests(toolchain_dir: Path | str) -> dict[str, Any]:
     TOOLCHAIN_BIN_MAX_FILES entries or a lib/lean with more than
     TOOLCHAIN_LIBRARY_MAX_FILES libraries: the map is never truncated.
     ``status`` is ``ok``, or ``tool_unavailable`` with ``detail`` and no
-    files. Nothing runs. Never raises.
+    files; a ``toolchain_dir`` that is neither a str nor an os.PathLike gives
+    the detail ``invalid path argument``. Nothing runs. Never raises.
     """
 
     result: dict[str, Any] = {"status": "tool_unavailable", "files": {}, "detail": ""}
     try:
+        if not isinstance(toolchain_dir, (str, os.PathLike)):
+            result["detail"] = "invalid path argument"
+            return result
         root = Path(toolchain_dir)
         if not root.is_absolute() or not _plain_directory(root):
             result["detail"] = f"{root} is not an absolute toolchain directory"
@@ -1067,7 +1083,7 @@ def toolchain_file_digests(toolchain_dir: Path | str) -> dict[str, Any]:
             result["detail"] = f"{location}: {exc.kind}: {exc.detail}"
             return result
         result.update(status="ok", files=files)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         result.update(status="tool_unavailable", files={}, detail=f"{type(exc).__name__}: {exc}"[:500])
     return result
 
@@ -1077,7 +1093,8 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
 
     ``files`` is the map toolchain_file_digests() gives: every file directly
     in bin/, the kernels that ``--paranoid`` runs among them, and each
-    lib/lean/*.so, by POSIX relative path. A toolchain that helper refuses is
+    lib/lean/*.so, by POSIX relative path. A toolchain that helper refuses,
+    or a ``toolchain_dir`` it calls an ``invalid path argument``, is
     ``tool_unavailable``, and nothing runs. Then ``lean --version`` runs in
     the toolchain directory with only PATH=<bin>:/usr/bin:/bin and
     LANG=C.UTF-8, so no LEAN_*, ELAN_* or LAKE_* variable reaches it; nothing
@@ -1094,11 +1111,11 @@ def toolchain_attestation(toolchain_dir: Path | str) -> dict[str, Any]:
         "detail": "",
     }
     try:
-        root = Path(toolchain_dir)
-        digests = toolchain_file_digests(root)
+        digests = toolchain_file_digests(toolchain_dir)
         if digests["status"] != "ok":
             result["detail"] = digests["detail"]
             return result
+        root = Path(toolchain_dir)
         bin_dir = root / "bin"
         result["files"] = digests["files"]
         command = [str(bin_dir / executable_name("lean")), "--version"]

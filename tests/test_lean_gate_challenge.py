@@ -1859,6 +1859,50 @@ class ComparatorReadinessTests(unittest.TestCase):
                     self.assertIn(detail, refused["detail"], refused)
                     self.assertEqual(runs, 0, "lean --version ran for a refused toolchain")
 
+    def test_a_non_path_argument_is_tool_unavailable(self) -> None:
+        """OC-K-3: the readiness helpers that never raise give tool_unavailable, not TypeError.
+
+        None and an int, which are neither a str nor an os.PathLike, give the
+        detail "invalid path argument". An os.PathLike whose __fspath__
+        returns an int passes that check, and the TypeError it raises later is
+        reported, not raised. Nothing runs for any of them.
+        """
+
+        class IntPath:
+            def __fspath__(self) -> Any:
+                return 5
+
+        helpers: dict[str, Callable[[Any], dict[str, Any]]] = {
+            "bwrap_preflight": gate.bwrap_preflight,
+            "toolchain_file_digests": gate.toolchain_file_digests,
+            "toolchain_attestation": gate.toolchain_attestation,
+            "resolve_comparator_toolchain": gate.resolve_comparator_toolchain,
+            "resolve_comparator_toolchain input_root": lambda value: (
+                gate.resolve_comparator_toolchain(DEFAULT_TOOLCHAIN, input_root=value)
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp, _readiness_environment(
+            Path(tmp)
+        ), mock.patch.object(
+            gate, "comparator_platform_supported", return_value=True
+        ), mock.patch.object(
+            gate, "run_bounded_command", side_effect=AssertionError("a tool ran")
+        ):
+            for name, helper in helpers.items():
+                for label, value in (("None", None), ("an int", 5)):
+                    if value is None and name.endswith("input_root"):
+                        continue  # None is the default: there is no input to keep out
+                    with self.subTest(helper=name, argument=label):
+                        result = helper(value)
+                        self.assertEqual(result["status"], "tool_unavailable", result)
+                        self.assertEqual(result["detail"], "invalid path argument", result)
+                if name == "resolve_comparator_toolchain":
+                    continue  # the spec is a name, and a path-like is no release spec
+                with self.subTest(helper=name, argument="an os.PathLike that gives an int"):
+                    result = helper(IntPath())
+                    self.assertEqual(result["status"], "tool_unavailable", result)
+                    self.assertTrue(result["detail"].startswith("TypeError: "), result)
+
     def test_doctor_reports_readiness_from_listings_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
