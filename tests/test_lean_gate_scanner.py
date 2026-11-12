@@ -1728,6 +1728,19 @@ class AuditCliTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertTrue(phrase in skill, f"SKILL.md does not mention {phrase!r}")
+        # F1-DOC: both verbs run `lake env` in the project root, and a bare one
+        # wrote lake-manifest.json and .lake/config with Lean v4.35.0, so
+        # neither verb is read-only.
+        flat = " ".join(skill.split())
+        for phrase in (
+            "Neither writes its own output into the project, but both run `lake env` in the project root",
+            "Lake may then create `lake-manifest.json`, or its configuration cache under `.lake`, "
+            "when they are missing (observed with Lean v4.35.0)",
+            "It runs this lookup even when it then finds no checker",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(phrase in flat, f"SKILL.md does not mention {phrase!r}")
+        self.assertNotIn("Both are read-only", flat)
 
     def _elan_layout(self, tmp: str) -> tuple[Path, Path, Path]:
         """A built project, and an elan-like bin with a fake lake and a failing leanchecker proxy.

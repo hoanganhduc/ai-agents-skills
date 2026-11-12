@@ -98,8 +98,10 @@ different tool.
 The scanner reads source text, so it cannot see what a compiled proof actually
 rests on: a `sorryAx` reached through an imported dependency leaves no `sorry`
 token in the file being scanned. Two verbs close that gap over an
-already-built Lake project. Both are read-only and neither writes into the
-project.
+already-built Lake project. Neither writes its own output into the project,
+but both run `lake env` in the project root, and Lake may then create
+`lake-manifest.json`, or its configuration cache under `.lake`, when they are
+missing (observed with Lean v4.35.0).
 
 `axiom-audit` reports the trust base. It discovers the project's theorems and
 lemmas, runs `#print axioms` on each through `lake env lean`, and classifies
@@ -174,6 +176,7 @@ cache. The gate takes the first checker it finds, in this order:
    project root, within the `--timeout` budget and the output cap, reads the
    `LEAN_SYSROOT` it prints, and takes `<LEAN_SYSROOT>/bin/leanchecker` when
    that is a regular file whose real path lies outside the project root.
+   It runs this lookup even when it then finds no checker.
    It never takes the file beside `lake`: under elan that file is a proxy that
    follows the project's `lean-toolchain`.
 
