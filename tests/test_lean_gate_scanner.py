@@ -1,8 +1,8 @@
 """Hermetic evidence suite for the lean-strict-verification-gate scanner.
 
 The gate's ``scan`` mode is pure-Python regex — no Lean toolchain, no
-network — so every test here runs unconditionally on every host, including
-CI runners that never install elan. Gating these on toolchain presence
+network — so every test here runs without one, including on CI runners
+that never install elan. Gating these on toolchain presence
 would reproduce the silent-skip gap this file closes. Covers the pattern
 tables (placeholders including sorryAx, trust-base including native_decide
 and ofReduceBool, safety constructs), comment/string stripping, the import

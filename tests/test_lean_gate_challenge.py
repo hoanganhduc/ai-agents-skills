@@ -5,11 +5,11 @@ it against a trusted challenge. ``challenge-freeze`` produces that challenge:
 it copies the reviewed source byte for byte to ``Challenge.lean`` and writes
 the closed, timestamp-free record ``challenge.json`` beside it. The freeze runs
 no tool, so every test here is hermetic: the toolchain whose bytes the record
-pins is a fake tree under a temporary ELAN_HOME. Cases that need POSIX file
-modes, a FIFO or a symlink skip elsewhere with a stated reason; that is why
-they live in this module rather than in ``test_lean_gate_scanner``, which is
-never skip-gated. The gate module and its path come from that module, so one
-copy of the gate is loaded.
+pins is a fake tree under a temporary ELAN_HOME. A case that needs POSIX file
+modes, a FIFO or a symlink is skipped with a stated reason on a host that
+lacks it, so a lost case shows up as a skip, never as a silent pass. The gate
+module and its path come from ``test_lean_gate_scanner``, so one copy of the
+gate is loaded.
 
 ``ComparatorReadinessTests`` covers what the comparator will need from the
 host: the platform check, the pinned bwrap, the toolchain directory, its
@@ -765,21 +765,21 @@ class ChallengeFreezeTests(unittest.TestCase):
             link = Path(tmp) / "Link.lean"
             try:
                 link.symlink_to(target)
-            except (OSError, NotImplementedError):
-                link = None
-            if link is not None:
-                out = Path(tmp) / "out"
-                payload = _freeze(link, out)
-                self._assert_refused(payload, "source_unreadable", out)
-                self.assertIn("symlink_input", payload["findings"][0]["detail"])
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"this host cannot create a symlink: {exc}")
+            out = Path(tmp) / "out"
+            payload = _freeze(link, out)
+            self._assert_refused(payload, "source_unreadable", out)
+            self.assertIn("symlink_input", payload["findings"][0]["detail"])
 
-        if hasattr(os, "mkfifo"):
-            with self.subTest(case="FIFO source"), tempfile.TemporaryDirectory() as tmp:
-                fifo = Path(tmp) / "Statement.lean"
-                os.mkfifo(fifo)
-                out = Path(tmp) / "out"
-                payload = self._within_deadline(lambda: _freeze(fifo, out), fifo=fifo)
-                self._assert_refused(payload, "source_unreadable", out)
+        with self.subTest(case="FIFO source"), tempfile.TemporaryDirectory() as tmp:
+            if not hasattr(os, "mkfifo"):
+                self.skipTest("FIFOs are POSIX-only")
+            fifo = Path(tmp) / "Statement.lean"
+            os.mkfifo(fifo)
+            out = Path(tmp) / "out"
+            payload = self._within_deadline(lambda: _freeze(fifo, out), fifo=fifo)
+            self._assert_refused(payload, "source_unreadable", out)
 
         with self.subTest(case="non-empty out"), tempfile.TemporaryDirectory() as tmp:
             source = _write_source(tmp)
@@ -812,13 +812,12 @@ class ChallengeFreezeTests(unittest.TestCase):
             out = Path(tmp) / "out"
             try:
                 out.symlink_to(real, target_is_directory=True)
-            except (OSError, NotImplementedError):
-                out = None
-            if out is not None:
-                payload = _freeze(source, out)
-                self.assertFalse(payload["ok"], payload)
-                self.assertIn("output_dir_unusable", _kinds(payload))
-                self.assertEqual(os.listdir(real), [])
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"this host cannot create a symlink: {exc}")
+            payload = _freeze(source, out)
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn("output_dir_unusable", _kinds(payload))
+            self.assertEqual(os.listdir(real), [])
 
         real_open = os.open
 
@@ -1190,16 +1189,16 @@ class ComparatorReadinessTests(unittest.TestCase):
 
             # The resolved file is reported, and only its own directory names a
             # version: a symlink cannot borrow one.
-            alias = base / "alias" / "bwrap"
-            borrowed = base / "borrowed" / "bubblewrap-0.13.0" / "bin" / "bwrap"
-            alias.parent.mkdir()
-            borrowed.parent.mkdir(parents=True)
-            try:
-                alias.symlink_to(pinned)
-                borrowed.symlink_to(unversioned)
-            except (OSError, NotImplementedError):
-                pass
-            else:
+            with self.subTest(case="a symlinked AAS_BWRAP"):
+                alias = base / "alias" / "bwrap"
+                borrowed = base / "borrowed" / "bubblewrap-0.13.0" / "bin" / "bwrap"
+                alias.parent.mkdir()
+                borrowed.parent.mkdir(parents=True)
+                try:
+                    alias.symlink_to(pinned)
+                    borrowed.symlink_to(unversioned)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"this host cannot create a symlink: {exc}")
                 with _readiness_environment(home, AAS_BWRAP=str(alias), **on_path):
                     aliased = gate.bwrap_status()
                 self.assertEqual(aliased, {**chosen, "path": os.path.realpath(pinned)})
@@ -1227,6 +1226,9 @@ class ComparatorReadinessTests(unittest.TestCase):
                 not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
                 not_executable.chmod(0o644)
                 refused_values["a file without the execute bit"] = str(not_executable)
+            else:
+                with self.subTest(AAS_BWRAP="a file without the execute bit"):
+                    self.skipTest("only POSIX has an execute bit to clear")
             for label, value in refused_values.items():
                 with self.subTest(AAS_BWRAP=label):
                     with _readiness_environment(home, AAS_BWRAP=value, **on_path), _working_directory(
@@ -1486,19 +1488,21 @@ class ComparatorReadinessTests(unittest.TestCase):
                     override / "bin" / gate.executable_name("leanexport")
                 )
                 (linked_bin / "bin").symlink_to(override / "bin", target_is_directory=True)
-            except (OSError, NotImplementedError):
-                pass
-            else:
-                refusals["a symlinked binary"] = (
-                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_binary)},
-                    "env",
-                )
-                refusals["a symlinked bin/"] = (
-                    {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_bin)},
-                    "env",
-                )
+                link_problem = ""
+            except (OSError, NotImplementedError) as exc:
+                link_problem = f"this host cannot create a symlink: {exc}"
+            refusals["a symlinked binary"] = (
+                {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_binary)},
+                "env",
+            )
+            refusals["a symlinked bin/"] = (
+                {"AAS_LEAN_COMPARATOR_TOOLCHAIN": str(linked_bin)},
+                "env",
+            )
             for label, (values, source) in refusals.items():
                 with self.subTest(case=label):
+                    if label.startswith("a symlinked") and link_problem:
+                        self.skipTest(link_problem)
                     with _readiness_environment(home, **values), _working_directory(base):
                         refused = gate.resolve_comparator_toolchain(
                             "leanprover/lean4:v4.35.0", input_root=input_root
@@ -1614,15 +1618,14 @@ class ComparatorReadinessTests(unittest.TestCase):
             (linked / "lib" / "lean").mkdir(parents=True)
             for name in ("libleanshared.so", "libInit_shared.so"):
                 (linked / "lib" / "lean" / name).write_bytes((library / name).read_bytes())
-            try:
-                (linked / "bin").symlink_to(bin_dir, target_is_directory=True)
-            except (OSError, NotImplementedError):
-                linked = None
-            if linked is not None:
-                with self.subTest(case="a symlinked bin/"):
-                    through_link = gate.toolchain_attestation(linked)
-                    self.assertEqual(through_link["status"], "tool_unavailable", through_link)
-                    self.assertEqual(through_link["files"], {}, through_link)
+            with self.subTest(case="a symlinked bin/"):
+                try:
+                    (linked / "bin").symlink_to(bin_dir, target_is_directory=True)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"this host cannot create a symlink: {exc}")
+                through_link = gate.toolchain_attestation(linked)
+                self.assertEqual(through_link["status"], "tool_unavailable", through_link)
+                self.assertEqual(through_link["files"], {}, through_link)
 
             libraries = sorted(library.iterdir())
             for index in range(gate.TOOLCHAIN_LIBRARY_MAX_FILES):
@@ -1634,15 +1637,15 @@ class ComparatorReadinessTests(unittest.TestCase):
                     path.unlink()
 
             link = library / "libLake_shared.so"
-            try:
-                link.symlink_to(library / "libleanshared.so")
-            except (OSError, NotImplementedError):
-                link = None
-            if link is not None:
-                with self.subTest(case="symlinked library"):
-                    linked = attest(banner)
-                    self.assertEqual(linked["status"], "tool_unavailable", linked)
-                    self.assertIn("libLake_shared.so", linked["detail"])
+            with self.subTest(case="symlinked library"):
+                try:
+                    link.symlink_to(library / "libleanshared.so")
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"this host cannot create a symlink: {exc}")
+                linked = attest(banner)
+                self.assertEqual(linked["status"], "tool_unavailable", linked)
+                self.assertIn("libLake_shared.so", linked["detail"])
+            if os.path.lexists(link):
                 link.unlink()
 
             (bin_dir / "leanexport").unlink()
