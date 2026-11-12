@@ -299,6 +299,12 @@ COMPARATOR_RESOLVE_TIMEOUT = 60
 # timeout, and never longer than this.
 COMPARATOR_LOCK_MAX_WAIT = 600
 COMPARATOR_RECEIPT_SCHEMA = "host_comparator_receipt.v1"
+# The umask of the processes a comparator run starts, lake resolve-deps and
+# the judge, whatever the gate's own umask is. Lake makes the workspace's
+# .lake/build under the umask it inherits; under one without the owner's write
+# bit, such as 0277, it could not write there, and every run ended without a
+# verdict.
+COMPARATOR_UMASK = 0o077
 
 
 class BoundedCommandResult(tuple):
@@ -2268,11 +2274,13 @@ def run_bounded_command(
     max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
     capture_evidence: bool = False,
     env: dict[str, str] | None = None,
+    umask: int = -1,
 ) -> BoundedCommandResult:
     """Run one isolated child while hard-capping combined stdout and stderr.
 
     ``env``, when given, is the child's whole environment; otherwise the child
-    inherits this process's environment.
+    inherits this process's environment. ``umask``, when not negative, is the
+    child's umask on POSIX; this process's own umask stays as it is.
     """
 
     if timeout <= 0:
@@ -2285,7 +2293,7 @@ def run_bounded_command(
             "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         }
     else:
-        group_options = {"start_new_session": True}
+        group_options = {"start_new_session": True, "umask": umask}
     process = subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
@@ -5369,9 +5377,9 @@ def _comparator_workspace(
     AASSolution.lean, from the bytes admission read. The run directory gets
     comparator.json, an empty phases.jsonl, the wrapper program and its
     wrapper.json. Each file is new (O_EXCL) and 0600, the wrapper program
-    0700, and each directory 0700. A resolve-deps that fails, or that leaves
-    no manifest, is workspace_setup_failed. W0 maps what ws/ holds outside
-    .lake.
+    0700, and each directory 0700. lake resolve-deps runs with
+    COMPARATOR_UMASK; one that fails, or that leaves no manifest, is
+    workspace_setup_failed. W0 maps what ws/ holds outside .lake.
     """
 
     ws, home, tmp = run_dir / "ws", run_dir / "home", run_dir / "tmp"
@@ -5399,6 +5407,7 @@ def _comparator_workspace(
             cwd=ws,
             max_output_bytes=READINESS_OUTPUT_MAX_BYTES,
             env=environment,
+            umask=COMPARATOR_UMASK,
         )
     except subprocess.TimeoutExpired as exc:
         raise ComparatorRefusal(
@@ -5522,11 +5531,11 @@ def _comparator_execute(
     """Run the judge in the workspace and judge the run (design sections 9 and 10).
 
     The judge runs under the timeout, with at most COMMAND_OUTPUT_MAX_BYTES
-    of output and the outer environment of D3. A timeout, an output flood or
-    a judge that cannot be run is no verdict (timeout, output_limit,
-    comparator_failed), and the judge's scope, when it has one, is stopped.
-    Otherwise classify_comparator_run judges the run from its exit code, its
-    output and the wrapper's phase log.
+    of output, the outer environment of D3 and COMPARATOR_UMASK. A timeout,
+    an output flood or a judge that cannot be run is no verdict (timeout,
+    output_limit, comparator_failed), and the judge's scope, when it has one,
+    is stopped. Otherwise classify_comparator_run judges the run from its
+    exit code, its output and the wrapper's phase log.
     """
 
     run = payload["run"]
@@ -5538,6 +5547,7 @@ def _comparator_execute(
             cwd=workspace.ws,
             max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
             env=_comparator_outer_environment(),
+            umask=COMPARATOR_UMASK,
         )
     except (subprocess.TimeoutExpired, CommandOutputLimitExceeded, OSError) as exc:
         _comparator_stop_scope(context, run_id)

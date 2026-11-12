@@ -524,7 +524,10 @@ challenge bytes, the solution files exactly as the checks read them, and
 `--paranoid` for a paranoid run, under `nice -n 19` and `env -i`, so it gets
 only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
 `TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and `COMPARATOR_BWRAP=<run>/bwrap-wrapper`,
-the sandbox wrapper the gate writes there. `--timeout` bounds the judge
+the sandbox wrapper the gate writes there. `lake resolve-deps` and the judge
+start with umask `077`, whatever the gate's umask is: Lake makes `.lake/build`
+under the umask it inherits, and under one without the owner's write bit, such
+as `0277`, it could not write there. `--timeout` bounds the judge
 (`timeout`), and so does a 16 MiB cap on its output (`output_limit`); both
 give `command_failed`.
 

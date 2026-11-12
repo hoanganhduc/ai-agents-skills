@@ -2895,6 +2895,13 @@ def mode(path):
     return stat.S_IMODE(os.lstat(path).st_mode)
 
 
+def umask():
+    """The umask this program was started with."""
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
 def environment():
     """The environment this program was started with, before Python added LC_CTYPE (PEP 538)."""
     with open("/proc/self/environ", "rb") as handle:
@@ -3018,6 +3025,7 @@ def comparator(args):
         "args": args,
         "cwd": project,
         "env": environment(),
+        "umask": umask(),
         "workspace": workspace(project),
         "run": sorted(os.listdir(run)),
         "modes": {name: mode(os.path.join(run, name)) for name in os.listdir(run)},
@@ -3057,6 +3065,7 @@ def main():
             "call": "resolve-deps",
             "cwd": os.getcwd(),
             "env": environment(),
+            "umask": umask(),
             "entries": sorted(os.listdir(".")),
         })
         time.sleep(PLAN.get("resolve_deps_sleep", 0))
@@ -3578,6 +3587,32 @@ class ComparatorRunTests(unittest.TestCase):
         )
         self._receipt(payload)
         self.assertEqual(self._runs(), [])
+
+    def test_processes_get_a_private_umask(self) -> None:
+        """lake resolve-deps and the judge start with umask 077, whatever the gate's umask is.
+
+        Lake makes the workspace's .lake/build under the umask it inherits.
+        Under the gate's umask 0277, Lean v4.35.0 could not write there, and
+        every run ended without a verdict (challenge_build_failed). The gate's
+        own umask is left as it was.
+        """
+
+        self.assertEqual(gate.COMPARATOR_UMASK, 0o077)
+        # Made under this umask, so the fakes can append to it under any other.
+        (self.fake / "calls.jsonl").write_bytes(b"")
+        for gate_umask in (0o277, 0o022, 0o000):
+            with self.subTest(umask=f"{gate_umask:04o}"):
+                previous = os.umask(gate_umask)
+                try:
+                    payload = self._judge()
+                    after = os.umask(gate_umask)
+                finally:
+                    os.umask(previous)
+                self.assertEqual(after, gate_umask)
+                self.assertEqual(payload["comparator_status"], "accepted", payload)
+                (resolve,) = self._calls("resolve-deps")
+                (judged,) = self._calls("comparator")
+                self.assertEqual((resolve["umask"], judged["umask"]), (0o077, 0o077))
 
     def test_state_directory_rules(self) -> None:
         # A parent that exists keeps its mode; the directories the run owns are 0700.
@@ -4156,9 +4191,10 @@ ACCEPTED_STEPS = [*JUDGED_STEPS, ("kernel", "leanchecker", 0)]
 class RealComparatorTests(unittest.TestCase):
     """REGRESSION CHECKS: the comparator verb on Lean v4.35.0 and the local bwrap.
 
-    These assertions already held at the S3-B head, where the run was wired;
-    no gate code changes with them. They confirm on Lean itself what the fake
-    toolchain only assumes: Lake builds a two-module closure from the generated
+    These assertions already held at the S3-B head, where the run was wired,
+    except test_restrictive_umask, which came with the fix of the run's
+    umask. The five core cases confirm on Lean itself what the fake toolchain
+    only assumes: Lake builds a two-module closure from the generated
     lakefile's globs, lake comparator's temporary files land under the run's
     TMPDIR (the wrapper refuses a kernel step that binds anything else), and
     the judgments the classifier knows reach the payload as rejections.
@@ -4168,9 +4204,9 @@ class RealComparatorTests(unittest.TestCase):
     found and starts its sandbox, /usr/bin/python3 is 3.9 or later, and the
     temporary directory has the free space a run needs; elsewhere it is
     skipped with the reason. Each case freezes the challenge with that
-    toolchain and runs the verb once, about 20 seconds, with a temporary
-    XDG_STATE_HOME and the default memory limit (off when this host starts no
-    user scope with that limit).
+    toolchain and runs the verb once, in about 5 seconds on the host where
+    they were written, with a temporary XDG_STATE_HOME and the default memory
+    limit (off when this host starts no user scope with that limit).
     """
 
     @classmethod
@@ -4206,11 +4242,14 @@ class RealComparatorTests(unittest.TestCase):
         limit = gate.COMPARATOR_DEFAULT_MEMORY_LIMIT
         cls.memory_limit = "off" if gate._comparator_memory_preflight(limit) else limit
 
-    def _judge(self, files: dict[str, str], *modules: str) -> dict[str, Any]:
+    def _judge(
+        self, files: dict[str, str], *modules: str, umask: int | None = None
+    ) -> dict[str, Any]:
         """Freeze REAL_CHALLENGE, run the verb on ``files`` once, and check what it leaves.
 
-        The run leaves no run directory, and its receipt holds the payload's
-        result, sections and run.
+        ``umask``, when given, is the gate's umask during the run, not during
+        the setup. The run leaves no run directory, and its receipt holds the
+        payload's result, sections and run.
         """
 
         tmp = tempfile.TemporaryDirectory()
@@ -4227,17 +4266,22 @@ class RealComparatorTests(unittest.TestCase):
         self.assertTrue(frozen["ok"], frozen)
         project = _tree(base / "input", files)
         state = base / "state"
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)}):
-            payload = gate.comparator_payload(
-                project,
-                challenge_record=Path(frozen["challenge_record"]),
-                challenge_record_sha256=frozen["record_sha256"],
-                solution_modules=list(modules or ("Solution",)),
-                timeout=gate.COMPARATOR_DEFAULT_TIMEOUT,
-                paranoid=False,
-                keep_workspace=False,
-                memory_limit=self.memory_limit,
-            )
+        previous = os.umask(umask) if umask is not None else None
+        try:
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)}):
+                payload = gate.comparator_payload(
+                    project,
+                    challenge_record=Path(frozen["challenge_record"]),
+                    challenge_record_sha256=frozen["record_sha256"],
+                    solution_modules=list(modules or ("Solution",)),
+                    timeout=gate.COMPARATOR_DEFAULT_TIMEOUT,
+                    paranoid=False,
+                    keep_workspace=False,
+                    memory_limit=self.memory_limit,
+                )
+        finally:
+            if previous is not None:
+                os.umask(previous)
         comparator_state = state / "ai-agents-skills" / "comparator"
         self.assertEqual(os.listdir(comparator_state / "runs"), [], payload)
         receipt_path = Path(payload["receipt"]["path"])
@@ -4356,6 +4400,22 @@ class RealComparatorTests(unittest.TestCase):
         self._assert_steps(payload, ACCEPTED_STEPS)
         self.assertEqual(payload["solution"]["modules"], ["Sol.Main"])
         self.assertEqual(list(payload["solution"]["files"]), ["Sol/Main.lean", "Sol/Lemmas.lean"])
+
+    def test_restrictive_umask(self) -> None:
+        """Not a regression check: this case failed at the S3-B head.
+
+        Under the gate's umask 0277, Lake in the sandbox made .lake/build
+        without the owner's write bit, and the challenge's build failed with
+        "permission denied" (challenge_build_failed, no verdict). The run's
+        processes now start with COMPARATOR_UMASK, so the verdict comes back.
+        """
+
+        payload = self._judge(
+            {"Solution.lean": "theorem comm (a b : Nat) : a + b = b + a := Nat.add_comm a b\n"},
+            umask=0o277,
+        )
+        self._assert_result(payload, "accepted")
+        self._assert_steps(payload, ACCEPTED_STEPS)
 
 
 if __name__ == "__main__":
