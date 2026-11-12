@@ -3433,6 +3433,7 @@ def challenge_freeze_payload(
     findings: list[dict[str, str]] = payload["findings"]
     created_files: list[Path] = []
     created_dirs: list[Path] = []
+    changed_modes: list[tuple[Path, int]] = []
     try:
         version = (
             parse_lean_version(toolchain)
@@ -3636,10 +3637,13 @@ def challenge_freeze_payload(
             if os.name == "posix":
                 # The umask filters the mode os.mkdir creates with.
                 os.chmod(out_dir, 0o700)
+                if out_info is not None:
+                    # A refusal gives an existing --out its own mode back.
+                    changed_modes.append((out_dir, stat.S_IMODE(out_info.st_mode)))
             for target, data in ((challenge_path, source_bytes), (record_path, record_bytes)):
                 _write_new_private_file(target, data, created_files)
         except OSError as exc:
-            _remove_created_outputs(created_files, created_dirs)
+            _remove_created_outputs(created_files, created_dirs, changed_modes)
             findings.append({"kind": "output_write_failed", "detail": str(exc)})
             return payload
 
@@ -3653,7 +3657,7 @@ def challenge_freeze_payload(
             toolchain_dir=toolchain_dir,
         )
     except Exception as exc:  # a crash is a refusal too, and leaves nothing behind
-        _remove_created_outputs(created_files, created_dirs)
+        _remove_created_outputs(created_files, created_dirs, changed_modes)
         payload.update(
             ok=False,
             challenge_file="",
@@ -3734,8 +3738,14 @@ def _write_new_private_file(path: Path, data: bytes, created: list[Path]) -> Non
         os.close(descriptor)
 
 
-def _remove_created_outputs(files: list[Path], directories: list[Path]) -> None:
-    """Remove what one freeze created, newest first; best effort."""
+def _remove_created_outputs(
+    files: list[Path], directories: list[Path], modes: list[tuple[Path, int]]
+) -> None:
+    """Undo what one freeze wrote, newest first; best effort.
+
+    The files and directories it created are removed, then each existing
+    directory in ``modes`` gets the mode it had before the freeze.
+    """
 
     for path in reversed(files):
         try:
@@ -3747,8 +3757,14 @@ def _remove_created_outputs(files: list[Path], directories: list[Path]) -> None:
             os.rmdir(path)
         except OSError:
             pass
+    for path, mode in reversed(modes):
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
     files.clear()
     directories.clear()
+    modes.clear()
 
 
 def emit(payload: dict[str, Any]) -> None:

@@ -398,9 +398,10 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   an `#eval` after it would hide from the patterns;
 - `output_dir_unusable`: `--out` is a symlink, a file or a non-empty
   directory, or its parent is missing or not a directory;
-- `output_write_failed`: a write failed, and what the run created is removed;
+- `output_write_failed`: a write failed. What the run created is removed, and
+  an existing `--out` gets its mode back;
 - `challenge_freeze_failed`: an unexpected error, after which nothing is left
-  behind.
+  behind, and an existing `--out` gets its mode back.
 
 A `sorry` in the challenge is expected: a challenge states theorems and does
 not prove them. The payload's `advisory_scan` is the `stub`-stage scan of the

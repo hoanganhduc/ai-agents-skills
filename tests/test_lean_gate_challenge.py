@@ -1104,6 +1104,47 @@ class ChallengeFreezeTests(unittest.TestCase):
         section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
         self.assertIn("whatever the umask", section)
 
+    @unittest.skipUnless(
+        os.name == "posix", "POSIX directory modes; Windows has no mode bits to restore"
+    )
+    def test_a_failed_freeze_gives_an_existing_out_its_mode_back(self) -> None:
+        """OC-DS-7: a refusal leaves an existing empty --out as it found it, mode included.
+
+        The freeze makes an existing --out 0700 before it writes. When a write
+        fails, or the run crashes after the write, the files go and the
+        directory gets its own mode back.
+        """
+
+        real_open = os.open
+
+        def refuse_record(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if Path(path).name == "challenge.json" and flags & os.O_CREAT:
+                raise OSError(28, "No space left on device", str(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        for label, target, name, effect, kind in (
+            ("a write fails mid-way", gate.os, "open", refuse_record, "output_write_failed"),
+            (
+                "a crash after the write",
+                gate,
+                "scan_path",
+                RuntimeError("injected"),
+                "challenge_freeze_failed",
+            ),
+        ):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp)
+                out = Path(tmp) / "out"
+                out.mkdir()
+                os.chmod(out, 0o755)
+                with mock.patch.object(target, name, side_effect=effect):
+                    payload = _freeze(source, out)
+                self._assert_refused(payload, kind, out, before=[])
+                self.assertEqual(stat.S_IMODE(os.lstat(out).st_mode), 0o755, payload)
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        self.assertIn("an existing `--out` gets its mode back", section)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:
         """The shared reader opens with O_NONBLOCK, so a FIFO swapped in after lstat fails fast."""
