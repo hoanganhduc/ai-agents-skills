@@ -248,6 +248,33 @@ COMPARATOR_LIMITATIONS = (
     "fill the disk; the disk floor and cleanup bound this only after the fact",
     "core profile: imports outside Init, Std, Lean and Lake are refused",
 )
+# The comparator's sandbox wrapper logs each step it runs or refuses as one
+# line: a JSON object with exactly these keys. The log is capped in lines and
+# bytes; COMPARATOR_WRAPPER_SOURCE keeps its own copy of the keys and the line
+# cap, since it runs on its own.
+COMPARATOR_PHASE_LOG_KEYS = frozenset({"phase", "target", "rc", "seconds", "dropped", "refused"})
+COMPARATOR_PHASE_LOG_MAX_LINES = 64
+COMPARATOR_PHASE_LOG_MAX_BYTES = 64 * 1024
+# The only reasons a comparator run rejects a solution. Every other failure,
+# including a message the gate does not know, is no verdict.
+COMPARATOR_REJECTION_KINDS = (
+    "statement_mismatch",
+    "kind_mismatch",
+    "constant_mismatch",
+    "missing_constant",
+    "forbidden_axiom",
+    "kernel_rejected",
+    "build_failed",
+)
+# The name lake comparator gives each kernel in its messages, by executable.
+COMPARATOR_KERNEL_NAMES = {
+    "leanchecker": "Lean default",
+    "leanchecker-paranoid": "Lean paranoid",
+    "lean4lean": "lean4lean",
+    "nanoda_bin": "nanoda",
+    "con-leche": "con-leche",
+    "con-ron": "con-ron",
+}
 
 
 class BoundedCommandResult(tuple):
@@ -4644,6 +4671,559 @@ def comparator_config(record: dict[str, Any]) -> bytes:
     return (
         json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
     ).encode("ascii")
+
+
+# The program lake comparator runs as COMPARATOR_BWRAP, in place of bwrap, for
+# each sandboxed step of a run. It is AAS code held here as text, so
+# gate_sha256 covers it; a run writes it beside its wrapper.json, after a
+# "#!/usr/bin/python3 -I" line. It needs only Python 3.9's standard library.
+COMPARATOR_WRAPPER_SOURCE = r'''"""COMPARATOR_BWRAP for a comparator run of the AAS Lean gate.
+
+lake comparator runs this program in place of bwrap for each sandboxed step of
+a run, with an empty environment, bwrap's options, "--" and the step's command.
+The program checks them against the steps lake comparator takes, drops
+--share-net, runs the pinned bwrap and waits for it, then appends one line for
+the step to the run's phase log and exits as bwrap did. A step it refuses never
+runs and is logged as refused. Its settings are wrapper.json, beside its real
+path. It never writes to stdout: in an export step, stdout is the export.
+"""
+
+import json
+import os
+import sys
+import time
+
+CONFIG_KEYS = frozenset({"bwrap", "log", "toolchain_dir", "run_dir", "writable"})
+PHASE_LOG_KEYS = frozenset({"phase", "target", "rc", "seconds", "dropped", "refused"})
+PHASE_LOG_MAX_LINES = 64
+REFUSED_EXIT = 125
+EXEC_FAILED_EXIT = 127
+# The bwrap options lake comparator uses, with the number of values each takes.
+OPTION_ARITY = {
+    "--ro-bind": 2,
+    "--bind": 2,
+    "--setenv": 2,
+    "--tmpfs": 1,
+    "--dir": 1,
+    "--dev": 1,
+    "--proc": 1,
+    "--chdir": 1,
+    "--clearenv": 0,
+    "--unshare-all": 0,
+    "--die-with-parent": 0,
+    "--new-session": 0,
+    "--share-net": 0,
+}
+REQUIRED_OPTIONS = ("--unshare-all", "--die-with-parent", "--clearenv", "--new-session")
+# Resolving the workspace asks for a network; no step gets one.
+DROPPED_OPTIONS = ("--share-net",)
+MODULES = ("AASChallenge", "AASSolution")
+KERNELS = (
+    "leanchecker",
+    "leanchecker-paranoid",
+    "lean4lean",
+    "nanoda_bin",
+    "con-leche",
+    "con-ron",
+)
+
+
+class Refused(Exception):
+    """A step the wrapper does not run; the message says why."""
+
+
+def inside(path, root):
+    """Whether the real path ``path`` is the real path ``root`` or lies under it."""
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def validate_bwrap_argv(args, config):
+    """Check one step's arguments; return (opts, cmd, phase, target, dropped).
+
+    args are bwrap's options, then "--" and the command; config is wrapper.json.
+    Options are read by the number of values each takes, so only a "--" where
+    an option belongs ends them. Each option must be in OPTION_ARITY, each of
+    REQUIRED_OPTIONS must be there, and --share-net is dropped and named in
+    dropped. --bind must bind the workspace's .lake onto itself. --ro-bind must
+    bind a path onto itself whose real path is /, or is the toolchain or the
+    run directory or lies under one of them. The command's real path must be a
+    file in the toolchain's bin directory, and the step must be one lake
+    comparator takes: lake env; lake build of AASChallenge or AASSolution;
+    leanexport of one of them; or a kernel. Raises Refused otherwise.
+    """
+    opts = []
+    dropped = []
+    seen = set()
+    index = 0
+    while True:
+        if index >= len(args):
+            raise Refused("the bwrap options do not end with --")
+        option = args[index]
+        if option == "--":
+            break
+        arity = OPTION_ARITY.get(option)
+        if arity is None:
+            raise Refused(f"{option!r} is not an allowed bwrap option")
+        values = args[index + 1 : index + 1 + arity]
+        if len(values) < arity:
+            raise Refused(f"{option} needs {arity} value{'s' if arity > 1 else ''}")
+        index += 1 + arity
+        seen.add(option)
+        if option in DROPPED_OPTIONS:
+            dropped.append(option)
+            continue
+        if option == "--bind":
+            source, destination = values
+            if source != destination or os.path.realpath(source) != config["writable"]:
+                raise Refused(
+                    f"--bind {source} {destination} is not the workspace's writable .lake"
+                )
+        elif option == "--ro-bind":
+            source, destination = values
+            real = os.path.realpath(source)
+            if source != destination or not (
+                real == "/"
+                or inside(real, config["toolchain_dir"])
+                or inside(real, config["run_dir"])
+            ):
+                raise Refused(
+                    f"--ro-bind {source} {destination} is not /, the toolchain or the run directory"
+                )
+        opts.extend([option, *values])
+    missing = [option for option in REQUIRED_OPTIONS if option not in seen]
+    if missing:
+        raise Refused("required bwrap options are missing: " + ", ".join(missing))
+    cmd = args[index + 1 :]
+    if not cmd:
+        raise Refused("no command follows --")
+    program = cmd[0]
+    real = os.path.realpath(program)
+    if (
+        not os.path.isabs(program)
+        or os.path.dirname(real) != os.path.join(config["toolchain_dir"], "bin")
+        or not os.path.isfile(real)
+    ):
+        raise Refused(f"{program} is not a program in the toolchain's bin directory")
+    name = os.path.basename(real)
+    rest = cmd[1:]
+    if name == "lake" and rest == ["env"]:
+        return opts, cmd, "resolve", "", dropped
+    if name == "lake" and len(rest) == 2 and rest[0] == "build" and rest[1] in MODULES:
+        return opts, cmd, "build", rest[1], dropped
+    if name == "leanexport" and len(rest) >= 2 and rest[0] in MODULES and rest[1] == "--":
+        return opts, cmd, "export", rest[0], dropped
+    if name in KERNELS:
+        return opts, cmd, "kernel", name, dropped
+    raise Refused(" ".join([name, *rest[:3]]) + " is not a step lake comparator runs")
+
+
+def phase_record(phase, target, rc, seconds, dropped, refused):
+    """One phase-log line: a JSON object with exactly PHASE_LOG_KEYS and a newline, as bytes."""
+    entry = {
+        "phase": phase,
+        "target": target,
+        "rc": rc,
+        "seconds": seconds,
+        "dropped": list(dropped),
+        "refused": refused,
+    }
+    return (json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+
+
+def read_flags():
+    """Flags that open a file to read, never through a symlink."""
+    return os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | getattr(os, "O_BINARY", 0)
+
+
+def load_config(program):
+    """wrapper.json beside the real path of program: exactly CONFIG_KEYS, each an absolute path."""
+    path = os.path.join(os.path.dirname(os.path.realpath(program)), "wrapper.json")
+    try:
+        descriptor = os.open(path, read_flags())
+        try:
+            data = os.read(descriptor, 65536)
+        finally:
+            os.close(descriptor)
+        config = json.loads(data.decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refused(f"wrapper.json cannot be read: {exc}") from None
+    if not isinstance(config, dict) or set(config) != CONFIG_KEYS:
+        raise Refused("wrapper.json does not hold exactly " + ", ".join(sorted(CONFIG_KEYS)))
+    for key in sorted(CONFIG_KEYS):
+        if not isinstance(config[key], str) or not os.path.isabs(config[key]):
+            raise Refused(f"wrapper.json's {key} is not an absolute path")
+    return config
+
+
+def logged_lines(path):
+    """The lines the phase log holds, counted up to PHASE_LOG_MAX_LINES."""
+    descriptor = os.open(path, read_flags())
+    try:
+        count = 0
+        while count < PHASE_LOG_MAX_LINES:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            count += chunk.count(b"\n")
+        return count
+    finally:
+        os.close(descriptor)
+
+
+def append(path, line):
+    """Append line to the phase log in one write; the log is never created or followed."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.write(descriptor, line)
+    finally:
+        os.close(descriptor)
+
+
+def report(message):
+    """One line on stderr, which lake comparator passes on."""
+    try:
+        os.write(2, f"aas-comparator-wrapper: {message}\n".encode("utf-8", "backslashreplace"))
+    except OSError:
+        pass
+
+
+def refuse(log, reason):
+    """Report a refused step, log it when the log can take it, and return REFUSED_EXIT."""
+    report("refused: " + reason)
+    if log is not None:
+        try:
+            append(log, phase_record("refused", "", REFUSED_EXIT, 0.0, [], reason[:500]))
+        except OSError:
+            pass
+    return REFUSED_EXIT
+
+
+def main(argv=None):
+    """Run one step of a comparator run in bwrap and log it; return the exit status."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        config = load_config(sys.argv[0])
+    except Refused as exc:
+        return refuse(None, str(exc))
+    log = config["log"]
+    try:
+        logged = logged_lines(log)
+    except OSError as exc:
+        return refuse(None, f"the phase log cannot be read: {exc}")
+    if logged >= PHASE_LOG_MAX_LINES:
+        return refuse(None, f"the phase log already holds {PHASE_LOG_MAX_LINES} lines")
+    try:
+        opts, cmd, phase, target, dropped = validate_bwrap_argv(args, config)
+    except Refused as exc:
+        return refuse(log, str(exc))
+    started = time.monotonic()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.execv(config["bwrap"], [config["bwrap"], *opts, "--", *cmd])
+        finally:
+            os._exit(EXEC_FAILED_EXIT)
+    _, status = os.waitpid(pid, 0)
+    rc = os.waitstatus_to_exitcode(status)
+    seconds = round(time.monotonic() - started, 3)
+    try:
+        append(log, phase_record(phase, target, rc, seconds, dropped, ""))
+    except OSError as exc:
+        report(f"the step ran, but the phase log cannot be written: {exc}")
+        return REFUSED_EXIT
+    return rc if rc >= 0 else 128 - rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+# lake comparator ends a failed run with "error: <message>" as its last stderr
+# line. These messages are its judgments that reject a solution, by rejection
+# kind (Lake/Check/Compare.lean and Lake/Check/Axioms.lean, Lean v4.35.0).
+_COMPARATOR_ERROR_PREFIX = "error: "
+_COMPARATOR_OKAY_LINE = "Your solution is okay!"
+_COMPARATOR_JUDGMENTS = (
+    (
+        "statement_mismatch",
+        re.compile(r"Challenge and solution theorem statement do not match: '(.+)'"),
+    ),
+    ("kind_mismatch", re.compile(r"Challenge and solution constant kind don't match: '(.+)'")),
+    ("kind_mismatch", re.compile(r"Solution constant is not a theorem: '(.+)'")),
+    ("kind_mismatch", re.compile(r"Solution constant is not a definition: '(.+)'")),
+    (
+        "constant_mismatch",
+        re.compile(r"Const does not match between challenge and target '(.+)'"),
+    ),
+    ("missing_constant", re.compile(r"Const not found in solution:? '(.+)'")),
+    ("missing_constant", re.compile(r"Constant not found in solution '(.+)'")),
+    ("forbidden_axiom", re.compile(r"Illegal axiom detected: '(.+)'")),
+)
+# The first kernel that failed, as lake comparator reports it. The exit code is
+# ASCII digits: \d also matches other scripts' digits, which int() accepts.
+_COMPARATOR_KERNEL_EXIT_RE = re.compile(r"(.+) exited with ([0-9]+)")
+# The sandboxed steps of every run, in order, before the kernels.
+_COMPARATOR_STEPS_BEFORE_KERNELS = (
+    ("resolve", ""),
+    ("build", CHALLENGE_MODULE),
+    ("export", CHALLENGE_MODULE),
+    ("build", COMPARATOR_SOLUTION_MODULE),
+    ("export", COMPARATOR_SOLUTION_MODULE),
+)
+# A failed step other than the solution's build or a kernel, by its finding.
+_COMPARATOR_STEP_FINDINGS = {
+    ("resolve", ""): "resolve_failed",
+    ("build", CHALLENGE_MODULE): "challenge_build_failed",
+    ("export", CHALLENGE_MODULE): "challenge_export_failed",
+    ("export", COMPARATOR_SOLUTION_MODULE): "solution_export_failed",
+}
+
+
+def parse_phase_log(data: bytes) -> list[dict[str, Any]] | None:
+    """The steps the comparator wrapper logged, or None when ``data`` is not such a log.
+
+    A log is at most COMPARATOR_PHASE_LOG_MAX_BYTES of UTF-8 in at most
+    COMPARATOR_PHASE_LOG_MAX_LINES lines, each ending in a newline and holding a
+    JSON object with exactly COMPARATOR_PHASE_LOG_KEYS: phase is resolve,
+    build, export, kernel or refused; target is "", one of the two generated
+    modules or a kernel's executable; rc is an integer, negative for a signal;
+    seconds is a finite float that is not negative; dropped is a list of
+    strings; refused is a string. An empty log holds no step.
+    """
+
+    if len(data) > COMPARATOR_PHASE_LOG_MAX_BYTES:
+        return None
+    if not data:
+        return []
+    if not data.endswith(b"\n"):
+        return None
+    try:
+        lines = data.decode("utf-8").split("\n")[:-1]
+    except UnicodeDecodeError:
+        return None
+    if len(lines) > COMPARATOR_PHASE_LOG_MAX_LINES:
+        return None
+    phase_names = {"resolve", "build", "export", "kernel", "refused"}
+    targets = {"", CHALLENGE_MODULE, COMPARATOR_SOLUTION_MODULE, *COMPARATOR_KERNEL_NAMES}
+    phases = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            return None
+        if not isinstance(entry, dict) or set(entry) != COMPARATOR_PHASE_LOG_KEYS:
+            return None
+        phase, target, rc = entry["phase"], entry["target"], entry["rc"]
+        seconds, dropped = entry["seconds"], entry["dropped"]
+        if (
+            not isinstance(phase, str)
+            or phase not in phase_names
+            or not isinstance(target, str)
+            or target not in targets
+            or not isinstance(rc, int)
+            or isinstance(rc, bool)
+            or not isinstance(seconds, float)
+            or not 0.0 <= seconds < float("inf")
+            or not isinstance(dropped, list)
+            or not all(isinstance(option, str) for option in dropped)
+            or not isinstance(entry["refused"], str)
+        ):
+            return None
+        phases.append(entry)
+    return phases
+
+
+def classify_comparator_run(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    phases: list[dict[str, Any]] | None,
+    paranoid: bool,
+) -> tuple[str, str, str, dict[str, str] | None]:
+    """Judge a finished lake comparator run: (status, rejection kind, detail, finding).
+
+    ``phases`` is the wrapper's phase log as parse_phase_log gives it, and
+    ``paranoid`` says whether the run asked for the bundled kernels. The
+    solution's build prints whatever it likes, so the only output trusted here
+    is the exit code and the last non-blank stderr line, which lake comparator
+    writes last, as "error: <message>", when it exits 1 or 2; the phase log says
+    which sandboxed steps ran and how each exited. ``detail`` is that message,
+    capped at 500 characters, and "" for any other exit code.
+
+    accepted needs exit 0, exactly the steps a run takes (paranoid or not),
+    each exiting 0, and "Your solution is okay!" as the last stdout line. With
+    exit 1 the steps must be a beginning of those, and the solution is rejected
+    only when:
+
+    - the five steps before the kernels ran, each exiting 0, and the message is
+      one of the comparator's judgments, which gives its kind;
+    - the solution's build was the last step and exited 1, and the message is
+      "Child exited with 1" (build_failed);
+    - every kernel ran, leanchecker last and exiting 1, and the message names
+      the first kernel that failed and its exit code (kernel_rejected).
+
+    A stderr line starting "bwrap: " takes the last two verdicts back, since a
+    bwrap that fails also exits 1 (sandbox_failed). Every other run is
+    command_failed with one finding, such as a refused step, a message that is
+    not a judgment, a failure on the challenge's side, or a bundled kernel that
+    rejects what leanchecker accepts (external_kernel_disagreement). A rejection
+    and an acceptance have no finding.
+    """
+
+    final = _last_text_line(stderr)
+    message = (
+        final[len(_COMPARATOR_ERROR_PREFIX) :]
+        if final.startswith(_COMPARATOR_ERROR_PREFIX)
+        else None
+    )
+    detail = message[:500] if message is not None and returncode in (1, 2) else ""
+
+    def no_verdict(kind: str, text: str) -> tuple[str, str, str, dict[str, str]]:
+        return "command_failed", "", detail, {"kind": kind, "detail": text[:500]}
+
+    if phases is None:
+        return no_verdict(
+            "phase_log_unreadable",
+            "the sandbox wrapper's phase log is missing or malformed, so the steps are unknown",
+        )
+    refused = next((step for step in phases if step["phase"] == "refused"), None)
+    if refused is not None:
+        return no_verdict(
+            "wrapper_refused", f"the sandbox wrapper refused a step: {refused['refused']}"
+        )
+    if returncode not in (0, 1, 2):
+        ended = (
+            f"was stopped by signal {-returncode}"
+            if returncode < 0
+            else f"exited with {returncode}"
+        )
+        return no_verdict("comparator_exit", f"lake comparator {ended}")
+    if returncode == 2:
+        return no_verdict(
+            "comparator_could_not_start",
+            f"lake comparator could not start: {final or 'it gave no message'}",
+        )
+    steps = [(step["phase"], step["target"]) for step in phases]
+    kernels = [*(COMPARATOR_PARANOID_KERNELS if paranoid else ()), "leanchecker"]
+    expected = [*_COMPARATOR_STEPS_BEFORE_KERNELS, *(("kernel", kernel) for kernel in kernels)]
+    if returncode == 0:
+        if steps != expected:
+            return no_verdict(
+                "inconsistent_run",
+                f"lake comparator exited 0 after the steps {_comparator_steps_text(steps)}, "
+                f"not {_comparator_steps_text(expected)}",
+            )
+        if any(step["rc"] != 0 for step in phases):
+            return no_verdict(
+                "inconsistent_run", "lake comparator exited 0 although a sandboxed step failed"
+            )
+        if _last_text_line(stdout) != _COMPARATOR_OKAY_LINE:
+            return no_verdict(
+                "inconsistent_run",
+                f"lake comparator exited 0 without {_COMPARATOR_OKAY_LINE!r} as its last line",
+            )
+        return "accepted", "", "", None
+
+    # Exit 1: the run failed, and lake comparator said why on its last line.
+    if steps != expected[: len(steps)]:
+        return no_verdict(
+            "inconsistent_run",
+            f"the steps {_comparator_steps_text(steps)} are not the order lake comparator "
+            "takes them in",
+        )
+    failed = next((index for index, step in enumerate(phases) if step["rc"] != 0), None)
+    if failed is None:
+        kind = next(
+            (
+                kind
+                for kind, pattern in _COMPARATOR_JUDGMENTS
+                if message is not None and pattern.fullmatch(message)
+            ),
+            None,
+        )
+        if kind is None:
+            return no_verdict(
+                "unclassified_failure",
+                f"lake comparator failed with a message that is not a rejection: "
+                f"{final or 'it gave no message'}",
+            )
+        if steps != list(_COMPARATOR_STEPS_BEFORE_KERNELS):
+            return no_verdict(
+                "inconsistent_run",
+                "lake comparator gave its judgment after steps other than the five before "
+                f"the kernels: {_comparator_steps_text(steps)}",
+            )
+        return "rejected", kind, detail, None
+    phase, target = steps[failed]
+    rc = phases[failed]["rc"]
+    bwrap_error = next((line for line in stderr.split("\n") if line.startswith("bwrap: ")), None)
+    if (phase, target) == ("build", COMPARATOR_SOLUTION_MODULE):
+        if rc == 1 and failed == len(phases) - 1 and message == "Child exited with 1":
+            if bwrap_error is not None:
+                return no_verdict(
+                    "sandbox_failed", f"bwrap failed, so the build may not have run: {bwrap_error}"
+                )
+            return "rejected", "build_failed", detail, None
+        return no_verdict(
+            "solution_build_aborted",
+            f"the build of {COMPARATOR_SOLUTION_MODULE} exited with {rc}, and lake comparator "
+            "did not report a failed build as its last step",
+        )
+    if phase != "kernel":
+        return no_verdict(
+            _COMPARATOR_STEP_FINDINGS[(phase, target)],
+            f"the step {_comparator_steps_text([(phase, target)])} exited with {rc}",
+        )
+    if steps != expected:
+        return no_verdict(
+            "inconsistent_run",
+            "a kernel failed, but the phase log does not hold every kernel with leanchecker last",
+        )
+    checker_rc = phases[-1]["rc"]
+    reported = _COMPARATOR_KERNEL_EXIT_RE.fullmatch(message) if message is not None else None
+    if (
+        checker_rc == 1
+        and reported is not None
+        and reported.group(1) == COMPARATOR_KERNEL_NAMES[target]
+        and int(reported.group(2)) == rc
+    ):
+        if bwrap_error is not None:
+            return no_verdict(
+                "sandbox_failed", f"bwrap failed, so a kernel may not have run: {bwrap_error}"
+            )
+        return "rejected", "kernel_rejected", detail, None
+    if checker_rc == 0:
+        rejecting = [
+            COMPARATOR_KERNEL_NAMES[step["target"]]
+            for step in phases[len(_COMPARATOR_STEPS_BEFORE_KERNELS) :]
+            if step["rc"] != 0
+        ]
+        return no_verdict(
+            "external_kernel_disagreement",
+            f"Lean's own kernel accepted the solution, but {', '.join(rejecting)} rejected it",
+        )
+    return no_verdict(
+        "kernel_failed",
+        f"the first kernel to fail, {COMPARATOR_KERNEL_NAMES[target]}, exited with {rc}, and "
+        f"leanchecker with {checker_rc}; lake comparator did not report a kernel rejection",
+    )
+
+
+def _last_text_line(text: str) -> str:
+    """The last line of ``text`` that is not blank, without its trailing white space.
+
+    Lines end at "\\n" only, as lake comparator writes them: a name inside a
+    message may hold another line separator.
+    """
+
+    for line in reversed(text.split("\n")):
+        if line.strip():
+            return line.rstrip()
+    return ""
+
+
+def _comparator_steps_text(steps: list[tuple[str, str]]) -> str:
+    return ", ".join(f"{phase} {target}".rstrip() for phase, target in steps) or "none"
 
 
 def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None:

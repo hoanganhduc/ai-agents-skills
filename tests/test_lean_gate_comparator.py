@@ -1,4 +1,4 @@
-"""The gate's ``comparator`` verb, up to the judge run.
+"""The gate's ``comparator`` verb, up to the judge run, and the run's own pieces.
 
 ``comparator`` judges a solution project with ``lake comparator`` against a
 challenge that ``challenge-freeze`` wrote. Before any judge runs, the verb
@@ -7,11 +7,15 @@ it, resolves and attests the toolchain the record names, checks the pinned
 bwrap, and reads the solution's local import closure exactly once. It also
 generates the workspace's ``lakefile.toml``, ``AASSolution.lean`` and
 ``comparator.json``. The judge run is not wired yet, so an admitted run ends
-as ``command_failed``.
+as ``command_failed``. The run's own pieces are tested here before they are
+wired: the wrapper program lake comparator runs in place of bwrap, the phase
+log it writes, and the classification of a finished run.
 
-Everything here runs on every platform. The comparator runs only on Linux,
-so the payload tests patch the platform, and admission, the closure and the
-generators are also called directly. Mocks stand in for the toolchain
+Everything here runs on every platform, except the wrapper program itself,
+which forks and runs bwrap and so is run only on POSIX hosts. The comparator
+runs only on Linux, so the payload tests patch the platform, and admission,
+the closure, the generators, the wrapper's argument check and the
+classification are also called directly. Mocks stand in for the toolchain
 attestation and the bwrap probes, which would run tools, and a tool that
 runs by mistake fails the test. A case that needs POSIX modes, a symlink or
 a hard link is skipped with a stated reason on a host that cannot make it.
@@ -22,11 +26,15 @@ of the gate is loaded.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
 import io
 import json
 import os
+import shlex
+import signal
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1469,6 +1477,1219 @@ class ComparatorPayloadTests(unittest.TestCase):
                     self.assertEqual(gate.comparator_state_root(), expected)
                 self.assertFalse(os.path.lexists(self.state))
                 self.assertFalse(os.path.lexists(self.home / ".local"))
+
+
+# The judge run's own pieces, which the run does not call yet: the wrapper
+# program lake comparator runs in place of bwrap for each sandboxed step, the
+# phase log it writes, and the classification of a finished run.
+
+OKAY_LINE = "Your solution is okay!"
+STEPS_BEFORE_KERNELS = [
+    ("resolve", ""),
+    ("build", "AASChallenge"),
+    ("export", "AASChallenge"),
+    ("build", "AASSolution"),
+    ("export", "AASSolution"),
+]
+# The name lake comparator v4.35.0 gives each kernel in its messages.
+KERNEL_NAMES = {
+    "leanchecker": "Lean default",
+    "leanchecker-paranoid": "Lean paranoid",
+    "lean4lean": "lean4lean",
+    "nanoda_bin": "nanoda",
+    "con-leche": "con-leche",
+    "con-ron": "con-ron",
+}
+PHASE_LOG_KEYS = {"phase", "target", "rc", "seconds", "dropped", "refused"}
+REJECTION_KINDS = (
+    "statement_mismatch",
+    "kind_mismatch",
+    "constant_mismatch",
+    "missing_constant",
+    "forbidden_axiom",
+    "kernel_rejected",
+    "build_failed",
+)
+WRAPPER_IMPORTS = {"json", "os", "sys", "time"}
+# The bwrap options that open and close every step, as lake comparator v4.35.0
+# builds them (Lake/CLI/Check.lean, buildSandboxArgs, as logged in the parent
+# evidence n3-s0a-bwrap-calls.log).
+BWRAP_COVERS = [
+    "--ro-bind", "/", "/",
+    "--tmpfs", "/home",
+    "--tmpfs", "/root",
+    "--tmpfs", "/run/user",
+    "--tmpfs", "/tmp",
+    "--dir", "/tmp/home",
+    "--dev", "/dev",
+    "--proc", "/proc",
+    "--clearenv",
+]
+BWRAP_ISOLATION = [
+    "--setenv", "HOME", "/tmp/home",
+    "--unshare-all",
+    "--die-with-parent",
+    "--new-session",
+]
+# What lake comparator exports for a core challenge whose one theorem is comm.
+EXPORT_TARGETS = [
+    "Quot", "Quot.mk", "Quot.lift", "Quot.ind", "comm", "propext", "Quot.sound",
+    "Classical.choice", "Nat.add", "Nat.sub", "Nat.mul", "Nat.pow", "Nat.gcd", "Nat.div",
+    "Nat.mod", "Nat.beq", "Nat.ble", "Nat.land", "Nat.lor", "Nat.xor", "Nat.shiftLeft",
+    "Nat.shiftRight", "String.ofList", "Char.ofNat", "List", "eagerReduce", "Nat", "String",
+    "String.mk", "Char", "optParam", "autoParam", "semiOutParam", "outParam",
+]
+# The fake bwrap the wrapper program runs: it records its arguments in
+# calls.jsonl beside it, then follows scenario.json: remove a path, swap a
+# path for a symlink, kill itself with a signal, or exit with rc.
+FAKE_BWRAP = """\
+import json
+import os
+import sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "calls.jsonl"), "a", encoding="utf-8") as calls:
+    calls.write(json.dumps(sys.argv[1:]) + "\\n")
+with open(os.path.join(here, "scenario.json"), encoding="utf-8") as handle:
+    scenario = json.load(handle)
+if "remove" in scenario:
+    os.unlink(scenario["remove"])
+if "symlink" in scenario:
+    link, target = scenario["symlink"]
+    os.unlink(link)
+    os.symlink(target, link)
+if "signal" in scenario:
+    os.kill(os.getpid(), scenario["signal"])
+sys.exit(scenario.get("rc", 0))
+"""
+POSIX_WRAPPER = (
+    os.name == "posix" and hasattr(os, "fork"),
+    "the wrapper program forks and runs bwrap, which it does only on POSIX hosts",
+)
+POSIX_PATHS = (
+    os.name == "posix",
+    "the wrapper checks POSIX paths: lake comparator and its wrapper run only on Linux",
+)
+# A key test_parse_phase_log removes from a phase-log entry.
+_DROP = object()
+
+
+def _wrapper_namespace() -> dict[str, Any]:
+    """COMPARATOR_WRAPPER_SOURCE run as the module aas_comparator_wrapper, not as a program."""
+
+    namespace: dict[str, Any] = {"__name__": "aas_comparator_wrapper"}
+    exec(compile(gate.COMPARATOR_WRAPPER_SOURCE, "aas_comparator_wrapper", "exec"), namespace)
+    return namespace
+
+
+def _phase(phase: str, target: str, rc: int = 0, refused: str = "") -> dict[str, Any]:
+    """One parsed phase-log entry."""
+
+    return {
+        "phase": phase,
+        "target": target,
+        "rc": rc,
+        "seconds": 0.25,
+        "dropped": ["--share-net"] if phase == "resolve" else [],
+        "refused": refused,
+    }
+
+
+def _phases(*rcs: int, paranoid: bool = False) -> list[dict[str, Any]]:
+    """The first len(rcs) steps lake comparator takes, the i-th exiting with rcs[i]."""
+
+    kernels = [*challenge_tests.BUNDLED_KERNELS, "leanchecker"] if paranoid else ["leanchecker"]
+    steps = [*STEPS_BEFORE_KERNELS, *(("kernel", kernel) for kernel in kernels)]
+    if len(rcs) > len(steps):
+        raise ValueError("more exit codes than steps")
+    return [_phase(phase, target, rc) for (phase, target), rc in zip(steps, rcs)]
+
+
+class ComparatorWrapperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        # Real paths, as wrapper.json holds them: a temporary directory may lie
+        # behind a symlink, as on macOS.
+        self.base = Path(os.path.realpath(stack.enter_context(tempfile.TemporaryDirectory())))
+        self.toolchain = self.base / "toolchains" / "leanprover--lean4---v4.35.0"
+        (self.toolchain / "bin").mkdir(parents=True)
+        for name in ("lake", "lean", "leanexport", "sh", *KERNEL_NAMES):
+            (self.toolchain / "bin" / name).write_bytes(f"{name}\n".encode("utf-8"))
+        (self.toolchain / "lib" / "lean").mkdir(parents=True)
+        (self.toolchain / "lib" / "lean" / "tool").write_bytes(b"tool\n")
+        self.run = self.base / "state" / "ai-agents-skills" / "comparator" / "runs" / "run-1"
+        self.ws = self.run / "ws"
+        (self.ws / ".lake").mkdir(parents=True)
+        self.tmp = self.run / "tmp"
+        self.tmp.mkdir()
+        # lake comparator's temporary files under TMPDIR: nanoda's configuration
+        # and the solution's export.
+        self.kernel_config = self.tmp / "tmp.Kcfg0001"
+        self.export = self.tmp / "tmp.Xprt0002"
+        for path in (self.kernel_config, self.export):
+            path.write_bytes(b"{}\n")
+        self.outside = self.base / "outside"
+        self.outside.mkdir()
+        self.config = {
+            "bwrap": str(self.base / "opt" / "bubblewrap-0.12.0" / "bin" / "bwrap"),
+            "log": str(self.run / "phases.jsonl"),
+            "toolchain_dir": str(self.toolchain),
+            "run_dir": str(self.run),
+            "writable": str(self.ws / ".lake"),
+        }
+        self.wrapper = _wrapper_namespace()
+
+    def _tool(self, name: str) -> str:
+        return str(self.toolchain / "bin" / name)
+
+    def _argv(
+        self,
+        command: list[Any],
+        *,
+        readable: list[Any],
+        writable: tuple[Any, ...] = (),
+        tmpfs: tuple[str, ...] = (),
+        env: list[tuple[str, str]] | tuple[()] = (),
+        network: bool = False,
+        cwd: Path | None = None,
+    ) -> list[str]:
+        """The wrapper's arguments for one step, in the order lake comparator builds them."""
+
+        args = list(BWRAP_COVERS)
+        for path in tmpfs:
+            args += ["--tmpfs", path]
+        for path in readable:
+            args += ["--ro-bind", str(path), str(path)]
+        for path in writable:
+            args += ["--bind", str(path), str(path)]
+        for name, value in env:
+            args += ["--setenv", name, value]
+        args += BWRAP_ISOLATION
+        if network:
+            args.append("--share-net")
+        args += ["--chdir", str(cwd or self.ws)]
+        return [*args, "--", *(str(part) for part in command)]
+
+    def _upstream_shapes(self) -> list[tuple[str, list[str], tuple[str, str, list[str]]]]:
+        """Each step of a paranoid core run: (label, arguments, (phase, target, dropped))."""
+
+        lake = self.ws / ".lake"
+        path = f"{self.toolchain}/bin:/usr/bin:/bin"
+        build_env = [("PATH", path), ("LEAN_ABORT_ON_PANIC", "1")]
+        export_env = [
+            ("LEAN_ABORT_ON_PANIC", "1"),
+            ("LEAN_PATH", f"{lake}/build/lib/lean:{self.toolchain}/lib/lean"),
+            ("PATH", f"{lake}/build/bin:{path}"),
+        ]
+        guarded = ("/run", "/var")
+        shapes = [
+            (
+                "resolve",
+                self._argv(
+                    [self._tool("lake"), "env"],
+                    readable=[self.ws, self.toolchain, self.toolchain],
+                    writable=(lake,),
+                    env=build_env,
+                    network=True,
+                ),
+                ("resolve", "", ["--share-net"]),
+            )
+        ]
+        for module in ("AASChallenge", "AASSolution"):
+            shapes.append(
+                (
+                    f"build {module}",
+                    self._argv(
+                        [self._tool("lake"), "build", module],
+                        tmpfs=guarded,
+                        readable=[self.ws, self.toolchain, self.toolchain],
+                        writable=(lake,),
+                        env=build_env,
+                    ),
+                    ("build", module, []),
+                )
+            )
+            shapes.append(
+                (
+                    f"export {module}",
+                    self._argv(
+                        [self._tool("leanexport"), module, "--", *EXPORT_TARGETS],
+                        tmpfs=guarded,
+                        readable=[self.ws, lake, self.toolchain, self._tool("leanexport")],
+                        env=export_env,
+                    ),
+                    ("export", module, []),
+                )
+            )
+        for kernel, arguments in (
+            ("leanchecker", ["--silent", "--from-export", self.export]),
+            ("leanchecker-paranoid", ["--silent", "--from-export", self.export]),
+            ("lean4lean", ["--import", self.export]),
+            ("nanoda_bin", [self.kernel_config]),
+            ("con-leche", [self.export]),
+            ("con-ron", [self.export]),
+        ):
+            shapes.append(
+                (
+                    kernel,
+                    self._argv(
+                        [self._tool(kernel), *arguments],
+                        tmpfs=guarded,
+                        readable=[
+                            self.kernel_config, self.export, self._tool(kernel), self.toolchain
+                        ],
+                        env=[("LEAN_ABORT_ON_PANIC", "1")],
+                        cwd=self.tmp,
+                    ),
+                    ("kernel", kernel, []),
+                )
+            )
+        return shapes
+
+    def test_source_is_self_contained(self) -> None:
+        source = gate.COMPARATOR_WRAPPER_SOURCE
+        self.assertNotIn("#!", source)
+        # The run's wrapper runs under the host's /usr/bin/python3, which may be
+        # as old as 3.9 (os.waitstatus_to_exitcode).
+        tree = ast.parse(source, feature_version=(3, 9))
+        compile(source, "aas_comparator_wrapper", "exec")
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or ".")
+        self.assertLessEqual(imported, WRAPPER_IMPORTS)
+        # Only definitions at the top level, then main() behind the program guard.
+        *body, guard = tree.body
+        for node in body:
+            self.assertIsInstance(
+                node, (ast.Expr, ast.Import, ast.Assign, ast.ClassDef, ast.FunctionDef)
+            )
+            if isinstance(node, ast.Expr):
+                self.assertIs(node, tree.body[0], "only the docstring may be a bare expression")
+        self.assertEqual(
+            ast.unparse(guard), "if __name__ == '__main__':\n    sys.exit(main())"
+        )
+        # os.fork does not exist on Windows, hence create=True.
+        with mock.patch.object(
+            os, "fork", side_effect=AssertionError("fork"), create=True
+        ), mock.patch.object(
+            os, "execv", side_effect=AssertionError("execv")
+        ), contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(
+            io.StringIO()
+        ) as err:
+            namespace = _wrapper_namespace()
+        self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
+        self.assertEqual(namespace["__name__"], "aas_comparator_wrapper")
+        self.assertTrue(callable(namespace["main"]))
+        self.assertEqual(namespace["PHASE_LOG_KEYS"], gate.COMPARATOR_PHASE_LOG_KEYS)
+        self.assertEqual(namespace["PHASE_LOG_MAX_LINES"], gate.COMPARATOR_PHASE_LOG_MAX_LINES)
+        self.assertEqual(set(namespace["KERNELS"]), set(gate.COMPARATOR_KERNEL_NAMES))
+        self.assertEqual(
+            namespace["MODULES"], (gate.CHALLENGE_MODULE, gate.COMPARATOR_SOLUTION_MODULE)
+        )
+        # What the wrapper logs, the gate parses back.
+        record = namespace["phase_record"]
+        line = record("resolve", "", 0, 1.5, ["--share-net"], "")
+        refusal = record("refused", "", 125, 0.0, [], "r\u00e9fus\u00e9")
+        self.assertTrue(line.endswith(b"\n") and refusal.isascii())
+        self.assertEqual(
+            gate.parse_phase_log(line + refusal),
+            [
+                {
+                    "phase": "resolve",
+                    "target": "",
+                    "rc": 0,
+                    "seconds": 1.5,
+                    "dropped": ["--share-net"],
+                    "refused": "",
+                },
+                {
+                    "phase": "refused",
+                    "target": "",
+                    "rc": 125,
+                    "seconds": 0.0,
+                    "dropped": [],
+                    "refused": "r\u00e9fus\u00e9",
+                },
+            ],
+        )
+
+    def test_constants_pin_the_contract(self) -> None:
+        self.assertEqual(gate.COMPARATOR_PHASE_LOG_KEYS, PHASE_LOG_KEYS)
+        self.assertEqual(
+            (gate.COMPARATOR_PHASE_LOG_MAX_LINES, gate.COMPARATOR_PHASE_LOG_MAX_BYTES),
+            (64, 64 * 1024),
+        )
+        self.assertEqual(gate.COMPARATOR_KERNEL_NAMES, KERNEL_NAMES)
+        self.assertEqual(gate.COMPARATOR_REJECTION_KINDS, REJECTION_KINDS)
+
+    @unittest.skipUnless(*POSIX_PATHS)
+    def test_accepts_the_upstream_shapes(self) -> None:
+        validate = self.wrapper["validate_bwrap_argv"]
+        shapes = self._upstream_shapes()
+        self.assertEqual(len(shapes), 11)
+        for label, argv, expected in shapes:
+            with self.subTest(step=label):
+                separator = argv.index("--")
+                opts, cmd, phase, target, dropped = validate(list(argv), self.config)
+                self.assertEqual((phase, target, dropped), expected)
+                self.assertEqual(opts, [arg for arg in argv[:separator] if arg != "--share-net"])
+                self.assertEqual(cmd, argv[separator + 1 :])
+                self.assertNotIn("--share-net", opts)
+        # Options are read by their number of values, so a "--" that is a value
+        # does not end them.
+        build = dict((label, argv) for label, argv, _ in shapes)["build AASSolution"]
+        start = len(BWRAP_COVERS)
+        argv = [*build[:start], "--setenv", "AAS_VALUE", "--", *build[start:]]
+        opts, cmd, phase, target, dropped = validate(argv, self.config)
+        self.assertEqual((phase, target, dropped), ("build", "AASSolution", []))
+        self.assertEqual(opts[start : start + 3], ["--setenv", "AAS_VALUE", "--"])
+        self.assertEqual(cmd, [self._tool("lake"), "build", "AASSolution"])
+
+    @unittest.skipUnless(*POSIX_PATHS)
+    def test_refuses(self) -> None:
+        validate = self.wrapper["validate_bwrap_argv"]
+        refused = self.wrapper["Refused"]
+        build = dict((label, argv) for label, argv, _ in self._upstream_shapes())[
+            "build AASSolution"
+        ]
+        separator = build.index("--")
+        options, command = build[:separator], build[separator + 1 :]
+        lake_dir = str(self.ws / ".lake")
+        lake, leanexport = self._tool("lake"), self._tool("leanexport")
+
+        def extra(*more: str) -> list[str]:
+            return [*options, *more, "--", *command]
+
+        def without(option: str) -> list[str]:
+            return [*(arg for arg in options if arg != option), "--", *command]
+
+        def step(*cmd: str) -> list[str]:
+            return [*options, "--", *cmd]
+
+        not_allowed = "is not an allowed bwrap option"
+        not_lake = "is not the workspace's writable .lake"
+        not_readable = "is not /, the toolchain or the run directory"
+        not_a_tool = "is not a program in the toolchain's bin directory"
+        not_a_step = "is not a step lake comparator runs"
+        cases: list[tuple[str, list[str], str, dict[str, str] | None]] = [
+            ("--symlink", extra("--symlink", "/etc/passwd", "/tmp/x"), not_allowed, None),
+            ("--bind-try", extra("--bind-try", lake_dir, lake_dir), not_allowed, None),
+            ("--cap-add", extra("--cap-add", "ALL"), not_allowed, None),
+            ("no --", list(options), "do not end with --", None),
+            ("no -- before the command", [*options, *command], not_allowed, None),
+            ("arity underflow", ["--ro-bind", "/"], "needs 2 values", None),
+            ("arity underflow at the end", [*options, "--chdir"], "needs 1 value", None),
+            (
+                "--bind with another destination",
+                extra("--bind", lake_dir, lake_dir + "2"),
+                not_lake,
+                None,
+            ),
+            ("--bind of the workspace", extra("--bind", *[str(self.ws)] * 2), not_lake, None),
+            ("--bind of the run's tmp", extra("--bind", *[str(self.tmp)] * 2), not_lake, None),
+            ("--ro-bind /etc", extra("--ro-bind", "/etc", "/etc"), not_readable, None),
+            (
+                "--ro-bind with another destination",
+                extra("--ro-bind", str(self.toolchain), "/opt/lean"),
+                not_readable,
+                None,
+            ),
+            (
+                "--ro-bind beside the run",
+                extra("--ro-bind", str(self.outside), str(self.outside)),
+                not_readable,
+                None,
+            ),
+            (
+                "--ro-bind of a name that only starts like the toolchain",
+                extra("--ro-bind", f"{self.toolchain}-other", f"{self.toolchain}-other"),
+                not_readable,
+                None,
+            ),
+            ("no command", [*options, "--"], "no command follows --", None),
+            ("relative command", step("lake", "build", "AASSolution"), not_a_tool, None),
+            # A relative path that leads into the toolchain's bin is still refused.
+            (
+                "relative path into bin",
+                step(os.path.relpath(lake), "build", "AASSolution"),
+                not_a_tool,
+                None,
+            ),
+            ("library file", step(str(self.toolchain / "lib" / "lean" / "tool")), not_a_tool, None),
+            ("system shell", step("/bin/sh", "-c", "true"), not_a_tool, None),
+            ("lake env x", step(lake, "env", "x"), not_a_step, None),
+            (
+                "lake build of both",
+                step(lake, "build", "AASChallenge", "AASSolution"),
+                not_a_step,
+                None,
+            ),
+            ("lake build Other", step(lake, "build", "Other"), not_a_step, None),
+            ("lake alone", step(lake), not_a_step, None),
+            ("lake resolve-deps", step(lake, "resolve-deps"), not_a_step, None),
+            ("leanexport Other", step(leanexport, "Other", "--", "comm"), not_a_step, None),
+            ("leanexport without --", step(leanexport, "AASChallenge", "comm"), not_a_step, None),
+            ("leanexport alone", step(leanexport), not_a_step, None),
+            ("lean", step(self._tool("lean"), "--version"), not_a_step, None),
+            ("sh", step(self._tool("sh"), "-c", "true"), not_a_step, None),
+        ]
+        for option in ("--unshare-all", "--die-with-parent", "--clearenv", "--new-session"):
+            cases.append((f"without {option}", without(option), f"missing: {option}", None))
+        # A second toolchain whose lake is a directory and whose leanchecker is missing.
+        other = self.base / "toolchains" / "other"
+        (other / "bin" / "lake").mkdir(parents=True)
+        other_config = dict(self.config, toolchain_dir=str(other))
+        other_options = [arg.replace(str(self.toolchain), str(other)) for arg in options]
+        for label, cmd in (
+            ("a directory named lake", [str(other / "bin" / "lake"), "env"]),
+            ("a missing leanchecker", [str(other / "bin" / "leanchecker")]),
+        ):
+            cases.append((label, [*other_options, "--", *cmd], not_a_tool, other_config))
+        for label, argv, reason, config in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(refused) as caught:
+                    validate(argv, config or self.config)
+                self.assertIn(reason, str(caught.exception))
+        # Symlinks, where the host can make them: each is judged by its real path.
+        escape = self.run / "escape"
+        outside_checker = self.outside / "leanchecker"
+        outside_checker.write_bytes(b"leanchecker\n")
+        planted = self.toolchain / "bin" / "planted"
+        (other / "bin" / "lean").write_bytes(b"lean\n")
+        disguised = other / "bin" / "con-ron"
+        for label, link, target, argv, reason, config in (
+            (
+                "--ro-bind of a symlink out",
+                escape,
+                self.outside,
+                extra("--ro-bind", str(escape), str(escape)),
+                not_readable,
+                self.config,
+            ),
+            (
+                "a bin symlink out",
+                planted,
+                outside_checker,
+                step(str(planted), "--silent"),
+                not_a_tool,
+                self.config,
+            ),
+            (
+                "a kernel's name on a symlink to lean",
+                disguised,
+                other / "bin" / "lean",
+                [*other_options, "--", str(disguised), str(self.export)],
+                not_a_step,
+                other_config,
+            ),
+        ):
+            with self.subTest(case=label):
+                _symlink_or_skip(self, link, target)
+                with self.assertRaises(refused) as caught:
+                    validate(argv, config)
+                self.assertIn(reason, str(caught.exception))
+        with self.subTest(case="--bind of a .lake that is a symlink out"):
+            real_lake = self.ws / ".lake-real"
+            (self.ws / ".lake").rename(real_lake)
+            try:
+                _symlink_or_skip(self, self.ws / ".lake", self.outside)
+                with self.assertRaises(refused) as caught:
+                    validate(list(build), self.config)
+                self.assertIn(not_lake, str(caught.exception))
+            finally:
+                if os.path.lexists(self.ws / ".lake"):
+                    (self.ws / ".lake").unlink()
+                real_lake.rename(self.ws / ".lake")
+
+    # The wrapper program, run as lake comparator runs it.
+
+    def _install(self, config: dict[str, Any] | None = None) -> Path:
+        """The wrapper program and its wrapper.json, an empty phase log, and the fake bwrap."""
+
+        program = self.run / "bwrap-wrapper"
+        settings = self.run / "wrapper.json"
+        self.log = Path(self.config["log"])
+        # A case may have left a symlink in place of one of these.
+        for path in (program, settings, self.log):
+            if os.path.lexists(path):
+                path.unlink()
+        program.write_text(gate.COMPARATOR_WRAPPER_SOURCE, encoding="utf-8")
+        program.chmod(0o700)
+        settings.write_text(json.dumps(config or self.config), encoding="utf-8")
+        settings.chmod(0o600)
+        self.log.write_bytes(b"")
+        self.log.chmod(0o600)
+        self.fake = self.base / "fake"
+        self.fake.mkdir(exist_ok=True)
+        implementation = self.fake / "bwrap_impl.py"
+        implementation.write_text(FAKE_BWRAP, encoding="utf-8")
+        bwrap = Path(self.config["bwrap"])
+        bwrap.parent.mkdir(parents=True, exist_ok=True)
+        bwrap.write_text(
+            "#!/bin/sh\n"
+            f'exec {shlex.quote(sys.executable)} -I {shlex.quote(str(implementation))} "$@"\n',
+            encoding="utf-8",
+        )
+        bwrap.chmod(0o700)
+        return program
+
+    def _call(
+        self, program: Path, args: list[str], scenario: dict[str, Any] | None = None
+    ) -> tuple[subprocess.CompletedProcess[bytes], list[list[str]]]:
+        """Run the wrapper with ``args``; return the run and the fake bwrap's calls."""
+
+        (self.fake / "scenario.json").write_text(json.dumps(scenario or {}), encoding="utf-8")
+        calls = self.fake / "calls.jsonl"
+        if calls.exists():
+            calls.unlink()
+        completed = subprocess.run(
+            [sys.executable, "-I", str(program), *args],
+            cwd=self.ws,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        made = (
+            [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
+            if calls.exists()
+            else []
+        )
+        # The wrapper never writes to stdout: in the export step, stdout is the export.
+        self.assertEqual(completed.stdout, b"")
+        return completed, made
+
+    def _logged(self) -> list[dict[str, Any]]:
+        entries = gate.parse_phase_log(self.log.read_bytes())
+        self.assertIsNotNone(entries)
+        return entries
+
+    @unittest.skipUnless(*POSIX_WRAPPER)
+    def test_main_runs_each_step_and_logs_it(self) -> None:
+        program = self._install()
+        resolve = self._upstream_shapes()[0][1]
+        separator = resolve.index("--")
+        completed, calls = self._call(program, resolve)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        kept = [arg for arg in resolve[:separator] if arg != "--share-net"]
+        self.assertEqual(calls, [kept + resolve[separator:]])
+        (entry,) = self._logged()
+        self.assertGreaterEqual(entry.pop("seconds"), 0.0)
+        self.assertEqual(
+            entry,
+            {"phase": "resolve", "target": "", "rc": 0, "dropped": ["--share-net"], "refused": ""},
+        )
+        # The step's exit code is the wrapper's; a signal is logged as its
+        # negative number, and the wrapper exits with 128 plus the number.
+        kernel = self._upstream_shapes()[5][1]
+        for scenario, exit_code, rc in (
+            ({"rc": 3}, 3, 3),
+            ({"signal": int(signal.SIGKILL)}, 128 + int(signal.SIGKILL), -int(signal.SIGKILL)),
+        ):
+            with self.subTest(scenario=scenario):
+                self.log.write_bytes(b"")
+                completed, calls = self._call(program, kernel, scenario)
+                self.assertEqual(completed.returncode, exit_code, completed.stderr)
+                self.assertEqual(len(calls), 1)
+                (entry,) = self._logged()
+                self.assertEqual(
+                    (entry["phase"], entry["target"], entry["rc"], entry["refused"]),
+                    ("kernel", "leanchecker", rc, ""),
+                )
+        # A bwrap that cannot start is exit 127, logged; the child never returns.
+        program = self._install(dict(self.config, bwrap=str(self.base / "no-such-bwrap")))
+        completed, calls = self._call(program, kernel)
+        self.assertEqual((completed.returncode, calls), (127, []), completed.stderr)
+        (entry,) = self._logged()
+        self.assertEqual((entry["phase"], entry["rc"]), ("kernel", 127))
+
+    @unittest.skipUnless(*POSIX_WRAPPER)
+    def test_main_logs_a_refused_step_and_never_runs_it(self) -> None:
+        program = self._install()
+        build = self._upstream_shapes()[3][1]
+        separator = build.index("--")
+        widened = [*build[:separator], "--bind", str(self.ws), str(self.ws), *build[separator:]]
+        completed, calls = self._call(program, widened)
+        self.assertEqual((completed.returncode, calls), (125, []))
+        self.assertIn(b"refused", completed.stderr)
+        (entry,) = self._logged()
+        self.assertEqual(
+            (entry["phase"], entry["target"], entry["rc"], entry["seconds"], entry["dropped"]),
+            ("refused", "", 125, 0.0, []),
+        )
+        self.assertIn("is not the workspace's writable .lake", entry["refused"])
+        # The logged reason is capped, so one refusal cannot fill the log.
+        self.log.write_bytes(b"")
+        completed, calls = self._call(program, ["--" + "x" * 1000, *build])
+        self.assertEqual((completed.returncode, calls), (125, []))
+        (entry,) = self._logged()
+        self.assertEqual(len(entry["refused"]), 500)
+        self.assertTrue(entry["refused"].startswith("'--xxx"))
+
+    @unittest.skipUnless(*POSIX_WRAPPER)
+    def test_main_needs_its_configuration(self) -> None:
+        resolve = self._upstream_shapes()[0][1]
+        relative = dict(self.config, log="phases.jsonl")
+        wrong_type = dict(self.config, run_dir=["/"])
+        extra = dict(self.config, store=str(self.base))
+        missing = {key: value for key, value in self.config.items() if key != "writable"}
+        for label, settings in (
+            ("a missing key", json.dumps(missing)),
+            ("an extra key", json.dumps(extra)),
+            ("a relative path", json.dumps(relative)),
+            ("a path that is not a string", json.dumps(wrong_type)),
+            ("not JSON", "{"),
+            ("a list", json.dumps([self.config])),
+        ):
+            with self.subTest(case=label):
+                program = self._install()
+                (self.run / "wrapper.json").write_text(settings, encoding="utf-8")
+                completed, calls = self._call(program, resolve)
+                self.assertEqual((completed.returncode, calls), (125, []))
+                self.assertIn(b"wrapper.json", completed.stderr)
+                self.assertEqual(self.log.read_bytes(), b"")
+        with self.subTest(case="no wrapper.json"):
+            program = self._install()
+            (self.run / "wrapper.json").unlink()
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, calls), (125, []))
+        with self.subTest(case="wrapper.json is a symlink"):
+            program = self._install()
+            elsewhere = self.outside / "wrapper.json"
+            elsewhere.write_text(json.dumps(self.config), encoding="utf-8")
+            (self.run / "wrapper.json").unlink()
+            _symlink_or_skip(self, self.run / "wrapper.json", elsewhere)
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, calls), (125, []))
+        with self.subTest(case="called through a symlink"):
+            # wrapper.json is found beside the program's real path, not beside the link.
+            program = self._install()
+            aliases = self.base / "aliases"
+            aliases.mkdir()
+            alias = aliases / "bwrap-alias"
+            _symlink_or_skip(self, alias, program)
+            completed, calls = self._call(alias, resolve)
+            self.assertEqual((completed.returncode, len(calls)), (0, 1), completed.stderr)
+
+    @unittest.skipUnless(*POSIX_WRAPPER)
+    def test_main_keeps_its_log_bounded_and_never_creates_or_follows_it(self) -> None:
+        resolve = self._upstream_shapes()[0][1]
+        line = self.wrapper["phase_record"]("kernel", "leanchecker", 0, 0.5, [], "")
+        with self.subTest(case="64 lines already"):
+            program = self._install()
+            self.log.write_bytes(line * 64)
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, calls), (125, []))
+            self.assertEqual(self.log.read_bytes(), line * 64)
+        with self.subTest(case="63 lines already"):
+            program = self._install()
+            self.log.write_bytes(line * 63)
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, len(calls)), (0, 1), completed.stderr)
+            self.assertEqual(len(self._logged()), 64)
+        with self.subTest(case="no log"):
+            program = self._install()
+            self.log.unlink()
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, calls), (125, []))
+            self.assertFalse(os.path.lexists(self.log))
+        target = self.outside / "elsewhere.jsonl"
+        with self.subTest(case="the log is a symlink"):
+            program = self._install()
+            target.write_bytes(b"")
+            self.log.unlink()
+            _symlink_or_skip(self, self.log, target)
+            completed, calls = self._call(program, resolve)
+            self.assertEqual((completed.returncode, calls), (125, []))
+            self.assertEqual(target.read_bytes(), b"")
+        with self.subTest(case="the log becomes a symlink during the step"):
+            program = self._install()
+            target.write_bytes(b"")
+            completed, calls = self._call(
+                program, resolve, {"symlink": [str(self.log), str(target)]}
+            )
+            self.assertEqual((completed.returncode, len(calls)), (125, 1))
+            self.assertEqual(target.read_bytes(), b"")
+        with self.subTest(case="the log is removed during the step"):
+            program = self._install()
+            completed, calls = self._call(program, resolve, {"remove": str(self.log)})
+            self.assertEqual((completed.returncode, len(calls)), (125, 1))
+            self.assertFalse(os.path.lexists(self.log))
+
+
+class ComparatorClassificationTests(unittest.TestCase):
+    ACCEPTED_STDOUT = (
+        "Resolving dependencies\nBuilding AASChallenge\nExporting from AASChallenge\n"
+        "Building AASSolution\nExporting from AASSolution\n"
+        "Running Lean default kernel on solution\nLean default kernel accepts the solution\n"
+        f"{OKAY_LINE}\n"
+    )
+
+    def _check(
+        self,
+        result: tuple[str, str, str, dict[str, str] | None],
+        status: str,
+        kind: str = "",
+        detail: str = "",
+        finding: str | None = None,
+    ) -> None:
+        self.assertEqual(result[:3], (status, kind, detail), result)
+        if finding is None:
+            self.assertIsNone(result[3])
+            return
+        self.assertEqual(set(result[3]), {"kind", "detail"})
+        self.assertEqual(result[3]["kind"], finding, result)
+        self.assertTrue(result[3]["detail"])
+        self.assertLessEqual(len(result[3]["detail"]), 500)
+
+    def test_table(self) -> None:
+        classify = gate.classify_comparator_run
+
+        def run(
+            returncode: int,
+            stderr: str = "",
+            phases: list[dict[str, Any]] | None = None,
+            *,
+            stdout: str = "",
+            paranoid: bool = False,
+        ) -> tuple[Any, ...]:
+            return (returncode, stdout, stderr, phases, paranoid)
+
+        def rejected(kind: str, detail: str) -> tuple[str, str, str, None]:
+            return ("rejected", kind, detail, None)
+
+        def failed(finding: str, detail: str = "") -> tuple[str, str, str, str]:
+            return ("command_failed", "", detail, finding)
+
+        before_kernels = _phases(0, 0, 0, 0, 0)
+        # Every message lake comparator's judgment gives, from Lake/Check/Compare.lean
+        # and Lake/Check/Axioms.lean, after the steps that come before it.
+        for message, kind, paranoid in (
+            (
+                "Challenge and solution theorem statement do not match: 'comm'",
+                "statement_mismatch",
+                False,
+            ),
+            ("Challenge and solution constant kind don't match: 'comm'", "kind_mismatch", False),
+            ("Solution constant is not a theorem: 'comm'", "kind_mismatch", False),
+            ("Solution constant is not a definition: 'n'", "kind_mismatch", False),
+            (
+                "Const does not match between challenge and target 'Nat.gcd'",
+                "constant_mismatch",
+                False,
+            ),
+            ("Const not found in solution 'Nat.gcd'", "missing_constant", False),
+            ("Const not found in solution: 'comm'", "missing_constant", False),
+            ("Constant not found in solution 'helper'", "missing_constant", False),
+            ("Illegal axiom detected: 'sorryAx'", "forbidden_axiom", False),
+            ("Illegal axiom detected: 'helper'", "forbidden_axiom", True),
+        ):
+            with self.subTest(message=message, paranoid=paranoid):
+                arguments = run(
+                    1, f"error: {message}\n", before_kernels, stdout="Building\n", paranoid=paranoid
+                )
+                result = classify(*arguments)
+                self._check(result, *rejected(kind, message))
+                self.assertIn(result[1], gate.COMPARATOR_REJECTION_KINDS)
+        # Messages about the challenge, or about the run, are no verdict.
+        for message, phases in (
+            ("Const not found in challenge 'Nat.gcd'", before_kernels),
+            ("Const not found in challenge: 'comm'", before_kernels),
+            ("Challenge constant is not a definition: 'n'", before_kernels),
+            ("`lake env` did not report the project's search path", _phases(0)),
+        ):
+            with self.subTest(message=message):
+                result = classify(*run(1, f"error: {message}\n", phases))
+                self._check(result, *failed("unclassified_failure", message))
+                self.assertIn(message, result[3]["detail"])
+
+        accepted = _phases(0, 0, 0, 0, 0, 0)
+        paranoid_accepted = _phases(*[0] * 11, paranoid=True)
+        okay = self.ACCEPTED_STDOUT
+        sorry = "Illegal axiom detected: 'sorryAx'"
+        long_message = "Illegal axiom detected: '" + "x" * 600 + "'"
+        bwrap = "bwrap: Can't find source path /nowhere: No such file or directory\n"
+        no_git = "`lake comparator` needs `git` on PATH to build inside the sandbox"
+        could_not_start = "Error while interacting with Lean default kernel: no such file"
+        # str.splitlines() splits at U+2028, and \d matches the Arabic-Indic digit one.
+        separated = f"Illegal axiom detected: 'a{chr(0x2028)}b'"
+        arabic_one = chr(0x661)
+        refused_step = _phase("refused", "", 125, "--bind")
+        child_1 = "error: Child exited with 1\n"
+        child_134 = "error: Child exited with 134\n"
+        inconsistent = failed("inconsistent_run")
+        cases: list[tuple[str, tuple[Any, ...], tuple[str, str, str, str | None]]] = [
+            ("no phase log", run(0, stdout=okay), failed("phase_log_unreadable")),
+            (
+                "no phase log after a judgment",
+                run(1, f"error: {sorry}\n"),
+                failed("phase_log_unreadable", sorry),
+            ),
+            (
+                "a refused step",
+                run(1, "error: Child exited with 125\n", [*_phases(0, 0, 0), refused_step]),
+                failed("wrapper_refused", "Child exited with 125"),
+            ),
+            (
+                "a refused step in a run that exited 0",
+                run(0, "", [*before_kernels, refused_step, *accepted[5:]], stdout=okay),
+                failed("wrapper_refused"),
+            ),
+            ("exit 3", run(3, "error: x\n", accepted), failed("comparator_exit")),
+            ("signal 9", run(-9, "", _phases(0, 0, 0)), failed("comparator_exit")),
+            (
+                "exit 137",
+                run(137, f"error: {sorry}\n", _phases(0, 0, 0, 0)),
+                failed("comparator_exit"),
+            ),
+            (
+                "exit 2",
+                run(2, f"error: {no_git}\n", []),
+                failed("comparator_could_not_start", no_git),
+            ),
+            ("accepted", run(0, "", accepted, stdout=okay), ("accepted", "", "", None)),
+            (
+                "accepted, paranoid",
+                run(0, "", paranoid_accepted, stdout=okay, paranoid=True),
+                ("accepted", "", "", None),
+            ),
+            # With exit 0 no trusted message exists, so a build's "error:" line is no detail.
+            (
+                "accepted with an error line",
+                run(0, f"error: {sorry}\n", accepted, stdout=okay),
+                ("accepted", "", "", None),
+            ),
+            (
+                "exit 0 without the okay line",
+                run(0, "", accepted, stdout=okay.replace(OKAY_LINE, "Done")),
+                inconsistent,
+            ),
+            (
+                "exit 0 with the okay line not last",
+                run(0, "", accepted, stdout=okay + "Done\n"),
+                inconsistent,
+            ),
+            (
+                "exit 0 without the leanchecker step",
+                run(0, "", before_kernels, stdout=okay),
+                inconsistent,
+            ),
+            (
+                "exit 0 with an extra step",
+                run(0, "", [*accepted, *accepted[5:]], stdout=okay),
+                inconsistent,
+            ),
+            (
+                "exit 0 without the bundled kernels",
+                run(0, "", accepted, stdout=okay, paranoid=True),
+                inconsistent,
+            ),
+            (
+                "exit 0 with unasked bundled kernels",
+                run(0, "", paranoid_accepted, stdout=okay),
+                inconsistent,
+            ),
+            (
+                "exit 0 after a failed step",
+                run(0, "", _phases(0, 0, 0, 0, 0, 1), stdout=okay),
+                inconsistent,
+            ),
+            (
+                "a forged okay line with exit 1",
+                run(1, f"error: {sorry}\n", before_kernels, stdout=okay),
+                rejected("forbidden_axiom", sorry),
+            ),
+            (
+                "a partial line glued to the last one",
+                run(1, f"XXerror: {sorry}\n", before_kernels),
+                failed("unclassified_failure"),
+            ),
+            ("no message", run(1, "", before_kernels), failed("unclassified_failure")),
+            (
+                "blank lines after the message",
+                run(1, f"error: {sorry}\n\n  \n", before_kernels),
+                rejected("forbidden_axiom", sorry),
+            ),
+            (
+                "trailing white space",
+                run(1, f"error: {sorry} \r\n", before_kernels),
+                rejected("forbidden_axiom", sorry),
+            ),
+            (
+                "a line separator inside a name",
+                run(1, f"error: {separated}\n", before_kernels),
+                rejected("forbidden_axiom", separated),
+            ),
+            (
+                "a judgment after the kernels ran",
+                run(1, f"error: {sorry}\n", accepted),
+                failed("inconsistent_run", sorry),
+            ),
+            (
+                "a judgment before the solution's export",
+                run(1, f"error: {sorry}\n", _phases(0, 0, 0, 0)),
+                failed("inconsistent_run", sorry),
+            ),
+            (
+                "steps out of order",
+                run(1, child_1, [_phase("resolve", ""), _phase("build", "AASSolution", 1)]),
+                failed("inconsistent_run", "Child exited with 1"),
+            ),
+            (
+                "build failed",
+                run(1, child_1, _phases(0, 0, 0, 1)),
+                rejected("build_failed", "Child exited with 1"),
+            ),
+            (
+                "build killed",
+                run(1, "error: Child exited with 137\n", _phases(0, 0, 0, 137)),
+                failed("solution_build_aborted", "Child exited with 137"),
+            ),
+            (
+                "build failed, not last",
+                run(1, child_1, _phases(0, 0, 0, 1, 0)),
+                failed("solution_build_aborted", "Child exited with 1"),
+            ),
+            (
+                "build failed with another message",
+                run(1, "error: Child exited with 2\n", _phases(0, 0, 0, 1)),
+                failed("solution_build_aborted", "Child exited with 2"),
+            ),
+            (
+                "a build exit code that is not the message's",
+                run(1, child_1, _phases(0, 0, 0, 2)),
+                failed("solution_build_aborted", "Child exited with 1"),
+            ),
+            (
+                "build failed with a glued message",
+                run(1, "XX" + child_1, _phases(0, 0, 0, 1)),
+                failed("solution_build_aborted"),
+            ),
+            (
+                "build failed with a bwrap error",
+                run(1, bwrap + child_1, _phases(0, 0, 0, 1)),
+                failed("sandbox_failed", "Child exited with 1"),
+            ),
+            (
+                "build failed with bwrap: inside a line",
+                run(1, " bwrap: x\n" + child_1, _phases(0, 0, 0, 1)),
+                rejected("build_failed", "Child exited with 1"),
+            ),
+            (
+                "resolve panicked",
+                run(1, child_134, _phases(134)),
+                failed("resolve_failed", "Child exited with 134"),
+            ),
+            (
+                "challenge build panicked",
+                run(1, child_134, _phases(0, 134)),
+                failed("challenge_build_failed", "Child exited with 134"),
+            ),
+            (
+                "challenge export panicked",
+                run(1, child_134, _phases(0, 0, 134)),
+                failed("challenge_export_failed", "Child exited with 134"),
+            ),
+            (
+                "challenge build failed with a bwrap error",
+                run(1, bwrap + child_1, _phases(0, 1)),
+                failed("challenge_build_failed", "Child exited with 1"),
+            ),
+            (
+                "solution export failed",
+                run(1, child_1, _phases(0, 0, 0, 0, 1)),
+                failed("solution_export_failed", "Child exited with 1"),
+            ),
+            (
+                "kernel rejected",
+                run(1, "error: Lean default exited with 1\n", _phases(0, 0, 0, 0, 0, 1)),
+                rejected("kernel_rejected", "Lean default exited with 1"),
+            ),
+            (
+                "kernel rejected, paranoid",
+                run(
+                    1,
+                    "error: lean4lean exited with 1\n",
+                    _phases(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, paranoid=True),
+                    paranoid=True,
+                ),
+                rejected("kernel_rejected", "lean4lean exited with 1"),
+            ),
+            (
+                "kernel rejected after a bundled kernel panicked",
+                run(
+                    1,
+                    "error: Lean paranoid exited with 134\n",
+                    _phases(0, 0, 0, 0, 0, 134, 0, 0, 0, 0, 1, paranoid=True),
+                    paranoid=True,
+                ),
+                rejected("kernel_rejected", "Lean paranoid exited with 134"),
+            ),
+            (
+                "a bundled kernel rejects what Lean's kernel accepts",
+                run(
+                    1,
+                    "error: nanoda exited with 1\n",
+                    _phases(0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, paranoid=True),
+                    paranoid=True,
+                ),
+                failed("external_kernel_disagreement", "nanoda exited with 1"),
+            ),
+            (
+                "leanchecker exits 2",
+                run(1, "error: Lean default exited with 2\n", _phases(0, 0, 0, 0, 0, 2)),
+                failed("kernel_failed", "Lean default exited with 2"),
+            ),
+            (
+                "a kernel name that is not the failing step's",
+                run(1, "error: Lean paranoid exited with 1\n", _phases(0, 0, 0, 0, 0, 1)),
+                failed("kernel_failed", "Lean paranoid exited with 1"),
+            ),
+            (
+                "an exit code that is not the failing step's",
+                run(1, "error: Lean default exited with 2\n", _phases(0, 0, 0, 0, 0, 1)),
+                failed("kernel_failed", "Lean default exited with 2"),
+            ),
+            (
+                "an exit code in other digits",
+                run(
+                    1, f"error: Lean default exited with {arabic_one}\n", _phases(0, 0, 0, 0, 0, 1)
+                ),
+                failed("kernel_failed", f"Lean default exited with {arabic_one}"),
+            ),
+            (
+                "a kernel that could not start",
+                run(1, f"error: {could_not_start}\n", _phases(0, 0, 0, 0, 0, 1)),
+                failed("kernel_failed", could_not_start),
+            ),
+            (
+                "kernels missing after a failure",
+                run(
+                    1,
+                    "error: Lean paranoid exited with 1\n",
+                    _phases(0, 0, 0, 0, 0, 1, paranoid=True),
+                    paranoid=True,
+                ),
+                failed("inconsistent_run", "Lean paranoid exited with 1"),
+            ),
+            (
+                "kernel rejected with a bwrap error",
+                run(1, bwrap + "error: Lean default exited with 1\n", _phases(0, 0, 0, 0, 0, 1)),
+                failed("sandbox_failed", "Lean default exited with 1"),
+            ),
+            # The bwrap rule only takes back the verdict a sandboxed step gave.
+            (
+                "a judgment with a bwrap line",
+                run(1, bwrap + f"error: {sorry}\n", before_kernels),
+                rejected("forbidden_axiom", sorry),
+            ),
+            (
+                "a long message",
+                run(1, f"error: {long_message}\n", before_kernels),
+                rejected("forbidden_axiom", long_message[:500]),
+            ),
+            # _check also holds every finding's detail to 500 characters.
+            (
+                "a long unknown message",
+                run(1, "error: " + "y" * 700 + "\n", before_kernels),
+                failed("unclassified_failure", "y" * 500),
+            ),
+        ]
+        for label, arguments, expected in cases:
+            with self.subTest(case=label):
+                self._check(classify(*arguments), *expected)
+        # The findings say what the steps did.
+        refused = classify(*run(1, "", [_phase("refused", "", 125, "--cap-add is not allowed")]))
+        self.assertIn("--cap-add is not allowed", refused[3]["detail"])
+        disagreement = classify(
+            *run(
+                1,
+                "error: lean4lean exited with 1\n",
+                _phases(0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, paranoid=True),
+                paranoid=True,
+            )
+        )
+        self.assertIn("lean4lean, con-ron", disagreement[3]["detail"])
+        self.assertIn("signal 9", classify(*run(-9, "", []))[3]["detail"])
+        self.assertIn("137", classify(*run(137, "", []))[3]["detail"])
+
+    def test_parse_phase_log(self) -> None:
+        record = _wrapper_namespace()["phase_record"]
+        good = record("build", "AASSolution", 1, 2.5, [], "")
+        entry = {
+            "phase": "build",
+            "target": "AASSolution",
+            "rc": 1,
+            "seconds": 2.5,
+            "dropped": [],
+            "refused": "",
+        }
+        self.assertEqual(gate.parse_phase_log(b""), [])
+        self.assertEqual(gate.parse_phase_log(good), [entry])
+        # The line cap and the byte cap, at and past their limits.
+        line = record("kernel", "leanchecker", 0, 0.5, [], "")
+        self.assertEqual(len(gate.parse_phase_log(line * 64)), 64)
+        self.assertIsNone(gate.parse_phase_log(line * 65))
+        plain = len(record("refused", "", 125, 0.0, [], ""))
+        lines = 8
+        padding = 64 * 1024 - lines * plain
+        share = padding // lines
+        sized = [record("refused", "", 125, 0.0, [], "r" * share) for _ in range(lines - 1)]
+        sized.append(record("refused", "", 125, 0.0, [], "r" * (padding - (lines - 1) * share)))
+        full = b"".join(sized)
+        self.assertEqual(len(full), 64 * 1024)
+        self.assertEqual(len(gate.parse_phase_log(full)), lines)
+        one_more = full.replace(b'"refused":"r', b'"refused":"rr', 1)
+        self.assertEqual(len(one_more), 64 * 1024 + 1)
+        self.assertIsNone(gate.parse_phase_log(one_more))
+
+        def line_with(**changes: Any) -> bytes:
+            value = dict(entry)
+            for key, changed in changes.items():
+                if changed is _DROP:
+                    del value[key]
+                else:
+                    value[key] = changed
+            return (json.dumps(value) + "\n").encode("utf-8")
+
+        bad = {
+            "invalid UTF-8": good.replace(b'"refused":""', b'"refused":"\xff"'),
+            "not JSON": b"not json\n",
+            "deep nesting": b"[" * 60000 + b"\n",
+            "an array": b"[]\n",
+            "a string": b'"build"\n',
+            "null": b"null\n",
+            "an extra key": line_with(extra=1),
+            "a missing key": line_with(refused=_DROP),
+            "an unknown phase": line_with(phase="building"),
+            "a phase that is not a string": line_with(phase=1),
+            "a phase that is a list": line_with(phase=["build"]),
+            "an unknown target": line_with(target="Other"),
+            "a target that is not a string": line_with(target=None),
+            "a target that is a list": line_with(target=["AASSolution"]),
+            "rc as a string": line_with(rc="1"),
+            "rc as a float": line_with(rc=1.0),
+            "rc as a bool": line_with(rc=True),
+            "seconds as an integer": line_with(seconds=2),
+            "seconds as a string": line_with(seconds="2.5"),
+            "negative seconds": line_with(seconds=-0.5),
+            "NaN seconds": good.replace(b"2.5", b"NaN"),
+            "infinite seconds": good.replace(b"2.5", b"Infinity"),
+            "dropped as a string": line_with(dropped="--share-net"),
+            "dropped holding a number": line_with(dropped=[1]),
+            "refused as a number": line_with(refused=1),
+            "an unterminated last line": good[:-1],
+            "a blank line": good + b"\n" + good,
+            "a good line, then a bad one": good + line_with(rc=None),
+        }
+        for label, data in bad.items():
+            with self.subTest(case=label):
+                self.assertLessEqual(len(data), 64 * 1024)
+                self.assertIsNone(gate.parse_phase_log(data))
 
 
 if __name__ == "__main__":
