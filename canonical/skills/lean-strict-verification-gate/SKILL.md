@@ -733,9 +733,13 @@ gives the file's path and sha256. A receipt that cannot be written gives
 `receipt_write_failed` (`command_failed`), so no acceptance goes unrecorded. A
 run that stops before the judge starts writes no receipt.
 
-The run directory is removed on every path, without following a symlink.
-`--keep-workspace` keeps it and reports its path as `run.workspace_kept`. A
-removal that fails adds `cleanup_failed` and leaves the verdict as it was.
+The run directory is removed on every path, without following a symlink,
+before the receipt is written. The removal works one directory at a time
+through directory descriptors, so a tree too deep for recursion or with paths
+longer than `PATH_MAX` still goes. `--keep-workspace` keeps the directory and
+reports its path as `run.workspace_kept`. A removal that fails gives
+`cleanup_failed` (`command_failed`, no verdict), in the payload and the
+receipt alike.
 
 ### Limitations
 

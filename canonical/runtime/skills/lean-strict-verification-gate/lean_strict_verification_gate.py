@@ -4132,6 +4132,7 @@ def comparator_payload(
     def fail(status: str, kind: str, detail: str) -> dict[str, Any]:
         payload["ok"] = False
         payload["comparator_status"] = status
+        payload["comparator_rejection_kind"] = ""
         payload["findings"].append({"kind": kind, "detail": detail})
         return payload
 
@@ -5299,9 +5300,9 @@ def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None
     executable file (wrapper_interpreter_unavailable); and the host lock must
     come free within the timeout, and within COMPARATOR_LOCK_MAX_WAIT seconds
     (host_busy). The run then gets a private directory under runs/, which
-    _comparator_judge fills, runs and judges. The directory is removed on
-    every path unless keep_workspace keeps it, and a removal that fails adds
-    cleanup_failed without changing the verdict. The lock is held to the end.
+    _comparator_judge fills, runs, judges and removes, unless keep_workspace
+    keeps it. An interrupt that ends the judge before its own removal is
+    cleaned up here. The lock is held to the end.
     """
 
     state = _comparator_state_directories(context.state_root)
@@ -5334,12 +5335,8 @@ def _comparator_run(payload: dict[str, Any], context: ComparatorContext) -> None
         try:
             _comparator_judge(payload, context, run_id, run_dir, state / "receipts")
         finally:
-            if context.keep_workspace:
-                payload["run"]["workspace_kept"] = str(run_dir)
-            else:
-                problem = _comparator_remove_run(run_dir)
-                if problem:
-                    payload["findings"].append({"kind": "cleanup_failed", "detail": problem[:500]})
+            if not context.keep_workspace and os.path.lexists(run_dir):
+                _comparator_remove_run(run_dir)
     finally:
         os.close(lock)
 
@@ -5368,8 +5365,11 @@ def _comparator_judge(
     """Fill the run directory, run lake comparator in it, judge the run and check what it read.
 
     A refusal or an unexpected error ends the run without a verdict, with its
-    finding. Once the judge has been started, the run's receipt is written
-    whatever the result (D10), after the checks that follow the run.
+    finding. The run directory is then removed, unless keep_workspace keeps
+    it; a removal that fails makes the result command_failed with
+    cleanup_failed. Once the judge has been started, the run's receipt is
+    written whatever the result (D10), after the checks that follow the run
+    and the removal, so it records the same result as the payload.
     """
 
     started = False
@@ -5387,6 +5387,12 @@ def _comparator_judge(
         _comparator_fail(
             payload, "command_failed", "comparator_failed", f"{type(exc).__name__}: {exc}"
         )
+    if context.keep_workspace:
+        payload["run"]["workspace_kept"] = str(run_dir)
+    else:
+        problem = _comparator_remove_run(run_dir)
+        if problem:
+            _comparator_fail(payload, "command_failed", "cleanup_failed", problem)
     if started:
         _comparator_receipt(payload, context, run_id, receipts)
 
@@ -6030,32 +6036,98 @@ def _comparator_tree_fingerprint(root: Path) -> str:
 def _comparator_remove_run(run_dir: Path) -> str:
     """Remove a run directory without following a symlink; "" or why it could not be.
 
-    An entry that cannot be removed gets one retry: its parent, and the entry
-    itself when it is a directory, are made readable, writable and
-    searchable by their owner first, since a solution may lock away what it
-    wrote under .lake.
+    _comparator_remove_tree does the work. Whatever it raises is reported
+    here, never raised, so a solution that builds a tree too deep or too
+    long for the usual removal cannot turn the run into a crash.
     """
 
-    def retry(function: Any, path: str, _error: Any) -> None:
-        parent = os.path.dirname(path)
-        os.chmod(parent, stat.S_IMODE(os.lstat(parent).st_mode) | stat.S_IRWXU)
-        info = os.lstat(path)
-        if stat.S_ISDIR(info.st_mode):
-            os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
-            shutil.rmtree(path)
-        else:
-            function(path)
-
     try:
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(run_dir, onexc=retry)
-        else:
-            shutil.rmtree(run_dir, onerror=retry)
-    except OSError as exc:
-        return f"{run_dir} was not removed: {type(exc).__name__}: {exc}"
+        _comparator_remove_tree(str(run_dir))
+    except Exception as exc:  # reported as cleanup_failed by the caller
+        return f"{run_dir} was not removed: {type(exc).__name__}: {exc}"[:500]
     if os.path.lexists(run_dir):
         return f"{run_dir} is still there after its removal"
     return ""
+
+
+def _comparator_remove_tree(path: str) -> None:
+    """Remove ``path`` and everything under it, without recursion and never through a symlink.
+
+    Each pass walks down from ``path`` through directory descriptors, one
+    level at a time, unlinking what is not a directory, until it reaches a
+    directory with no subdirectory, which it removes. Then it starts again
+    from the top. No more than two descriptors of the walk are open at once,
+    and every name is resolved against its own directory's descriptor, so
+    neither the recursion limit nor PATH_MAX bounds the tree. A symlink is
+    unlinked, never followed.
+    """
+
+    top = os.open(os.path.dirname(path) or ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    name = os.path.basename(path)
+    try:
+        while True:
+            try:
+                info = os.lstat(name, dir_fd=top)
+            except FileNotFoundError:
+                return
+            if not stat.S_ISDIR(info.st_mode):
+                os.unlink(name, dir_fd=top)
+                return
+            _comparator_remove_one_directory(top, name)
+    finally:
+        os.close(top)
+
+
+def _comparator_remove_one_directory(top: int, name: str) -> None:
+    """One pass of _comparator_remove_tree: remove the first directory under ``name`` with no subdirectory."""
+
+    parent, current = top, name
+    held: list[int] = []
+    try:
+        while True:
+            descriptor = _comparator_open_directory(current, parent)
+            held.append(descriptor)
+            with os.scandir(descriptor) as listing:
+                entries = list(listing)
+            subdirectory = None
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    subdirectory = entry.name
+                    break
+                os.unlink(entry.name, dir_fd=descriptor)
+            if subdirectory is None:
+                os.rmdir(current, dir_fd=parent)
+                return
+            if len(held) > 1:
+                os.close(held.pop(0))
+            parent, current = descriptor, subdirectory
+    finally:
+        for descriptor in held:
+            os.close(descriptor)
+
+
+def _comparator_open_directory(name: str, parent: int) -> int:
+    """Open the directory ``name`` in ``parent`` without following a symlink.
+
+    A solution may lock away what it wrote under .lake: a directory its owner
+    cannot list is given the owner's read, write and search bits before it is
+    opened, and one its owner cannot write in is given them once opened.
+    """
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent)
+    except PermissionError:
+        os.chmod(name, stat.S_IRWXU, dir_fd=parent)
+        descriptor = os.open(name, flags, dir_fd=parent)
+    try:
+        mode = stat.S_IMODE(os.fstat(descriptor).st_mode)
+        if mode & stat.S_IRWXU != stat.S_IRWXU:
+            os.fchmod(descriptor, mode | stat.S_IRWXU)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
 def emit(payload: dict[str, Any]) -> None:

@@ -407,7 +407,7 @@ class ComparatorCliTests(unittest.TestCase):
             "The verb exits 0 only for `accepted`, 1 for every other result, and 2 for a usage error.",
             "`host_comparator_receipt.v1`",
             "`comparator.lock`",
-            "`--keep-workspace` keeps it and reports its path as `run.workspace_kept`",
+            "`--keep-workspace` keeps the directory and reports its path as `run.workspace_kept`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
@@ -1146,11 +1146,12 @@ class ComparatorPayloadTests(unittest.TestCase):
         bwrap: dict[str, Any] | None = None,
         preflight: dict[str, Any] | None = None,
         linux: bool = True,
+        run: Any = None,
         **overrides: Any,
     ) -> dict[str, Any]:
         """Run comparator_payload with the tool probes mocked; ``self.calls`` holds the mocks.
 
-        _comparator_run is a stand-in that refuses with STAND_IN_RUN.
+        _comparator_run is a stand-in that refuses with STAND_IN_RUN, or ``run``.
         """
 
         arguments: dict[str, Any] = {
@@ -1181,9 +1182,8 @@ class ComparatorPayloadTests(unittest.TestCase):
             (
                 "_comparator_run",
                 {
-                    "side_effect": gate.ComparatorRefusal(
-                        "command_failed", "comparator_failed", STAND_IN_RUN
-                    )
+                    "side_effect": run
+                    or gate.ComparatorRefusal("command_failed", "comparator_failed", STAND_IN_RUN)
                 },
             ),
             ("run_bounded_command", {"side_effect": AssertionError("a tool ran")}),
@@ -1198,6 +1198,24 @@ class ComparatorPayloadTests(unittest.TestCase):
                 mock.patch.object(gate.subprocess, "Popen", side_effect=AssertionError("a tool ran"))
             )
             return gate.comparator_payload(input_path or self.input, **arguments)
+
+    def test_unexpected_error_after_a_verdict_clears_its_kind(self) -> None:
+        """An unexpected error once the run gave a rejection kind is no verdict, without that kind."""
+
+        def run(payload: dict[str, Any], context: Any) -> None:
+            payload.update(
+                ok=False, comparator_status="rejected", comparator_rejection_kind="build_failed"
+            )
+            raise RuntimeError("after the verdict")
+
+        payload = self._payload(run=run)
+        self.assertEqual(
+            (payload["comparator_status"], payload["comparator_rejection_kind"], payload["ok"]),
+            ("command_failed", "", False),
+            payload,
+        )
+        self.assertEqual([item["kind"] for item in payload["findings"]], ["comparator_failed"])
+        self.assertIn("after the verdict", payload["findings"][0]["detail"])
 
     def _assert_closed(self, payload: dict[str, Any]) -> None:
         self.assertEqual(set(payload), PAYLOAD_KEYS, payload)
@@ -4189,24 +4207,26 @@ class ComparatorRunTests(unittest.TestCase):
         )
         self.assertEqual(self._runs(), [])
 
-        # A cleanup that fails is reported and leaves the verdict alone.
-        self._plan(_accepted_plan())
-        with mock.patch.object(gate.shutil, "rmtree", side_effect=OSError("cannot remove")):
-            payload = self._judge()
-        self.assertEqual((payload["comparator_status"], payload["ok"]), ("accepted", True), payload)
-        self.assertEqual([item["kind"] for item in payload["findings"]], ["cleanup_failed"])
-        self.assertIn("cannot remove", payload["findings"][0]["detail"])
-        # The receipt was written before the cleanup, so it records the verdict alone.
-        self.assertEqual(self._receipt(payload)["result"]["findings"], [])
-        self.assertEqual(self._runs(), [payload["run"]["run_id"]])
-        gate.shutil.rmtree(self._run_path(payload))
-        # So is a removal that reports nothing but leaves the directory.
-        with mock.patch.object(gate.shutil, "rmtree", return_value=None):
-            payload = self._judge()
-        self.assertEqual((payload["comparator_status"], payload["ok"]), ("accepted", True), payload)
-        self.assertEqual([item["kind"] for item in payload["findings"]], ["cleanup_failed"])
-        self.assertIn("still there", payload["findings"][0]["detail"])
-        gate.shutil.rmtree(self._run_path(payload))
+        # A cleanup that fails takes the verdict back, an acceptance as well as a
+        # rejection: no verdict and no rejection kind, in the payload and in the
+        # receipt alike. The cleanup comes before the receipt.
+        steps, rcs, message = REJECTION_PLANS["statement_mismatch"]
+        for plan in (_accepted_plan(), _failed_plan(steps, message, rcs)):
+            for removal, options, detail in (
+                ("raises", {"side_effect": OSError("cannot remove")}, "cannot remove"),
+                ("leaves the directory", {"return_value": None}, "still there"),
+            ):
+                with self.subTest(rc=plan["rc"], removal=removal):
+                    self._plan(plan)
+                    with mock.patch.object(gate, "_comparator_remove_tree", **options):
+                        payload = self._judge()
+                    self._assert_no_verdict(payload, "cleanup_failed", detail)
+                    receipt = self._receipt(payload)
+                    self.assertEqual(
+                        receipt["result"], {key: payload[key] for key in RESULT_KEYS}
+                    )
+                    self.assertEqual(self._runs(), [payload["run"]["run_id"]])
+                    self.assertEqual(gate._comparator_remove_run(self._run_path(payload)), "")
 
     def test_pre_run_refusals(self) -> None:
         """REGRESSION CHECK: these refusals come before the run and held before it was wired.
@@ -4261,6 +4281,53 @@ class ComparatorRunTests(unittest.TestCase):
                 paranoid=True,
             )
         refused(payload, "tool_unavailable", "paranoid_kernel_missing")
+
+    def test_removal_of_deep_long_and_locked_trees(self) -> None:
+        """A run directory goes however deep it is, however long its paths, whatever it locks.
+
+        The removal works through directory descriptors, one level at a time,
+        so neither the recursion limit nor PATH_MAX stops it, and it never
+        follows a symlink out of the run.
+        """
+
+        def nest(top: Path, name: str, depth: int) -> int:
+            """Make ``depth`` directories ``name`` inside each other under ``top``; return the last."""
+
+            current = os.open(top, os.O_RDONLY | os.O_DIRECTORY)
+            for _ in range(depth):
+                os.mkdir(name, dir_fd=current)
+                deeper = os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=current)
+                os.close(current)
+                current = deeper
+            return current
+
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "kept").write_text("kept\n", encoding="utf-8")
+        run = self.base / "run-deep"
+        run.mkdir()
+        bottom = nest(run, "a", 1200)
+        os.close(os.open("leaf", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=bottom))
+        os.close(bottom)
+        bottom = nest(run, "b" * 250, 20)
+        for name, mode in (("locked", 0), ("read-only", 0o500)):
+            os.mkdir(name, dir_fd=bottom)
+            inner = os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=bottom)
+            os.close(os.open("inside", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=inner))
+            os.close(inner)
+            os.chmod(name, mode, dir_fd=bottom)
+        os.close(bottom)
+        os.symlink(outside, run / "outside-link")
+        (run / "file").write_text("file\n", encoding="utf-8")
+        self.assertEqual(gate._comparator_remove_run(run), "")
+        self.assertFalse(os.path.lexists(run))
+        self.assertEqual((outside / "kept").read_text(encoding="utf-8"), "kept\n")
+        # A run directory that is itself a symlink goes, not what it points to.
+        link = self.base / "run-link"
+        link.symlink_to(outside)
+        self.assertEqual(gate._comparator_remove_run(link), "")
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue((outside / "kept").exists())
 
     def test_interrupt_stops_the_judge(self) -> None:
         """Ctrl-C during the judge kills it and its scope, removes the run and writes no receipt."""
