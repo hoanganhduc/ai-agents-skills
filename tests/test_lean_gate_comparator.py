@@ -412,6 +412,99 @@ class ComparatorCliTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
 
+    def test_section_documents_the_judgment(self) -> None:
+        """SKILL.md's Comparator section names what a run can end with, and why.
+
+        It gives each check before the run with its finding, each rejection
+        kind with the message of lake comparator v4.35.0 it stands for, each
+        finding of a run without a verdict, the wrapper, the payload's fixed
+        limitations word for word, the compiler-trust residual that a hidden
+        axiom leaves, and that doctor's has_comparator reads listings only.
+        The phrases of the host checks, the limits, the receipt and the
+        cleanup were documented with the run itself, so those subtests are
+        regression checks.
+        """
+
+        section = _comparator_section()
+        findings_before_the_run = (
+            "platform_unsupported",
+            "running_as_root",
+            "input_invalid",
+            "challenge_record_inside_input",
+            "challenge_record_unreadable",
+            "challenge_record_mismatch",
+            "challenge_record_invalid",
+            "challenge_unreadable",
+            "challenge_mismatch",
+            "unsupported_workspace",
+            "toolchain_unavailable",
+            "toolchain_changed",
+            "sandbox_unavailable",
+            "paranoid_kernel_missing",
+            "solution_module_invalid",
+            "solution_module_missing",
+            "solution_file_unsafe",
+            "solution_shadows_trusted_module",
+            "solution_import_not_allowed",
+            "solution_too_large",
+            "state_dir_inside_input",
+            "insufficient_disk",
+            "memory_limit_unavailable",
+            "wrapper_interpreter_unavailable",
+            "host_busy",
+            "workspace_setup_failed",
+        )
+        findings_without_a_verdict = (
+            "phase_log_unreadable",
+            "wrapper_refused",
+            "comparator_exit",
+            "comparator_could_not_start",
+            "inconsistent_run",
+            "unclassified_failure",
+            "resolve_failed",
+            "challenge_build_failed",
+            "challenge_export_failed",
+            "solution_build_aborted",
+            "solution_export_failed",
+            "external_kernel_disagreement",
+            "kernel_failed",
+            "sandbox_failed",
+            "timeout",
+            "output_limit",
+            "comparator_failed",
+            "receipt_write_failed",
+            "cleanup_failed",
+        )
+        messages = (
+            "`Challenge and solution theorem statement do not match: '<name>'`",
+            "`Challenge and solution constant kind don't match: '<name>'`",
+            "`Solution constant is not a theorem: '<name>'`",
+            "`Solution constant is not a definition: '<name>'`",
+            "`Const does not match between challenge and target '<name>'`",
+            "`Const not found in solution '<name>'`",
+            "`Const not found in solution: '<name>'`",
+            "`Constant not found in solution '<name>'`",
+            "`Illegal axiom detected: '<name>'`",
+            "`<kernel> exited with <n>`",
+            "`Child exited with 1`",
+        )
+        for phrase in (
+            *(f"`{kind}`" for kind in gate.COMPARATOR_REJECTION_KINDS),
+            *(f"`{kind}`" for kind in findings_before_the_run + findings_without_a_verdict),
+            *messages,
+            *(" ".join(line.split()) for line in gate.COMPARATOR_LIMITATIONS),
+            NO_MEMORY_LIMIT,
+            "`wrapper.json`",
+            "`phases.jsonl`",
+            "`--share-net`",
+            "`--unshare-all`",
+            "`axiom helper._native.native_decide.ax_1_1 : False`",
+            "`1 = 2`",
+            "`has_comparator` reads directory listings",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
 
 class ComparatorAdmissionTests(unittest.TestCase):
     def setUp(self) -> None:

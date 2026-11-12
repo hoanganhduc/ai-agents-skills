@@ -384,7 +384,9 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   shows the first. A `--theorem` with a `_root_` component is refused rather
   than rewritten, because Lean drops it: `theorem _root_.foo` inside
   `namespace N` declares `foo`. `lemma` is not a core Lean command, so a core
-  challenge that declares anything with it cannot build and is refused;
+  challenge that declares anything with it cannot build and is refused. A
+  theorem with explicit universe parameters, such as `theorem foo.{u}`, is
+  refused too, since the walk reads its name as `foo.`;
 - `source_unreadable`: the source is missing, a symlink, not a regular file,
   larger than 1 MiB, or not UTF-8;
 - `challenge_import_not_trusted`: an import outside `allowed_import_roots`,
@@ -482,34 +484,91 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 `comparator_status` is the verdict field. Only `accepted` and `rejected` are
 verdicts; `not_run`, `unsupported_toolchain`, `tool_unavailable` and
 `command_failed` give no verdict. The verb exits 0 only for `accepted`, 1 for
-every other result, and 2 for a usage error.
+every other result, and 2 for a usage error. A result other than `accepted`
+or `rejected` carries findings, `{kind, detail}`, that say why.
 
-When the host, the record, the toolchain, the sandbox and the solution pass
-their checks, the run uses a state directory:
-`$XDG_STATE_HOME/ai-agents-skills/comparator` when `XDG_STATE_HOME` is an
-absolute path, and `~/.local/state/ai-agents-skills/comparator` otherwise. It
-must lie outside `--input` (`state_dir_inside_input`, `not_run`). The run then
-stops at the first of these checks that fails:
+### Checks before the run
 
-- The state directory, its `receipts/` and its `runs/` are made, or set,
-  `0700`. Missing parents are made `0700`, and parents that already exist keep
-  their mode. A symlink or a file in place of one of the three is refused
-  (`comparator_failed`, `command_failed`).
-- At least 2 GiB must be free there (`insufficient_disk`, `tool_unavailable`).
-- Unless `--memory-limit off`, a user scope with the limit and no swap must
-  start within 15 seconds:
-  `systemd-run --user --scope -p MemoryMax=<limit> -p MemorySwapMax=0 -- /bin/true`
-  (`memory_limit_unavailable`, `tool_unavailable`). The judge then runs in a
-  scope of its own, `aas-comparator-<run_id>`, with that limit; when the judge
-  is stopped for its time or its output, its scope is killed too.
-  `systemd-run` gets only `PATH=/usr/bin:/bin` and the gate's
-  `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`. With `off`, the payload's
-  limitations say that no memory limit was applied.
-- `/usr/bin/python3`, which runs the sandbox wrapper, must be an executable
-  file (`wrapper_interpreter_unavailable`, `tool_unavailable`).
-- One run at a time: the run takes the lock `comparator.lock`, a `0600` file in
-  the state directory, and waits for it for at most `--timeout` seconds, and
-  never more than 600 (`host_busy`, `command_failed`).
+The verb checks the following in this order. The first check that fails ends
+the run with its status and finding, and nothing after it runs.
+
+1. The host is Linux and the gate does not run as root
+   (`platform_unsupported`, `running_as_root`; `tool_unavailable`).
+2. The input and the challenge give `not_run` when one of these fails:
+   - `--input` is a directory, not a symlink (`input_invalid`);
+   - the record lies outside `--input`, by real path
+     (`challenge_record_inside_input`);
+   - the record and the `Challenge.lean` beside it are regular files with
+     one link, owned by the user who runs the gate and closed to group and
+     others, as `challenge-freeze` writes them (`0600`), and each is read
+     once within 1 MiB (`challenge_record_unreadable`,
+     `challenge_unreadable`). A copy that lost its mode needs `chmod 600`;
+   - the record hashes to `--challenge-record-sha256`
+     (`challenge_record_mismatch`) and holds exactly what `challenge-freeze`
+     writes: canonical bytes, the closed key set and every field rule
+     (`challenge_record_invalid`, with the broken rule as detail);
+   - `Challenge.lean` hashes to the record's `challenge_sha256`
+     (`challenge_mismatch`).
+
+   A record whose `workspace` is not `{"kind": "core"}` gives
+   `unsupported_workspace` (`tool_unavailable`): only the core profile runs.
+3. The toolchain the record names is found as in "Comparator readiness",
+   outside `--input`. A release older than v4.35.0, a release candidate or a
+   nightly gives `unsupported_toolchain` before any tool runs. The
+   attestation must succeed (`toolchain_unavailable`), and its file digests
+   and `lean --version` must equal the record's (`toolchain_changed`, naming
+   up to five differing paths); both give `tool_unavailable`.
+4. The sandbox: `bwrap`, found as in "Comparator readiness", reports 0.12.0
+   or later to `bwrap --version`, its preflight starts, and its binary is
+   hashed (`sandbox_unavailable`, `tool_unavailable`).
+5. A paranoid run, by `--paranoid` or by the record, needs the five bundled
+   kernels among the record's pinned files (`paranoid_kernel_missing`,
+   `tool_unavailable`).
+6. The solution gives `not_run` when one of these fails. Each
+   `--solution-module` is a valid Lean name without a `_root_` component; it
+   is not `AASChallenge`, `AASSolution` or `lakefile`, nor a name below the
+   first two, and it does not lie under `Init`, `Lake`, `Lean` or `Std`
+   (`solution_module_invalid`). Module `A.B` is the file `A/B.lean` of
+   `--input` (`solution_module_missing` when it is not there). From the named
+   modules the verb walks the local imports breadth first and reads each
+   file once; those bytes are what the run gets. An import under `Init`,
+   `Lake`, `Lean` or `Std` comes from the toolchain and is never copied, and
+   a file of `--input` at that module's path is refused
+   (`solution_shadows_trusted_module`). Any other import must be a file of
+   `--input` and must not be `AASChallenge`, `AASSolution` or `lakefile`
+   (`solution_import_not_allowed`); a `Mathlib` import lands here. Every
+   file is a regular file with one link, under directories that are not
+   symlinks, in UTF-8 that the scanner's lexer reads to its end
+   (`solution_file_unsafe`). The walk refuses a solution of more than 240
+   files, 15 MiB in total or 16 MiB in one file, and never truncates
+   (`solution_too_large`). Only these files reach the run: the gate never
+   reads the project's `lakefile*`, `lake-manifest.json`, `lean-toolchain`
+   or `.lake`.
+7. The state directory is
+   `$XDG_STATE_HOME/ai-agents-skills/comparator` when `XDG_STATE_HOME` is an
+   absolute path, and `~/.local/state/ai-agents-skills/comparator`
+   otherwise. It must lie outside `--input` (`state_dir_inside_input`,
+   `not_run`). Then the host:
+   - The state directory, its `receipts/` and its `runs/` are made, or set,
+     `0700`. Missing parents are made `0700`, and parents that already exist
+     keep their mode. A symlink or a file in place of one of the three is
+     refused (`comparator_failed`, `command_failed`).
+   - At least 2 GiB must be free there (`insufficient_disk`,
+     `tool_unavailable`).
+   - Unless `--memory-limit off`, a user scope with the limit and no swap
+     must start within 15 seconds:
+     `systemd-run --user --scope -p MemoryMax=<limit> -p MemorySwapMax=0 -- /bin/true`
+     (`memory_limit_unavailable`, `tool_unavailable`). `systemd-run` gets
+     only `PATH=/usr/bin:/bin` and the gate's `XDG_RUNTIME_DIR` and
+     `DBUS_SESSION_BUS_ADDRESS`. With `off`, the payload's limitations say
+     that no memory limit was applied.
+   - `/usr/bin/python3`, which runs the sandbox wrapper, must be an
+     executable file (`wrapper_interpreter_unavailable`, `tool_unavailable`).
+   - One run at a time: the run takes the lock `comparator.lock`, a `0600`
+     file in the state directory, and waits for it for at most `--timeout`
+     seconds, and never more than 600 (`host_busy`, `command_failed`).
+
+### The run
 
 Each run then gets a private directory `runs/<run_id>/`, where `run_id` is the
 UTC time and eight random hex digits. Its workspace `ws/` first gets the
@@ -519,17 +578,135 @@ the solution arrives (`workspace_setup_failed`, `command_failed`, when that
 fails or writes no manifest). Then come `AASChallenge.lean`, the frozen
 challenge bytes, the solution files exactly as the checks read them, and
 `AASSolution.lean`. The files the gate writes are `0600` and its directories
-`0700`. The judge is
-`<toolchain>/bin/lake comparator --config <run>/comparator.json`, with
-`--paranoid` for a paranoid run, under `nice -n 19` and `env -i`, so it gets
-only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
-`TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and `COMPARATOR_BWRAP=<run>/bwrap-wrapper`,
-the sandbox wrapper the gate writes there. `lake resolve-deps` and the judge
-start with umask `077`, whatever the gate's umask is: Lake makes `.lake/build`
-under the umask it inherits, and under one without the owner's write bit, such
-as `0277`, it could not write there. `--timeout` bounds the judge
-(`timeout`), and so does a 16 MiB cap on its output (`output_limit`); both
-give `command_failed`.
+`0700`.
+
+- `lakefile.toml` is TOML, so no configuration code runs. It declares the
+  library `AASChallenge` and the library `AASSolution`, whose `roots` name
+  `AASSolution` and the first component of each module of the solution's
+  closure, and whose `globs` name `AASSolution` and each of those modules.
+  The globs matter: by default Lake builds each root's own module, such as a
+  module `Sol` that does not exist for `Sol.Main`.
+- `AASSolution.lean` holds one `import` line for each `--solution-module`. It
+  imports `Init` as every module without `prelude` does, so a `prelude`
+  solution that redefines a constant of `Init` cannot be imported there.
+  Lean v4.35.0's own `primitive-issue` test, which lake comparator alone
+  rejects as a constant mismatch on `Nat.gcd`, is rejected here as
+  `build_failed`.
+- `comparator.json`, in the run directory, names `AASChallenge`,
+  `AASSolution`, the record's theorems and its permitted axioms, and no
+  definition holes and no extra kernels.
+
+The judge is `<toolchain>/bin/lake comparator --config <run>/comparator.json`,
+with `--paranoid` for a paranoid run, under `nice -n 19` and `env -i`, so it
+gets only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
+`TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and
+`COMPARATOR_BWRAP=<run>/bwrap-wrapper`. lake comparator writes its temporary
+exports and kernel configuration under that `TMPDIR`, inside the run
+directory. `lake resolve-deps` and the judge start with umask `077`, whatever
+the gate's umask is: Lake makes `.lake/build` under the umask it inherits,
+and under one without the owner's write bit, such as `0277`, it could not
+write there. Unless `--memory-limit off`, the judge runs in a user scope of
+its own, `aas-comparator-<run_id>`, with the limit and no swap.
+
+`COMPARATOR_BWRAP` is the gate's sandbox wrapper. It is a Python program held
+in the gate's own source, so the gate's sha256 covers it, and the run writes
+it to `<run>/bwrap-wrapper` after a `#!/usr/bin/python3 -I` line;
+`sandbox.wrapper_sha256` is the file's digest. lake comparator runs it in
+place of `bwrap` for each sandboxed step, with an empty environment. The
+wrapper reads `wrapper.json` beside it, then checks the step:
+
+- only the `bwrap` options lake comparator uses are allowed, and
+  `--unshare-all`, `--die-with-parent`, `--clearenv` and `--new-session` must
+  all be there;
+- `--bind` may only bind the workspace's `.lake` onto itself, and
+  `--ro-bind` may only bind `/`, or a path in the toolchain or the run
+  directory, onto itself;
+- the command must be a program in the toolchain's `bin/`, and the step one
+  that lake comparator takes: `lake env`, `lake build` of `AASChallenge` or
+  `AASSolution`, `leanexport` of one of them, or a kernel.
+
+It drops `--share-net`, which lake comparator asks for when it resolves the
+workspace, so no step gets a network; a core workspace has nothing to fetch.
+It then runs the step in the pinned `bwrap` and appends one line to
+`phases.jsonl` in the run directory: the phase, the target, the exit code,
+the seconds and the options it dropped. A step it refuses never runs and is
+logged with the reason. The log takes at most 64 lines, and the wrapper never
+writes to standard output, which carries an export.
+
+`--timeout` bounds the judge (`timeout`), and so does a 16 MiB cap on its
+output (`output_limit`); both give `command_failed`, and the judge's scope,
+when it has one, is killed too. A run that outgrows `--memory-limit` is
+killed inside its scope. On the host where this was tried (systemd 255,
+whose `DefaultOOMPolicy` is `stop`), systemd then stopped the whole scope,
+and the judge ended with `SIGTERM`, which gives `comparator_exit`, no
+verdict.
+
+### Verdicts
+
+The solution's build prints whatever it likes, so the gate trusts only three
+things from a run: lake comparator's exit code, its last line on standard
+error, and the wrapper's phase log. The run is `accepted` only when lake
+comparator exits 0 after exactly the steps of a run, each exiting 0
+(resolving, the build and export of `AASChallenge`, the build and export of
+`AASSolution`, then the five bundled kernels in a paranoid run, then
+`leanchecker`), its last line on standard output is `Your solution is okay!`,
+every check after the run holds, and its receipt is written.
+
+The run is `rejected` only for one of these last lines of lake comparator,
+written after `error: ` when it exits 1. `comparator_rejection_kind` names
+the kind, and `comparator_detail` is the line without `error: `, at most 500
+characters. The first five kinds count only after the five steps before the
+kernels, each exiting 0:
+
+| Kind | Last line |
+|---|---|
+| `statement_mismatch` | `Challenge and solution theorem statement do not match: '<name>'` |
+| `kind_mismatch` | `Challenge and solution constant kind don't match: '<name>'`, `Solution constant is not a theorem: '<name>'`, `Solution constant is not a definition: '<name>'` |
+| `constant_mismatch` | `Const does not match between challenge and target '<name>'` |
+| `missing_constant` | `Const not found in solution '<name>'`, `Const not found in solution: '<name>'`, `Constant not found in solution '<name>'` |
+| `forbidden_axiom` | `Illegal axiom detected: '<name>'` |
+| `kernel_rejected` | `<kernel> exited with <n>`, after every kernel ran with `leanchecker` last and exiting 1, where `<kernel>` and `<n>` are the first kernel that failed and its exit code |
+| `build_failed` | `Child exited with 1`, when the solution's build was the last step and exited 1 |
+
+These are the messages of lake comparator v4.35.0. On that release,
+`leanchecker` exits 1 when it rejects, as Lean's `olean-issue` test shows. A
+line on standard error that starts with `bwrap: ` turns the last two kinds
+into `sandbox_failed`, since a `bwrap` that cannot start a step also exits 1.
+A `bv_decide` proof is rejected as `forbidden_axiom`: Lean v4.35.0 names its
+axiom like `bv_and._native.bv_decide.ax_1_5`, which no record permits.
+
+Once the checks before the run have passed, every other result is
+`command_failed`, with one of these findings:
+
+- `phase_log_unreadable`: the phase log is missing or malformed;
+- `wrapper_refused`: the wrapper refused a step;
+- `comparator_exit`: lake comparator ended by a signal, or with an exit code
+  other than 0, 1 and 2;
+- `comparator_could_not_start`: lake comparator exited 2, as it does when it
+  cannot start;
+- `inconsistent_run`: the steps, their exit codes and lake comparator's exit
+  code do not fit together, such as exit 0 without the okay line;
+- `unclassified_failure`: exit 1 with a last line that is not in the table,
+  including the messages about the challenge's side, such as
+  `Const not found in challenge '<name>'` and
+  `Challenge constant is not a definition: '<name>'`;
+- `resolve_failed`, `challenge_build_failed` and `challenge_export_failed`:
+  a step on the challenge's side failed. A record that permits
+  `Lean.ofReduceBool` lands in `challenge_export_failed`: Lean v4.35.0 has no
+  such constant, and `leanexport` aborts with exit 134;
+- `solution_build_aborted`: the solution's build failed in another way, such
+  as by a signal;
+- `solution_export_failed`: the solution's export failed;
+- `external_kernel_disagreement`: a bundled kernel rejected what
+  `leanchecker` accepted;
+- `kernel_failed`: a kernel failed without the rejection above;
+- `sandbox_failed`: a `bwrap: ` line came with a would-be rejection;
+- `timeout`, `output_limit` and `comparator_failed`, the last for an
+  unexpected error or a judge that cannot be started;
+- `workspace_setup_failed` from the workspace above, and the checks after
+  the run below.
+
+### After the run
 
 After the judge, the gate checks that nothing the run relied on changed. A
 change gives `command_failed`, whatever the judge said:
@@ -555,6 +732,40 @@ run that stops before the judge starts writes no receipt.
 The run directory is removed on every path, without following a symlink.
 `--keep-workspace` keeps it and reports its path as `run.workspace_kept`. A
 removal that fails adds `cleanup_failed` and leaves the verdict as it was.
+
+### Limitations
+
+The payload's `limitations` always lists:
+
+- the comparator decides statement match, axiom use and kernel acceptance;
+  whether the challenge states the intended claim is still a review step
+- statement comparison is exact: an equivalent statement written differently
+  is rejected
+- a process running as the same user can change the toolchain, bwrap, the
+  gate or a receipt; the digests detect a change made during a run, not one
+  made before the freeze or after the receipt
+- the solution's own build directory is writable inside the sandbox, so a
+  solution can fill the disk; the disk floor and cleanup bound this only
+  after the fact
+- core profile: imports outside Init, Std, Lean and Lake are refused
+
+With `--memory-limit off`, it adds "no memory limit was applied". Two more
+limits hold:
+
+- Compiler trust can hide in the challenge. `challenge-freeze` refuses an
+  `axiom` in a challenge, but it finds one with the scanner's lexer, and two
+  raw strings, such as `r#"a"b"#` and a later `r#"c"d"#`, hide what lies
+  between them from that lexer. On Lean v4.35.0, a challenge that hid
+  `axiom helper._native.native_decide.ax_1_1 : False` that way was frozen
+  with `--allow-compiler-trust` and that axiom permitted. A solution that
+  declared the same axiom then proved `1 = 2`, and the comparator accepted
+  it. With the default permitted axioms, such a solution is rejected
+  (`forbidden_axiom`). A hidden `#eval` runs only inside the sandbox, during
+  the challenge's build. When compiler trust is permitted, the statement
+  review must therefore read the whole challenge for hidden declarations.
+- `doctor`'s `has_comparator` reads directory listings only, so it can say
+  `true` for a toolchain whose attestation fails. The comparator's own checks
+  of the record's toolchain decide whether a run starts.
 
 ## Blocking Policy
 
