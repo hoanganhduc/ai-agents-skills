@@ -18,6 +18,7 @@ stated reason.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import hashlib
 import json
@@ -25,9 +26,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -916,15 +918,93 @@ if unknown & set(requested):
     sys.exit(1)
 """
 
-# `lake env <tool> <args...>` stand-in: runs the tool it was handed.
+# `lake env [<tool> <args...>]` stand-in. With a tool it runs the tool it was
+# handed. Bare `lake env` prints the environment as Lake does: the text of the
+# file FAKE_LAKE_ENV_OUTPUT names, after FAKE_LAKE_ENV_SLEEP seconds; with that
+# unset it fails as a lake that finds no Lean would. FAKE_LAKE_LOG, when set,
+# names a file that gets the arguments of each invocation on one line.
 _FAKE_LAKE_ENV = """
+import os
 import subprocess
 import sys
+import time
 
 args = sys.argv[1:]
+if os.environ.get("FAKE_LAKE_LOG"):
+    with open(os.environ["FAKE_LAKE_LOG"], "a", encoding="utf-8") as log:
+        log.write(" ".join(args) + "\\n")
 assert args and args[0] == "env", args
-sys.exit(subprocess.run(args[1:], check=False).returncode)
+if len(args) > 1:
+    sys.exit(subprocess.run(args[1:], check=False).returncode)
+time.sleep(float(os.environ.get("FAKE_LAKE_ENV_SLEEP", "0")))
+if "FAKE_LAKE_ENV_OUTPUT" not in os.environ:
+    sys.exit("error: no Lean installation was found")
+with open(os.environ["FAKE_LAKE_ENV_OUTPUT"], encoding="utf-8") as output:
+    sys.stdout.write(output.read())
 """
+
+
+def _lake_env_output(path: Path, text: str) -> str:
+    """Write what bare `lake env` prints to ``path``, the value for FAKE_LAKE_ENV_OUTPUT."""
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def _elan_proxy_body(marker: Path) -> str:
+    """Body of elan's leanchecker proxy for a toolchain older than v4.28.
+
+    Such a toolchain ships no leanchecker, so the proxy fails without
+    replaying anything. It leaves ``marker`` behind if anything runs it.
+    """
+    return (
+        "import pathlib\n"
+        "import sys\n"
+        f"pathlib.Path({str(marker)!r}).touch()\n"
+        "sys.exit(\"error: toolchain 'leanprover/lean4:v4.24.0' does not have the binary 'leanchecker'\")\n"
+    )
+
+
+def _recording_checker_body(record: Path) -> str:
+    """Body of a passing checker that appends its arguments to ``record``."""
+    return (
+        "import sys\n"
+        f"with open({str(record)!r}, 'a', encoding='utf-8') as handle:\n"
+        "    handle.write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "sys.exit(0)\n"
+    )
+
+
+# Variables that select a checker or steer the fake lake; each checker test
+# starts without them.
+_CHECKER_VARIABLES = (
+    "AAS_LEAN",
+    "AAS_LAKE",
+    "AAS_LEAN4CHECKER",
+    "ELAN_HOME",
+    "FAKE_LAKE_ENV_OUTPUT",
+    "FAKE_LAKE_ENV_SLEEP",
+    "FAKE_LAKE_LOG",
+)
+
+
+@contextlib.contextmanager
+def _checker_environment(
+    home: Path,
+    *,
+    which: Callable[..., str | None] | None = None,
+    **values: str,
+) -> Any:
+    """HOME is ``home`` and only ``values`` select tools; PATH lookups go to ``which``."""
+
+    with mock.patch.dict(
+        os.environ, {"HOME": str(home), "USERPROFILE": str(home)}
+    ), mock.patch.object(
+        gate.shutil, "which", side_effect=which or (lambda *args, **kwargs: None)
+    ):
+        for name in _CHECKER_VARIABLES:
+            os.environ.pop(name, None)
+        os.environ.update(values)
+        yield
 
 
 class AxiomAuditTests(unittest.TestCase):
@@ -1601,10 +1681,18 @@ class AuditCliTests(unittest.TestCase):
                 )
             self.assertTrue(payload["ok"], payload)
             self.assertEqual(payload["kernel_check_status"], "tool_unavailable")
+            # This fake lake finds no Lean, so `lake env` names no toolchain.
+            not_found = payload["tool_status"]["lean4checker"]
             self.assertEqual(
-                payload["tool_status"]["lean4checker"],
-                {"status": "tool_unavailable", "path": "", "source": "not-found"},
+                not_found,
+                {
+                    "status": "tool_unavailable",
+                    "path": "",
+                    "source": "not-found",
+                    "detail": not_found.get("detail"),
+                },
             )
+            self.assertIn("lake env exited 1", not_found["detail"])
 
             with mock.patch.dict(
                 os.environ,
@@ -1634,31 +1722,109 @@ class AuditCliTests(unittest.TestCase):
         for phrase in (
             "1. the executable `AAS_LEAN4CHECKER` selects explicitly;",
             "2. `lean4checker` on `PATH`;",
-            "3. `leanchecker` beside the selected `lake`",
+            "3. the `leanchecker` of the toolchain that the selected `lake` runs",
+            "It never takes the file beside `lake`",
+            "`doctor` never runs `lake env`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertTrue(phrase in skill, f"SKILL.md does not mention {phrase!r}")
+
+    def _elan_layout(self, tmp: str) -> tuple[Path, Path, Path]:
+        """A built project, and an elan-like bin with a fake lake and a failing leanchecker proxy.
+
+        Returns the project root, the lake, and the marker the proxy leaves
+        behind if anything runs it.
+        """
+        root = self._project(tmp)
+        self._mark_basic_built(root)
+        elan_bin = Path(tmp) / "elan" / "bin"
+        elan_bin.mkdir(parents=True)
+        lake = _fake_tool(elan_bin, "lake", _FAKE_LAKE_ENV)
+        proxy_ran = Path(tmp) / "proxy-ran"
+        _fake_tool(elan_bin, "leanchecker", _elan_proxy_body(proxy_ran))
+        (Path(tmp) / "home").mkdir()
+        return root, lake, proxy_ran
+
+    def test_an_elan_proxy_beside_lake_never_reads_as_a_kernel_rejection(self) -> None:
+        """Under elan the leanchecker beside lake is a proxy, and kernel-check never runs it.
+
+        The proxy follows the project's lean-toolchain, and a toolchain older
+        than v4.28 ships no leanchecker, so the proxy fails without replaying
+        anything. kernel-check asks `lake env` for the toolchain instead: one
+        without leanchecker is tool_unavailable, exit 0 without --strict as
+        before the toolchain checker existed, and doctor names no checker.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root, lake, proxy_ran = self._elan_layout(tmp)
+            (root / "lean-toolchain").write_text("leanprover/lean4:v4.24.0\n", encoding="utf-8")
+            sysroot = Path(tmp) / "elan" / "toolchains" / "leanprover--lean4---v4.24.0"
+            (sysroot / "bin").mkdir(parents=True)
+            _fake_tool(sysroot / "bin", "lean", "import sys\nsys.exit(0)\n")
+            with _checker_environment(
+                Path(tmp) / "home",
+                AAS_LAKE=str(lake),
+                FAKE_LAKE_ENV_OUTPUT=_lake_env_output(
+                    Path(tmp) / "lake-env.txt", f"LEAN_SYSROOT={sysroot}\n"
+                ),
+            ), mock.patch.object(gate, "emit") as emit:
+                lax = gate.main(["kernel-check", "--input", str(root)])
+                lax_payload = emit.call_args.args[0]
+                strict = gate.main(["kernel-check", "--input", str(root), "--strict"])
+                strict_payload = emit.call_args.args[0]
+                doctor = gate.doctor_payload(project_root=root, probe=False)
+            self.assertEqual(lax, 0, lax_payload)
+            self.assertTrue(lax_payload["ok"], lax_payload)
+            self.assertEqual(lax_payload["kernel_check_status"], "tool_unavailable", lax_payload)
+            self.assertEqual(lax_payload["findings"], [])
+            self.assertEqual(lax_payload["modules"], [])
+            not_found = lax_payload["tool_status"]["lean4checker"]
+            self.assertEqual(
+                not_found,
+                {
+                    "status": "tool_unavailable",
+                    "path": "",
+                    "source": "not-found",
+                    "detail": not_found.get("detail"),
+                },
+            )
+            self.assertIn(str(sysroot), not_found["detail"])
+            self.assertIn("v4.28", not_found["detail"])
+            self.assertEqual(strict, 1, strict_payload)
+            self.assertEqual(strict_payload["kernel_check_status"], "tool_unavailable")
+            self.assertFalse(proxy_ran.exists())
+            reported = doctor["tool_status"]["lean4checker"]
+            self.assertEqual(reported["status"], "tool_unavailable", reported)
+            self.assertEqual(reported["path"], "", reported)
 
     @unittest.skipUnless(
         os.name == "posix",
         "on Windows the toolchain checker is leanchecker.exe and these fakes are .cmd wrappers",
     )
-    def test_kernel_check_uses_the_leanchecker_beside_lake(self) -> None:
+    def test_kernel_check_runs_the_leanchecker_of_the_toolchain_lake_runs(self) -> None:
+        """`lake env` names the toolchain, and its leanchecker replays, not the proxy beside lake.
+
+        doctor never runs `lake env`, with or without --probe: it says that
+        kernel-check resolves the toolchain's leanchecker at run time.
+        """
         with tempfile.TemporaryDirectory() as tmp:
-            root = self._project(tmp)
-            self._mark_basic_built(root)
-            toolchain_bin = Path(tmp) / "toolchain" / "bin"
-            toolchain_bin.mkdir(parents=True)
-            lake = _fake_tool(toolchain_bin, "lake", _FAKE_LAKE_ENV)
-            checker = _fake_tool(toolchain_bin, "leanchecker", "import sys\nsys.exit(0)\n")
-            home = Path(tmp) / "home"
-            home.mkdir()
-            environment = {"AAS_LAKE": str(lake), "HOME": str(home), "USERPROFILE": str(home)}
-            with mock.patch.dict(os.environ, environment), mock.patch.object(
-                gate.shutil, "which", return_value=None
+            root, lake, proxy_ran = self._elan_layout(tmp)
+            sysroot = Path(tmp) / "elan" / "toolchains" / "leanprover--lean4---v4.35.0"
+            (sysroot / "bin").mkdir(parents=True)
+            replayed = Path(tmp) / "replayed"
+            checker = _fake_tool(sysroot / "bin", "leanchecker", _recording_checker_body(replayed))
+            lake_log = Path(tmp) / "lake.log"
+            lake_env = _lake_env_output(
+                Path(tmp) / "lake-env.txt",
+                f"LEAN={sysroot / 'bin' / 'lean'}\n"
+                f"LEAN_SYSROOT={sysroot}\n"
+                f"LEAN_PATH={root / '.lake' / 'build' / 'lib' / 'lean'}\n",
+            )
+            with _checker_environment(
+                Path(tmp) / "home",
+                AAS_LAKE=str(lake),
+                FAKE_LAKE_ENV_OUTPUT=lake_env,
+                FAKE_LAKE_LOG=str(lake_log),
             ):
-                os.environ.pop("AAS_LEAN4CHECKER", None)
-                os.environ.pop("ELAN_HOME", None)
                 payload = gate.kernel_check_payload(
                     root,
                     project_root=root,
@@ -1666,13 +1832,11 @@ class AuditCliTests(unittest.TestCase):
                     modules=[],
                     strict=True,
                 )
+                kernel_check_calls = lake_log.read_text(encoding="utf-8").splitlines()
                 doctor = gate.doctor_payload(project_root=root, probe=False)
-            expected = {
-                "status": "available",
-                "path": str(checker.resolve()),
-                "source": "toolchain",
-                "name": "leanchecker",
-            }
+                doctor_calls = lake_log.read_text(encoding="utf-8").splitlines()
+                probed = gate.doctor_payload(project_root=root, probe=True)
+                probe_calls = lake_log.read_text(encoding="utf-8").splitlines()
             self.assertTrue(payload["ok"], payload)
             self.assertEqual(payload["kernel_check_status"], "kernel_checked", payload)
             self.assertEqual(
@@ -1680,56 +1844,252 @@ class AuditCliTests(unittest.TestCase):
             )
             self.assertEqual(
                 payload["tool_status"]["lean4checker"],
-                {**expected, "inside_project_root": False},
+                {
+                    "status": "available",
+                    "path": str(checker.resolve()),
+                    "source": "toolchain",
+                    "name": "leanchecker",
+                    "inside_project_root": False,
+                },
             )
             self.assertEqual(payload["runner"], "lake-env-lean4checker")
-            self.assertEqual(doctor["tool_status"]["lean4checker"], expected)
+            self.assertEqual(
+                kernel_check_calls, ["env", f"env {checker.resolve()} Proj.Basic"]
+            )
+            self.assertEqual(replayed.read_text(encoding="utf-8"), "Proj.Basic\n")
+            self.assertFalse(proxy_ran.exists())
+
+            # Plain doctor runs nothing; --probe runs lake only for its version.
+            self.assertEqual(doctor_calls, kernel_check_calls)
+            self.assertEqual(
+                [line for line in probe_calls[len(doctor_calls):] if line.split(" ")[0] == "env"],
+                [],
+            )
+            for report in (doctor, probed):
+                reported = report["tool_status"]["lean4checker"]
+                self.assertEqual(
+                    reported,
+                    {
+                        "status": "tool_unavailable",
+                        "path": "",
+                        "source": "not-found",
+                        "detail": reported.get("detail"),
+                    },
+                )
+                self.assertIn("lake env at run time", reported["detail"])
+
+    def test_a_toolchain_checker_lake_env_cannot_name_reads_as_tool_unavailable(self) -> None:
+        """Each way the toolchain lookup fails is tool_unavailable, never a kernel rejection.
+
+        The proxy beside lake is never the fallback; the detail names the
+        reason, and the exit code is 0 without --strict.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root, lake, proxy_ran = self._elan_layout(tmp)
+            toolchains = base / "elan" / "toolchains"
+            old = toolchains / "leanprover--lean4---v4.24.0"
+            (old / "bin").mkdir(parents=True)
+            _fake_tool(old / "bin", "lean", "import sys\nsys.exit(0)\n")
+            new = toolchains / "leanprover--lean4---v4.35.0"
+            (new / "bin").mkdir(parents=True)
+            _fake_tool(new / "bin", "leanchecker", "import sys\nsys.exit(0)\n")
+            directory = base / "directory-checker"
+            (directory / "bin" / gate.executable_name("leanchecker")).mkdir(parents=True)
+            inside = root / ".lake" / "toolchain"
+            (inside / "bin").mkdir(parents=True)
+            inside_checker = _fake_tool(inside / "bin", "leanchecker", "import sys\nsys.exit(0)\n")
+            linked = base / "linked-toolchain"
+            (linked / "bin").mkdir(parents=True)
+            try:
+                (linked / "bin" / gate.executable_name("leanchecker")).symlink_to(inside_checker)
+                link_problem = ""
+            except (OSError, NotImplementedError) as exc:
+                link_problem = f"cannot create a symlink: {exc}"
+            # A lake that cannot be started, with the same proxy beside it.
+            plain = base / "plain"
+            plain.mkdir()
+            plain_lake = plain / "lake"
+            plain_lake.write_text("not a program\n", encoding="utf-8")
+            plain_lake.chmod(0o644)
+            _fake_tool(plain, "leanchecker", _elan_proxy_body(proxy_ran))
+            # "stdout" is what bare `lake env` prints; without it the fake lake fails.
+            cases: tuple[dict[str, Any], ...] = (
+                {"case": "lake env fails", "detail": "lake env exited 1"},
+                {
+                    "case": "lake cannot run",
+                    "env": {"AAS_LAKE": str(plain_lake)},
+                    "detail": "lake env could not run",
+                },
+                {
+                    "case": "lake env runs out of the budget",
+                    "env": {"FAKE_LAKE_ENV_SLEEP": "30"},
+                    "stdout": f"LEAN_SYSROOT={new}\n",
+                    "args": ("--timeout", "1"),
+                    "detail": "lake env did not finish",
+                },
+                {
+                    "case": "lake env exceeds the output cap",
+                    "stdout": "LAKE_PKG_URL_MAP=" + "x" * 8192 + f"\nLEAN_SYSROOT={new}\n",
+                    "cap": 4096,
+                    "detail": "exceeded 4096 bytes",
+                },
+                {
+                    "case": "no LEAN_SYSROOT",
+                    "stdout": f"LEAN={new / 'bin' / 'lean'}\n",
+                    "detail": "lake env printed no LEAN_SYSROOT",
+                },
+                {
+                    "case": "an empty LEAN_SYSROOT",
+                    "stdout": "LEAN_SYSROOT=\n",
+                    "detail": "not an absolute path",
+                },
+                {
+                    "case": "a relative LEAN_SYSROOT",
+                    "stdout": "LEAN_SYSROOT=toolchain\n",
+                    "detail": "not an absolute path",
+                },
+                {
+                    "case": "two LEAN_SYSROOT lines",
+                    "stdout": f"LEAN_SYSROOT={new}\nLEAN_SYSROOT={old}\n",
+                    "detail": "lake env printed 2 LEAN_SYSROOT lines",
+                },
+                {
+                    "case": "a toolchain before v4.28",
+                    "stdout": f"LEAN_SYSROOT={old}\n",
+                    "detail": "v4.28",
+                },
+                {
+                    "case": "a leanchecker that is a directory",
+                    "stdout": f"LEAN_SYSROOT={directory}\n",
+                    "detail": "v4.28",
+                },
+                {
+                    "case": "a LEAN_SYSROOT inside the project",
+                    "stdout": f"LEAN_SYSROOT={inside}\n",
+                    "detail": "inside the project root",
+                },
+                {
+                    "case": "a leanchecker that resolves into the project",
+                    "stdout": f"LEAN_SYSROOT={linked}\n",
+                    "detail": "inside the project root",
+                    "needs_symlink": True,
+                },
+            )
+            for index, case in enumerate(cases):
+                with self.subTest(case=case["case"]):
+                    if case.get("needs_symlink") and link_problem:
+                        self.skipTest(link_problem)
+                    environment = {"AAS_LAKE": str(lake), **case.get("env", {})}
+                    if "stdout" in case:
+                        environment["FAKE_LAKE_ENV_OUTPUT"] = _lake_env_output(
+                            base / f"lake-env-{index}.txt", case["stdout"]
+                        )
+                    with _checker_environment(base / "home", **environment), mock.patch.object(
+                        gate, "COMMAND_OUTPUT_MAX_BYTES", case.get("cap", gate.COMMAND_OUTPUT_MAX_BYTES)
+                    ), mock.patch.object(gate, "emit") as emit:
+                        started = time.monotonic()
+                        rc = gate.main(["kernel-check", "--input", str(root), *case.get("args", ())])
+                        elapsed = time.monotonic() - started
+                    payload = emit.call_args.args[0]
+                    self.assertEqual(rc, 0, payload)
+                    self.assertTrue(payload["ok"], payload)
+                    self.assertEqual(payload["kernel_check_status"], "tool_unavailable", payload)
+                    self.assertEqual(payload["findings"], [])
+                    self.assertEqual(payload["modules"], [])
+                    not_found = payload["tool_status"]["lean4checker"]
+                    self.assertEqual(not_found["status"], "tool_unavailable", not_found)
+                    self.assertEqual(not_found["source"], "not-found", not_found)
+                    self.assertEqual(not_found["path"], "", not_found)
+                    self.assertIn(case["detail"], not_found["detail"])
+                    self.assertFalse(proxy_ran.exists())
+                    self.assertLess(elapsed, 20)
 
     @unittest.skipUnless(
         os.name == "posix",
         "on Windows the toolchain checker is leanchecker.exe and these fakes are .cmd wrappers",
     )
-    def test_toolchain_leanchecker_never_overrides_or_comes_from_the_project(self) -> None:
-        """A leanchecker beside a project-local lake is never picked; the earlier choices win.
-
-        This is a regression check: before the toolchain checker existed no
-        checker was ever looked for beside lake, so every part held already.
-        AAS_LEAN4CHECKER and then lean4checker on PATH still come first.
-        """
+    def test_lake_env_shares_the_kernel_check_budget(self) -> None:
+        """`lake env` runs once, in the project root, inside the verb's --timeout and output budget."""
         with tempfile.TemporaryDirectory() as tmp:
-            root = self._project(tmp)
-            self._mark_basic_built(root)
-            project_bin = root / ".lake" / "build" / "bin"
-            project_bin.mkdir(parents=True)
-            project_lake = _fake_tool(project_bin, "lake", _FAKE_LAKE_ENV)
-            _fake_tool(project_bin, "leanchecker", "import sys\nsys.exit(0)\n")
-            with mock.patch.dict(os.environ, {"AAS_LAKE": str(project_lake)}), mock.patch.object(
-                gate.shutil, "which", return_value=None
-            ):
-                os.environ.pop("AAS_LEAN4CHECKER", None)
-                local = gate.kernel_check_payload(
+            root, lake, _ = self._elan_layout(tmp)
+            sysroot = Path(tmp) / "elan" / "toolchains" / "leanprover--lean4---v4.35.0"
+            (sysroot / "bin").mkdir(parents=True)
+            checker = _fake_tool(sysroot / "bin", "leanchecker", "import sys\nsys.exit(0)\n")
+            calls: list[tuple[list[str], dict[str, Any], Any]] = []
+            run = gate.run_bounded_command
+
+            def recording_run(command: list[str], **kwargs: Any) -> Any:
+                result = run(command, **kwargs)
+                calls.append((list(command), kwargs, result))
+                return result
+
+            with _checker_environment(
+                Path(tmp) / "home",
+                AAS_LAKE=str(lake),
+                FAKE_LAKE_ENV_SLEEP="1",
+                FAKE_LAKE_ENV_OUTPUT=_lake_env_output(
+                    Path(tmp) / "lake-env.txt", f"LEAN_SYSROOT={sysroot}\n"
+                ),
+            ), mock.patch.object(gate, "run_bounded_command", side_effect=recording_run):
+                payload = gate.kernel_check_payload(
                     root,
                     project_root=root,
                     timeout=60,
                     modules=[],
                     strict=True,
                 )
-            self.assertEqual(local["kernel_check_status"], "tool_unavailable", local)
+            self.assertEqual(payload["kernel_check_status"], "kernel_checked", payload)
+            lake_path = str(lake.resolve())
             self.assertEqual(
-                local["tool_status"]["lean4checker"],
-                {"status": "tool_unavailable", "path": "", "source": "not-found"},
+                [command for command, _, _ in calls],
+                [
+                    [lake_path, "env"],
+                    [lake_path, "env", str(checker.resolve()), "Proj.Basic"],
+                ],
+            )
+            (_, lake_env, lake_env_result), (_, replay, _) = calls
+            self.assertEqual(lake_env["cwd"], root.resolve())
+            self.assertLessEqual(lake_env["timeout"], 60)
+            self.assertEqual(lake_env["max_output_bytes"], gate.COMMAND_OUTPUT_MAX_BYTES)
+            # `lake env` slept a second, and the replay got only what was left.
+            self.assertLessEqual(replay["timeout"], 59)
+            self.assertGreater(lake_env_result.output_bytes, 0)
+            self.assertEqual(
+                replay["max_output_bytes"],
+                gate.COMMAND_OUTPUT_MAX_BYTES - lake_env_result.output_bytes,
             )
 
-            toolchain_bin = Path(tmp) / "toolchain" / "bin"
-            toolchain_bin.mkdir(parents=True)
-            lake = _fake_tool(toolchain_bin, "lake", _FAKE_LAKE_ENV)
-            _fake_tool(toolchain_bin, "leanchecker", "import sys\nsys.exit(1)\n")
+    @unittest.skipUnless(
+        os.name == "posix",
+        "on Windows the toolchain checker is leanchecker.exe and these fakes are .cmd wrappers",
+    )
+    def test_an_explicit_checker_wins_and_lake_env_is_not_run(self) -> None:
+        """AAS_LEAN4CHECKER, then lean4checker on PATH, win over the toolchain's leanchecker.
+
+        This is a regression check: both came first before the toolchain
+        checker existed. When either gives a checker, the `lake env` lookup
+        never runs, so only the replay goes through lake.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root, lake, proxy_ran = self._elan_layout(tmp)
+            sysroot = Path(tmp) / "elan" / "toolchains" / "leanprover--lean4---v4.35.0"
+            (sysroot / "bin").mkdir(parents=True)
+            _fake_tool(sysroot / "bin", "leanchecker", "import sys\nsys.exit(1)\n")
             explicit_dir = Path(tmp) / "explicit"
             explicit_dir.mkdir()
             explicit = _fake_tool(explicit_dir, "lean4checker", "import sys\nsys.exit(0)\n")
-            with mock.patch.dict(
-                os.environ, {"AAS_LAKE": str(lake), "AAS_LEAN4CHECKER": str(explicit)}
-            ), mock.patch.object(gate.shutil, "which", return_value=None):
+            lake_log = Path(tmp) / "lake.log"
+            lake_env = {
+                "AAS_LAKE": str(lake),
+                "FAKE_LAKE_ENV_OUTPUT": _lake_env_output(
+                    Path(tmp) / "lake-env.txt", f"LEAN_SYSROOT={sysroot}\n"
+                ),
+                "FAKE_LAKE_LOG": str(lake_log),
+            }
+            with _checker_environment(
+                Path(tmp) / "home", AAS_LEAN4CHECKER=str(explicit), **lake_env
+            ):
                 chosen = gate.kernel_check_payload(
                     root,
                     project_root=root,
@@ -1738,18 +2098,21 @@ class AuditCliTests(unittest.TestCase):
                     strict=True,
                 )
             self.assertEqual(chosen["kernel_check_status"], "kernel_checked", chosen)
-            self.assertEqual(chosen["tool_status"]["lean4checker"]["source"], "env")
             self.assertEqual(
-                chosen["tool_status"]["lean4checker"]["path"], str(explicit.resolve())
+                chosen["tool_status"]["lean4checker"],
+                {
+                    "status": "available",
+                    "path": str(explicit.resolve()),
+                    "source": "env",
+                    "env_var": "AAS_LEAN4CHECKER",
+                    "inside_project_root": False,
+                },
             )
 
             def which(name: str, *args: object, **kwargs: object) -> str | None:
                 return str(explicit) if name == "lean4checker" else None
 
-            with mock.patch.dict(os.environ, {"AAS_LAKE": str(lake)}), mock.patch.object(
-                gate.shutil, "which", side_effect=which
-            ):
-                os.environ.pop("AAS_LEAN4CHECKER", None)
+            with _checker_environment(Path(tmp) / "home", which=which, **lake_env):
                 on_path = gate.kernel_check_payload(
                     root,
                     project_root=root,
@@ -1767,6 +2130,11 @@ class AuditCliTests(unittest.TestCase):
                     "inside_project_root": False,
                 },
             )
+            self.assertEqual(
+                lake_log.read_text(encoding="utf-8").splitlines(),
+                [f"env {explicit.resolve()} Proj.Basic"] * 2,
+            )
+            self.assertFalse(proxy_ran.exists())
 
     def test_kernel_check_reports_each_module_replay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -586,20 +586,23 @@ def add_scan_args(parser: argparse.ArgumentParser) -> None:
 
 
 def doctor_payload(*, project_root: Path, probe: bool) -> dict[str, Any]:
-    # lake first: kernel-check falls back to the leanchecker beside it.
-    lake = tool_status("lake")
+    # Reported so an operator can see whether AAS_LEAN4CHECKER or PATH gives
+    # kernel-check a checker. The toolchain's leanchecker is found only by
+    # kernel-check, through `lake env`, which doctor never runs because it
+    # loads the project's Lake configuration.
+    checker = lean4checker_status()
+    if checker["source"] == "not-found":
+        checker["detail"] = (
+            "neither AAS_LEAN4CHECKER nor PATH gives a checker; kernel-check "
+            "resolves the toolchain's leanchecker through lake env at run time"
+        )
     payload = {
         "status": "ok",
         "tool_status": {
             "lean": tool_status("lean"),
-            "lake": lake,
+            "lake": tool_status("lake"),
             "elan": tool_status("elan"),
-            # Reported so an operator can see that kernel-check has no checker
-            # to run, rather than discovering it as a tool_unavailable verdict.
-            "lean4checker": lean4checker_status(
-                lake_path=lake["path"] if lake["status"] == "available" else "",
-                project_root=project_root,
-            ),
+            "lean4checker": checker,
             "npm": tool_status("npm"),
             "npx": tool_status("npx"),
             "pip": tool_status("pip"),
@@ -2980,13 +2983,8 @@ def axiom_audit_payload(
     return payload
 
 
-def lean4checker_status(*, lake_path: str = "", project_root: Path | None = None) -> dict[str, Any]:
-    """Resolve an operator-selected checker without trusting project build output.
-
-    The order is AAS_LEAN4CHECKER, then lean4checker on PATH, then the
-    leanchecker that Lean toolchains ship beside lake (from v4.28), taken only
-    beside ``lake_path`` and never from inside ``project_root``.
-    """
+def lean4checker_status() -> dict[str, Any]:
+    """Resolve an operator-selected checker without trusting project build output."""
     env_var = TOOL_ENV["lean4checker"]
     env_value = os.environ.get(env_var, "").strip()
     if env_value:
@@ -3000,38 +2998,89 @@ def lean4checker_status(*, lake_path: str = "", project_root: Path | None = None
     path = resolve_candidate("lean4checker")
     if path:
         return {"status": "available", "path": path, "source": "path"}
-    toolchain_checker = _leanchecker_beside(lake_path, project_root)
-    if toolchain_checker:
-        return {
-            "status": "available",
-            "path": toolchain_checker,
-            "source": "toolchain",
-            "name": "leanchecker",
-        }
     return {"status": "tool_unavailable", "path": "", "source": "not-found"}
 
 
-def _leanchecker_beside(lake_path: str, project_root: Path | None) -> str:
-    """The resolved leanchecker next to ``lake_path``, or "" when absent or project-local.
+def toolchain_leanchecker_status(
+    lake_path: str,
+    project_root: Path,
+    *,
+    timeout: float,
+    max_output_bytes: int,
+) -> tuple[dict[str, Any], int]:
+    """The leanchecker of the toolchain that ``lake_path`` runs, and the output bytes spent.
 
-    A project must not supply its own certifying checker, so a leanchecker
-    that resolves to ``project_root`` or below it is never selected.
+    Lean toolchains ship leanchecker from v4.28. ``lake env`` with no command
+    prints the environment Lake runs a command in, and its LEAN_SYSROOT is the
+    toolchain directory. ``<LEAN_SYSROOT>/bin/leanchecker`` is taken only when
+    it is a regular file whose real path is outside ``project_root``. The file
+    beside ``lake_path`` is never taken: under elan it is a proxy that follows
+    the project's lean-toolchain, and it fails for a toolchain that ships no
+    leanchecker. Every other outcome is tool_unavailable with a ``detail``
+    naming the reason; nothing here raises. The byte count is 0 when ``lake
+    env`` did not finish, and kernel-check then stops anyway.
     """
 
-    if not lake_path:
-        return ""
+    def unavailable(detail: str) -> dict[str, Any]:
+        return {"status": "tool_unavailable", "path": "", "source": "not-found", "detail": detail}
+
     try:
-        resolved = resolve_candidate(str(Path(lake_path).parent / executable_name("leanchecker")))
-        if not resolved:
-            return ""
-        if project_root is not None:
-            root = Path(os.path.realpath(project_root))
-            checker = Path(resolved)
-            if checker == root or root in checker.parents:
-                return ""
-        return resolved
-    except (OSError, RuntimeError, ValueError):
-        return ""
+        completed = run_bounded_command(
+            [lake_path, "env"],
+            timeout=timeout,
+            cwd=project_root,
+            max_output_bytes=max_output_bytes,
+        )
+    except subprocess.TimeoutExpired:
+        return unavailable(
+            f"lake env did not finish within the {timeout:.1f} seconds left of the --timeout budget"
+        ), 0
+    except CommandOutputLimitExceeded as exc:
+        return unavailable(f"lake env: {exc}"), 0
+    except (OSError, ValueError) as exc:
+        return unavailable(f"lake env could not run: {exc}"), 0
+    used = completed.output_bytes
+    if completed.returncode != 0:
+        reason = _output_tail(completed.stderr.strip(), 500)
+        return unavailable(
+            f"lake env exited {completed.returncode}" + (f": {reason}" if reason else "")
+        ), used
+    sysroots = [
+        line[len("LEAN_SYSROOT="):]
+        for line in completed.stdout.splitlines()
+        if line.startswith("LEAN_SYSROOT=")
+    ]
+    if not sysroots:
+        return unavailable("lake env printed no LEAN_SYSROOT"), used
+    if len(sysroots) > 1:
+        return unavailable(f"lake env printed {len(sysroots)} LEAN_SYSROOT lines"), used
+    sysroot = sysroots[0]
+    shown = _output_tail(sysroot, 500)
+    if not Path(sysroot).is_absolute():
+        return unavailable(
+            f"lake env printed a LEAN_SYSROOT that is not an absolute path: {shown!r}"
+        ), used
+    try:
+        root = Path(os.path.realpath(project_root))
+        checker = Path(os.path.realpath(Path(sysroot) / "bin" / executable_name("leanchecker")))
+        inside_project = checker == root or root in checker.parents
+        regular = _regular_file(checker)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return unavailable(f"the leanchecker under LEAN_SYSROOT {shown} cannot be used: {exc}"), used
+    if inside_project:
+        return unavailable(
+            f"the leanchecker under LEAN_SYSROOT {shown} resolves inside the project root"
+        ), used
+    if not regular:
+        return unavailable(
+            f"the toolchain at LEAN_SYSROOT {shown} has no leanchecker; Lean ships it from v4.28"
+        ), used
+    return {
+        "status": "available",
+        "path": str(checker),
+        "source": "toolchain",
+        "name": "leanchecker",
+    }, used
 
 
 def kernel_check_payload(
@@ -3157,10 +3206,21 @@ def kernel_check_payload(
         )
 
     lake = tool_status("lake")
-    checker = lean4checker_status(
-        lake_path=lake["path"] if lake["status"] == "available" else "",
-        project_root=root,
-    )
+    checker = lean4checker_status()
+    # One budget for the whole verb, the `lake env` that finds the toolchain's
+    # leanchecker included: a per-module allowance would let 50 modules run
+    # 50x past the timeout the caller bounded the process with, and the caller
+    # would see a killed gate instead of a replay verdict.
+    output_remaining = COMMAND_OUTPUT_MAX_BYTES
+    deadline = time.monotonic() + timeout
+    if checker["source"] == "not-found" and lake["status"] == "available":
+        checker, used = toolchain_leanchecker_status(
+            lake["path"],
+            root,
+            timeout=deadline - time.monotonic(),
+            max_output_bytes=output_remaining,
+        )
+        output_remaining -= used
     if checker["status"] == "available":
         checker_path = Path(checker["path"])
         checker["inside_project_root"] = checker_path == root or root in checker_path.parents
@@ -3178,11 +3238,6 @@ def kernel_check_payload(
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
-    output_remaining = COMMAND_OUTPUT_MAX_BYTES
-    # One budget for the whole verb: a per-module allowance would let 50
-    # modules run 50x past the timeout the caller bounded the process with,
-    # and the caller would see a killed gate instead of a replay verdict.
-    deadline = time.monotonic() + timeout
     for module in targets:
         if output_remaining <= 0:
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]

@@ -169,18 +169,29 @@ cache. The gate takes the first checker it finds, in this order:
 
 1. the executable `AAS_LEAN4CHECKER` selects explicitly;
 2. `lean4checker` on `PATH`;
-3. `leanchecker` beside the selected `lake`, which Lean toolchains ship from
-   v4.28. Under elan this is the `leanchecker` proxy, which follows the
-   project's `lean-toolchain`; for a project on an older toolchain the proxy
-   fails, and the replay reads as `kernel_check_failed` rather than
-   `tool_unavailable`.
+3. the `leanchecker` of the toolchain that the selected `lake` runs, which
+   Lean toolchains ship from v4.28. `kernel-check` runs `lake env` once in the
+   project root, within the `--timeout` budget and the output cap, reads the
+   `LEAN_SYSROOT` it prints, and takes `<LEAN_SYSROOT>/bin/leanchecker` when
+   that is a regular file whose real path lies outside the project root.
+   It never takes the file beside `lake`: under elan that file is a proxy that
+   follows the project's `lean-toolchain`.
 
-`tool_status.lean4checker` reports the choice: `source` is `env`, `path` or
-`toolchain`, and a toolchain checker also carries `name: leanchecker`. The
-gate never auto-selects a checker inside the project root, such as the
-project's `.lake/build/bin/lean4checker` or a `leanchecker` beside a
-project-local `lake`: an artifact under review must not silently supply its
-own certifying checker. An explicitly selected checker inside the project
+When `lake env` fails, times out or exceeds the output cap, when it prints no
+single absolute `LEAN_SYSROOT`, or when that toolchain has no `leanchecker`
+(Lean before v4.28), no replay runs. The result is `tool_unavailable`, as for
+any missing checker, and `tool_status.lean4checker.detail` names the reason.
+
+`tool_status.lean4checker` reports the choice: `source` is `env`, `path`,
+`toolchain` or `not-found`, and a toolchain checker also carries
+`name: leanchecker`. `doctor` never runs `lake env`, because that loads the
+project's Lake configuration. When neither `AAS_LEAN4CHECKER` nor `PATH` gives
+a checker, `doctor` reports `not-found` with a `detail` saying that
+`kernel-check` resolves the toolchain's `leanchecker` through `lake env` at
+run time. The gate never auto-selects a checker inside the project root, such
+as the project's `.lake/build/bin/lean4checker` or a `leanchecker` under a
+`LEAN_SYSROOT` inside it: an artifact under review must not silently supply
+its own certifying checker. An explicitly selected checker inside the project
 root remains allowed, but the payload marks it as project-controlled rather
 than independent.
 
