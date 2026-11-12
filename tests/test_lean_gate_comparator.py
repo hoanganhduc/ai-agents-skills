@@ -10,7 +10,8 @@ generates the workspace's ``lakefile.toml``, ``AASSolution.lean`` and
 program lake comparator runs in place of bwrap, the phase log it writes,
 and the classification of a finished run. The run itself (state directory,
 host guards, workspace, judge, integrity checks, receipt and cleanup) is
-tested on Linux with a fake toolchain and a fake bwrap.
+tested on Linux with a fake toolchain and a fake bwrap, and, where Lean
+v4.35.0 and bubblewrap 0.12.0 or later are installed, with Lean itself.
 
 Everything else runs on every platform, except the wrapper program itself,
 which forks and runs bwrap and so is run only on POSIX hosts. The comparator
@@ -4139,6 +4140,222 @@ class ComparatorRunTests(unittest.TestCase):
             ],
         )
         self.assertEqual(self._runs(), [])
+
+
+# The comparator verb with Lean itself: lake comparator v4.35.0, its leanexport
+# and leanchecker, in the local bwrap. One theorem is judged: comm, frozen from
+# this reviewed statement.
+REAL_TOOLCHAIN = "leanprover/lean4:v4.35.0"
+REAL_CHALLENGE = "theorem comm (a b : Nat) : a + b = b + a := by\n  sorry\n"
+# The steps of a core run that reaches the judgment, each exiting 0, and of an
+# accepted one: the judgment, then leanchecker.
+JUDGED_STEPS = [(phase, target, 0) for phase, target in STEPS_BEFORE_KERNELS]
+ACCEPTED_STEPS = [*JUDGED_STEPS, ("kernel", "leanchecker", 0)]
+
+
+class RealComparatorTests(unittest.TestCase):
+    """REGRESSION CHECKS: the comparator verb on Lean v4.35.0 and the local bwrap.
+
+    These assertions already held at the S3-B head, where the run was wired;
+    no gate code changes with them. They confirm on Lean itself what the fake
+    toolchain only assumes: Lake builds a two-module closure from the generated
+    lakefile's globs, lake comparator's temporary files land under the run's
+    TMPDIR (the wrapper refuses a kernel step that binds anything else), and
+    the judgments the classifier knows reach the payload as rejections.
+
+    The class runs only on a Linux host, not as root, where Lean v4.35.0 is
+    installed where the gate looks for it, bubblewrap 0.12.0 or later is
+    found and starts its sandbox, /usr/bin/python3 is 3.9 or later, and the
+    temporary directory has the free space a run needs; elsewhere it is
+    skipped with the reason. Each case freezes the challenge with that
+    toolchain and runs the verb once, about 20 seconds, with a temporary
+    XDG_STATE_HOME and the default memory limit (off when this host starts no
+    user scope with that limit).
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if sys.platform != "linux":
+            raise unittest.SkipTest("lake comparator sandboxes the solution with Linux namespaces")
+        if os.geteuid() == 0:
+            raise unittest.SkipTest("the comparator never runs as root")
+        resolved = gate.resolve_comparator_toolchain(REAL_TOOLCHAIN)
+        if resolved["status"] != "available":
+            raise unittest.SkipTest(f"needs {REAL_TOOLCHAIN} installed: {resolved['detail']}")
+        bwrap = gate.bwrap_status(probe=True)
+        if bwrap["status"] != "available":
+            raise unittest.SkipTest(f"needs bubblewrap 0.12.0 or later: {bwrap['detail']}")
+        preflight = gate.bwrap_preflight(bwrap["path"])
+        if preflight["status"] != "ok":
+            raise unittest.SkipTest(f"the bwrap sandbox does not start: {preflight['detail']}")
+        check = subprocess.run(
+            ["/usr/bin/python3", "-I", "-c", "import sys; sys.exit(sys.version_info < (3, 9))"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if check.returncode != 0:
+            raise unittest.SkipTest("the run's wrapper program needs /usr/bin/python3 3.9 or later")
+        free = gate.shutil.disk_usage(tempfile.gettempdir()).free
+        if free < gate.COMPARATOR_MIN_FREE_BYTES:
+            raise unittest.SkipTest(
+                f"the temporary directory has {free} bytes free; a run needs "
+                f"{gate.COMPARATOR_MIN_FREE_BYTES}"
+            )
+        limit = gate.COMPARATOR_DEFAULT_MEMORY_LIMIT
+        cls.memory_limit = "off" if gate._comparator_memory_preflight(limit) else limit
+
+    def _judge(self, files: dict[str, str], *modules: str) -> dict[str, Any]:
+        """Freeze REAL_CHALLENGE, run the verb on ``files`` once, and check what it leaves.
+
+        The run leaves no run directory, and its receipt holds the payload's
+        result, sections and run.
+        """
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(os.path.realpath(tmp.name))
+        statement = base / "statement"
+        statement.mkdir()
+        frozen = challenge_tests._freeze(
+            challenge_tests._write_source(statement, REAL_CHALLENGE),
+            base / "frozen",
+            theorems=("comm",),
+            toolchain=REAL_TOOLCHAIN,
+        )
+        self.assertTrue(frozen["ok"], frozen)
+        project = _tree(base / "input", files)
+        state = base / "state"
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)}):
+            payload = gate.comparator_payload(
+                project,
+                challenge_record=Path(frozen["challenge_record"]),
+                challenge_record_sha256=frozen["record_sha256"],
+                solution_modules=list(modules or ("Solution",)),
+                timeout=gate.COMPARATOR_DEFAULT_TIMEOUT,
+                paranoid=False,
+                keep_workspace=False,
+                memory_limit=self.memory_limit,
+            )
+        comparator_state = state / "ai-agents-skills" / "comparator"
+        self.assertEqual(os.listdir(comparator_state / "runs"), [], payload)
+        receipt_path = Path(payload["receipt"]["path"])
+        self.assertEqual(
+            receipt_path,
+            comparator_state / "receipts" / (payload["run"]["run_id"] + ".json"),
+            payload,
+        )
+        data = receipt_path.read_bytes()
+        self.assertEqual(payload["receipt"]["sha256"], _sha256(data))
+        self.assertEqual(_mode(receipt_path), 0o600)
+        receipt = json.loads(data.decode("utf-8"))
+        self.assertEqual(receipt["result"], {key: payload[key] for key in RESULT_KEYS})
+        for section in ("toolchain", "sandbox", "challenge"):
+            self.assertEqual(receipt[section], payload[section], section)
+        self.assertEqual(receipt["solution"], {"input": str(project), **payload["solution"]})
+        self.assertEqual(
+            receipt["run"],
+            {
+                key: payload["run"][key]
+                for key in ("argv", "returncode", "seconds", "timeout_seconds", "phases")
+            },
+        )
+        self.assertEqual(payload["toolchain"]["spec"], REAL_TOOLCHAIN)
+        self.assertTrue(
+            payload["toolchain"]["lean_version"].startswith("Lean (version 4.35.0,"),
+            payload["toolchain"],
+        )
+        self.assertEqual(payload["sandbox"]["memory_limit"], self.memory_limit)
+        self.assertEqual(payload["solution"]["post_digest"], payload["solution"]["digest"])
+        return payload
+
+    def _assert_result(
+        self, payload: dict[str, Any], status: str, kind: str = "", detail: str = ""
+    ) -> None:
+        self.assertEqual(
+            (
+                payload["comparator_status"],
+                payload["comparator_rejection_kind"],
+                payload["comparator_detail"],
+                payload["ok"],
+                payload["findings"],
+            ),
+            (status, kind, detail, status == "accepted", []),
+            payload,
+        )
+
+    def _assert_steps(self, payload: dict[str, Any], steps: list[tuple[str, str, int]]) -> None:
+        phases = payload["run"]["phases"]
+        self.assertEqual(
+            [(step["phase"], step["target"], step["rc"]) for step in phases], steps, payload
+        )
+        # Resolving asks for a network, and the wrapper takes it away.
+        self.assertEqual(phases[0]["dropped"], ["--share-net"])
+        self.assertEqual([step["refused"] for step in phases], [""] * len(phases))
+
+    def test_accepted(self) -> None:
+        payload = self._judge(
+            {"Solution.lean": "theorem comm (a b : Nat) : a + b = b + a := Nat.add_comm a b\n"}
+        )
+        self._assert_result(payload, "accepted")
+        self._assert_steps(payload, ACCEPTED_STEPS)
+        self.assertEqual(payload["run"]["returncode"], 0)
+        self.assertEqual(payload["run"]["stdout_tail"].rstrip("\n").splitlines()[-1], OKAY_LINE)
+        self.assertEqual(list(payload["solution"]["files"]), ["Solution.lean"])
+
+    def test_weakened_statement(self) -> None:
+        payload = self._judge(
+            {"Solution.lean": "theorem comm (a b : Nat) : a + b = a + b := rfl\n"}
+        )
+        self._assert_result(
+            payload,
+            "rejected",
+            "statement_mismatch",
+            "Challenge and solution theorem statement do not match: 'comm'",
+        )
+        self._assert_steps(payload, JUDGED_STEPS)
+
+    def test_sorry(self) -> None:
+        payload = self._judge(
+            {"Solution.lean": "theorem comm (a b : Nat) : a + b = b + a := by\n  sorry\n"}
+        )
+        self._assert_result(
+            payload, "rejected", "forbidden_axiom", "Illegal axiom detected: 'sorryAx'"
+        )
+        self._assert_steps(payload, JUDGED_STEPS)
+
+    def test_compile_error(self) -> None:
+        payload = self._judge(
+            {
+                "Solution.lean": (
+                    "theorem comm (a b : Nat) : a + b = b + a := by\n  exact not_a_lemma a b\n"
+                )
+            }
+        )
+        self._assert_result(payload, "rejected", "build_failed", "Child exited with 1")
+        self._assert_steps(payload, [*JUDGED_STEPS[:3], ("build", "AASSolution", 1)])
+
+    def test_two_module_solution(self) -> None:
+        # Sol.Main imports Sol.Lemmas; Sol/Broken.lean is not in the closure,
+        # so it is neither copied nor built.
+        payload = self._judge(
+            {
+                "Sol/Lemmas.lean": (
+                    "theorem Sol.swap (a b : Nat) : a + b = b + a := Nat.add_comm a b\n"
+                ),
+                "Sol/Main.lean": (
+                    "import Sol.Lemmas\n\n"
+                    "theorem comm (a b : Nat) : a + b = b + a := Sol.swap a b\n"
+                ),
+                "Sol/Broken.lean": "this file is not Lean\n",
+            },
+            "Sol.Main",
+        )
+        self._assert_result(payload, "accepted")
+        self._assert_steps(payload, ACCEPTED_STEPS)
+        self.assertEqual(payload["solution"]["modules"], ["Sol.Main"])
+        self.assertEqual(list(payload["solution"]["files"]), ["Sol/Main.lean", "Sol/Lemmas.lean"])
 
 
 if __name__ == "__main__":
