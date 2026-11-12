@@ -203,7 +203,8 @@ def _comparator_toolchain(directory: Path) -> Path:
 
     bin/ holds the comparator's binaries and the bundled kernels. lib/lean
     holds two shared libraries beside a module file and a directory, which
-    are not libraries.
+    are not libraries, and the module files of Lean.Elab and Std.Data.HashMap,
+    the core imports the accepted challenges use.
     """
 
     _toolchain_dir(directory, COMPARATOR_BINARIES + BUNDLED_KERNELS)
@@ -212,6 +213,10 @@ def _comparator_toolchain(directory: Path) -> Path:
     for name in ("libleanshared.so", "libInit_shared.so"):
         (library / name).write_bytes(f"\x7fELF {name}\n".encode("utf-8"))
     (library / "Init.olean").write_bytes(b"not a library\n")
+    for parts in (("Lean", "Elab.olean"), ("Std", "Data", "HashMap.olean")):
+        module = library.joinpath(*parts)
+        module.parent.mkdir(parents=True, exist_ok=True)
+        module.write_bytes(b"a module, not a library\n")
     return directory
 
 
@@ -1029,6 +1034,42 @@ class ChallengeFreezeTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
         self.assertNotIn("permits a compiler-trust axiom is therefore written", section)
+
+    def test_an_import_the_toolchain_does_not_ship_is_refused(self) -> None:
+        """OC-DS-2: every import is a module the pinned toolchain ships.
+
+        Lean looks for ``import A.B`` at ``<toolchain>/lib/lean/A/B.olean``, so
+        a challenge that imports a core-rooted module the toolchain does not
+        ship can never build, and no comparator run against it gives a
+        verdict. The fake toolchain ships Lean.Elab and Std.Data.HashMap; the
+        shipped import beside each refused one shows that only the module
+        the toolchain lacks is refused.
+        """
+
+        (self.toolchain / "lib" / "lean" / "Lean" / "Odd.olean").mkdir()
+        for label, module in (
+            ("a module the toolchain does not ship", "Lean.NoSuchModule"),
+            ("a module file that is a directory", "Lean.Odd"),
+        ):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                source = _write_source(tmp, f"import Lean.Elab\nimport {module}\n" + CHALLENGE)
+                out = Path(tmp) / "out"
+                payload = _freeze(source, out)
+                self._assert_refused(payload, "challenge_import_not_trusted", out)
+                self.assertEqual(
+                    payload["findings"],
+                    [
+                        {
+                            "kind": "challenge_import_not_trusted",
+                            "detail": f"{module}: not shipped by {DEFAULT_TOOLCHAIN}",
+                        }
+                    ],
+                )
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        section = " ".join(skill.split("## Challenge freeze", 1)[1].split("\n## ", 1)[0].split())
+        for phrase in ("`lib/lean/A/B.olean`", "`<module>: not shipped by <spec>`"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs are POSIX-only")
     def test_a_fifo_swapped_in_after_lstat_cannot_block_the_source_read(self) -> None:

@@ -3399,9 +3399,10 @@ def challenge_freeze_payload(
     give the same bytes, and their sha256 (``record_sha256``) is the pin a
     caller keeps. Its ``toolchain`` is the spec with toolchain_file_digests()
     of the installed toolchain that resolve_comparator_toolchain() finds
-    outside the source's directory. A refusal is a finding and leaves nothing
-    behind. No tool runs here: the checks read names and bytes, and whether
-    the statement says what the claim means stays a review step.
+    outside the source's directory, and every import must be a module that
+    toolchain ships. A refusal is a finding and leaves nothing behind. No
+    tool runs here: the checks read names and bytes, and whether the
+    statement says what the claim means stays a review step.
     """
 
     payload: dict[str, Any] = {
@@ -3542,6 +3543,18 @@ def challenge_freeze_payload(
             for module in imported_modules(stripped):
                 if valid_lean_name(module) and module.split(".", 1)[0] in CORE_IMPORT_ROOTS:
                     imports.append(module)
+                    # Lean looks for `import A.B` at <toolchain>/lib/lean/A/B.olean,
+                    # so a module the toolchain does not ship can never build.
+                    *package, name = module.split(".")
+                    if toolchain_dir and not _regular_file(
+                        Path(toolchain_dir, "lib", "lean", *package, name + ".olean")
+                    ):
+                        findings.append(
+                            {
+                                "kind": "challenge_import_not_trusted",
+                                "detail": f"{module}: not shipped by {toolchain}",
+                            }
+                        )
                 else:
                     findings.append(
                         {"kind": "challenge_import_not_trusted", "detail": module or "<missing>"}

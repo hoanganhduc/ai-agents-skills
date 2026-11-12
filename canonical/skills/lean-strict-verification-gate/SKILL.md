@@ -386,7 +386,11 @@ On a refusal the verb exits 1 and writes nothing. Each refusal is a finding:
   larger than 1 MiB, or not UTF-8;
 - `challenge_import_not_trusted`: an import outside `allowed_import_roots`,
   such as `Mathlib`, an `import` that names no module, or a module name with
-  `«»` escapes;
+  `«»` escapes. So is a module the named toolchain does not ship: Lean looks
+  for `import A.B` at `lib/lean/A/B.olean` in the toolchain directory, so
+  without that regular file the challenge can never build. The detail is then
+  `<module>: not shipped by <spec>`, such as
+  `Lean.NoSuchModule: not shipped by leanprover/lean4:v4.35.0`;
 - `challenge_unsafe_construct`: a hit of the scanner's safety patterns, such
   as `#eval` or `run_cmd`, or a source the scanner's lexer cannot read to its
   end, with the detail `lexical_scan_incomplete: ...`. That lexer does not
