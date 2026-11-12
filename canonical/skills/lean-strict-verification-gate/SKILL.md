@@ -606,7 +606,8 @@ challenge bytes, the solution files exactly as the checks read them, and
   definition holes and no extra kernels.
 
 The judge is `<toolchain>/bin/lake comparator --config <run>/comparator.json`,
-with `--paranoid` for a paranoid run, under `nice -n 19` and `env -i`, so it
+with `--paranoid` for a paranoid run, under `nice -n 19` when `/usr/bin/nice`
+is an executable file, and under `env -i`, so it
 gets only `PATH=<toolchain>/bin:/usr/bin:/bin`, `HOME=<run>/home`,
 `TMPDIR=<run>/tmp`, `LANG=C.UTF-8` and
 `COMPARATOR_BWRAP=<run>/bwrap-wrapper`. lake comparator writes its temporary
@@ -718,7 +719,8 @@ Once the checks before the run have passed, every other result is
 - `external_kernel_disagreement`: a bundled kernel rejected what
   `leanchecker` accepted;
 - `kernel_failed`: a kernel failed without the rejection above;
-- `sandbox_failed`: a `bwrap: ` line came with a would-be rejection;
+- `sandbox_failed`: a stderr line holding `bwrap: `, even after other text on
+  that line, came with a would-be rejection;
 - `timeout`, `output_limit` and `comparator_failed`, the last for an
   unexpected error or a judge that cannot be started;
 - `out_of_memory`: the out-of-memory killer stopped a process of the run
@@ -741,13 +743,15 @@ change gives `command_failed`, whatever the judge said:
   `solution.post_digest` is their digest after the run;
 - `workspace_changed_during_verification`: the workspace outside `.lake`;
 - `toolchain_changed_during_verification`: the toolchain's pinned files, or a
-  stat walk of its whole tree (path, mode, size and modification time);
+  stat walk of its whole tree (path, mode, size, modification time and change
+  time, which a user process cannot set back);
 - `sandbox_changed_during_verification`: the sandbox wrapper, its
   `wrapper.json` or the bwrap;
 - `challenge_changed_during_verification`: the record, its `Challenge.lean`
   or the run's `comparator.json`.
 
-Once the judge has started, the run writes a receipt whatever its result:
+Once the gate has tried to start the judge, the run writes a receipt whatever
+its result, even when the judge could not be started:
 `receipts/<run_id>.json`, a new `0600` file holding a
 `host_comparator_receipt.v1` record. The record names the run and its time,
 the gate file and its sha256, and the platform. It holds the payload's
@@ -755,7 +759,7 @@ toolchain, sandbox, challenge and solution sections, the run's argv, exit
 code, seconds, timeout and phases, and the result. The payload's `receipt`
 gives the file's path and sha256. A receipt that cannot be written gives
 `receipt_write_failed` (`command_failed`), so no acceptance goes unrecorded. A
-run that stops before the judge starts writes no receipt.
+run that stops before the gate tries to start the judge writes no receipt.
 
 The run directory is removed on every path, without following a symlink,
 before the receipt is written. The removal works one directory at a time

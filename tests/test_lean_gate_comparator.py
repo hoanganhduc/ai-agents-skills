@@ -2697,9 +2697,11 @@ class ComparatorClassificationTests(unittest.TestCase):
                 failed("sandbox_failed", "Child exited with 1"),
             ),
             (
+                # The solution's output can leave a line unterminated, so a bwrap
+                # diagnostic may follow other text on its line (Kimi review, KM-1).
                 "build failed with bwrap: inside a line",
                 run(1, " bwrap: x\n" + child_1, _phases(0, 0, 0, 1)),
-                rejected("build_failed", "Child exited with 1"),
+                failed("sandbox_failed", "Child exited with 1"),
             ),
             (
                 "resolve panicked",
@@ -2838,6 +2840,28 @@ class ComparatorClassificationTests(unittest.TestCase):
         self.assertIn("lean4lean, con-ron", disagreement[3]["detail"])
         self.assertIn("signal 9", classify(*run(-9, "", []))[3]["detail"])
         self.assertIn("137", classify(*run(137, "", []))[3]["detail"])
+
+    def test_a_glued_bwrap_line_is_still_a_sandbox_failure(self) -> None:
+        """A bwrap diagnostic glued to the solution's unterminated output still takes a rejection back."""
+
+        classify = gate.classify_comparator_run
+        diagnostic = "bwrap: setting up uid map: Permission denied"
+        for label, phases, message, detail in (
+            ("kernel", _phases(0, 0, 0, 0, 0, 1), "error: Lean default exited with 1\n", "Lean default exited with 1"),
+            ("build", _phases(0, 0, 0, 1), "error: Child exited with 1\n", "Child exited with 1"),
+        ):
+            for placement, stderr in (
+                ("own line", f"{diagnostic}\n{message}"),
+                ("glued", f"partial output without a newline{diagnostic}\n{message}"),
+            ):
+                with self.subTest(step=label, placement=placement):
+                    self._check(
+                        classify(1, "", stderr, phases, False),
+                        "command_failed",
+                        "",
+                        detail,
+                        "sandbox_failed",
+                    )
 
     def test_out_of_memory_takes_a_verdict_back(self) -> None:
         """An OOM kill in any step is no verdict; an unread count is one for a failed build or kernel."""
@@ -4045,6 +4069,13 @@ class ComparatorRunTests(unittest.TestCase):
             ("an input file", solution, ["append", str(solution)], "input", "Solution.lean"),
             ("the workspace", None, ["write", "{ws}/Planted.lean"], "workspace", "outside .lake"),
             ("a toolchain entry", stat_only, ["touch", str(stat_only)], "toolchain", "stat walk"),
+            (
+                "a toolchain entry's bytes, its size and times kept",
+                stat_only,
+                ["same_size", str(stat_only)],
+                "toolchain",
+                "stat walk",
+            ),
             ("a pinned toolchain file", pinned, ["same_size", str(pinned)], "toolchain", "pinned"),
             ("the wrapper", None, ["append", "{run}/bwrap-wrapper"], "sandbox", "wrapper program"),
             ("wrapper.json", None, ["same_size", "{run}/wrapper.json"], "sandbox", "wrapper.json"),
@@ -4065,10 +4096,11 @@ class ComparatorRunTests(unittest.TestCase):
                 payload = self._judge()
                 self._assert_no_verdict(payload, finding, detail)
                 # Each check names only what it saw change.
-                if label == "a toolchain entry":
+                if label.startswith("a toolchain entry"):
                     self.assertNotIn("pinned", payload["findings"][0]["detail"])
                 if label == "a pinned toolchain file":
-                    self.assertNotIn("stat walk", payload["findings"][0]["detail"])
+                    # Its bytes changed, so its change time moved too: both checks see it.
+                    self.assertIn("stat walk", payload["findings"][0]["detail"])
                 if kind == "input":
                     self.assertNotEqual(
                         payload["solution"]["post_digest"], payload["solution"]["digest"]
@@ -4550,6 +4582,22 @@ class ComparatorRunTests(unittest.TestCase):
         self.assertEqual(gate._comparator_remove_run(link), "")
         self.assertFalse(os.path.lexists(link))
         self.assertTrue((outside / "kept").exists())
+
+    def test_interrupt_before_the_wait_kills_the_child(self) -> None:
+        """Ctrl-C between the child's start and the wait still kills it with kill_on_interrupt."""
+
+        marker = self.base / "survived"
+        with mock.patch.object(gate.threading.Thread, "start", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                gate.run_bounded_command(
+                    ["/bin/sh", "-c", f"sleep 2; echo survived > {shlex.quote(str(marker))}"],
+                    timeout=30,
+                    max_output_bytes=1024,
+                    kill_on_interrupt=True,
+                )
+        # The child would write its marker 2 s after it started, had it survived.
+        time.sleep(3)
+        self.assertFalse(marker.exists(), "the child kept running after Ctrl-C")
 
     def test_interrupt_stops_the_judge(self) -> None:
         """Ctrl-C during the judge kills it and its scope, removes the run and writes no receipt."""

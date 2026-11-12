@@ -2310,78 +2310,134 @@ def run_bounded_command(
         env=env,
         **group_options,
     )
-    if process.stdout is None or process.stderr is None:
-        _terminate_process_tree(process)
-        raise OSError("could not create child output pipes")
-
-    buffers = {"stdout": bytearray(), "stderr": bytearray()}
-    total = [0]
-    lock = threading.Lock()
-    output_limit_hit = threading.Event()
-    reader_errors: list[str] = []
-
-    def drain(stream: Any, name: str) -> None:
-        try:
-            while True:
-                read = getattr(stream, "read1", stream.read)
-                chunk = read(65_536)
-                if not chunk:
-                    return
-                should_terminate = False
-                with lock:
-                    room = max(0, max_output_bytes - total[0])
-                    if room:
-                        buffers[name].extend(chunk[:room])
-                    total[0] += len(chunk)
-                    if total[0] > max_output_bytes and not output_limit_hit.is_set():
-                        output_limit_hit.set()
-                        should_terminate = True
-                if should_terminate:
-                    _terminate_process_tree(process)
-        except (OSError, ValueError) as exc:
-            with lock:
-                reader_errors.append(f"{name}: {type(exc).__name__}")
-            _terminate_process_tree(process)
-
-    threads = [
-        threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
-        threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
-
-    timed_out = False
-    cleanup_error: str | None = None
-
-    def evidence() -> dict[str, Any] | None:
-        if not capture_evidence:
-            return None
-        with lock:
-            streams = {name: bytes(raw) for name, raw in buffers.items()}
-            capture_error = ", ".join(reader_errors) or None
-        partial = bool(timed_out or output_limit_hit.is_set() or capture_error or cleanup_error)
-        result: dict[str, Any] = {
-            "schema_version": "process_evidence.v1", "return_code": process.returncode,
-            "timed_out": timed_out, "oversized": output_limit_hit.is_set(),
-            "capture_error": capture_error, "cleanup_error": cleanup_error,
-            "capture_complete": not partial,
-        }
-        for name, raw in streams.items():
-            result[name] = {"state": "partial" if partial else "captured", "bytes": len(raw),
-                "sha256": hashlib.sha256(raw).hexdigest(),
-                "base64": base64.b64encode(raw).decode("ascii")}
-        return result
-
-    def evidence_error(error: Exception) -> Exception:
-        error.process_evidence = evidence()
-        return error
-
+    threads: list[threading.Thread] = []
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _terminate_process_tree(process)
+        if process.stdout is None or process.stderr is None:
+            _terminate_process_tree(process)
+            raise OSError("could not create child output pipes")
+
+        buffers = {"stdout": bytearray(), "stderr": bytearray()}
+        total = [0]
+        lock = threading.Lock()
+        output_limit_hit = threading.Event()
+        reader_errors: list[str] = []
+
+        def drain(stream: Any, name: str) -> None:
+            try:
+                while True:
+                    read = getattr(stream, "read1", stream.read)
+                    chunk = read(65_536)
+                    if not chunk:
+                        return
+                    should_terminate = False
+                    with lock:
+                        room = max(0, max_output_bytes - total[0])
+                        if room:
+                            buffers[name].extend(chunk[:room])
+                        total[0] += len(chunk)
+                        if total[0] > max_output_bytes and not output_limit_hit.is_set():
+                            output_limit_hit.set()
+                            should_terminate = True
+                    if should_terminate:
+                        _terminate_process_tree(process)
+            except (OSError, ValueError) as exc:
+                with lock:
+                    reader_errors.append(f"{name}: {type(exc).__name__}")
+                _terminate_process_tree(process)
+
+        threads = [
+            threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        timed_out = False
+        cleanup_error: str | None = None
+
+        def evidence() -> dict[str, Any] | None:
+            if not capture_evidence:
+                return None
+            with lock:
+                streams = {name: bytes(raw) for name, raw in buffers.items()}
+                capture_error = ", ".join(reader_errors) or None
+            partial = bool(timed_out or output_limit_hit.is_set() or capture_error or cleanup_error)
+            result: dict[str, Any] = {
+                "schema_version": "process_evidence.v1", "return_code": process.returncode,
+                "timed_out": timed_out, "oversized": output_limit_hit.is_set(),
+                "capture_error": capture_error, "cleanup_error": cleanup_error,
+                "capture_complete": not partial,
+            }
+            for name, raw in streams.items():
+                result[name] = {"state": "partial" if partial else "captured", "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "base64": base64.b64encode(raw).decode("ascii")}
+            return result
+
+        def evidence_error(error: Exception) -> Exception:
+            error.process_evidence = evidence()
+            return error
+
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _terminate_process_tree(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        for thread in threads:
+            thread.join(timeout=5)
+        if any(thread.is_alive() for thread in threads):
+            _terminate_process_tree(process)
+            for stream in (process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            for thread in threads:
+                thread.join(timeout=1)
+        if any(thread.is_alive() for thread in threads):
+            cleanup_error = "child output pipes did not close after termination"
+            raise evidence_error(OSError(cleanup_error))
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        if process.poll() is None:
+            _terminate_process_tree(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired as exc:
+                cleanup_error = "child could not be reaped after termination"
+                raise evidence_error(OSError(cleanup_error)) from exc
+
+        stdout_bytes = bytes(buffers["stdout"])
+        stderr_bytes = bytes(buffers["stderr"])
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        if output_limit_hit.is_set():
+            raise evidence_error(CommandOutputLimitExceeded(
+                max_output_bytes, stdout[-4000:], stderr[-4000:],
+            ))
+        if timed_out:
+            raise evidence_error(subprocess.TimeoutExpired(
+                command, timeout, output=stdout_bytes, stderr=stderr_bytes,
+            ))
+        if reader_errors:
+            raise evidence_error(OSError("could not capture child output: " + ", ".join(reader_errors)))
+        return BoundedCommandResult(
+            int(process.returncode or 0),
+            stdout,
+            stderr,
+            total[0],
+            evidence(),
+        )
     except KeyboardInterrupt:
+        # Ctrl-C at any point after the child started: with kill_on_interrupt,
+        # kill its process group, reap it and close its pipes before going on.
         if kill_on_interrupt:
             _terminate_process_tree(process)
             try:
@@ -2389,65 +2445,15 @@ def run_bounded_command(
             except subprocess.TimeoutExpired:
                 pass
             for thread in threads:
-                thread.join(timeout=1)
+                if thread.ident is not None:
+                    thread.join(timeout=1)
             for stream in (process.stdout, process.stderr):
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
         raise
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-    for thread in threads:
-        thread.join(timeout=5)
-    if any(thread.is_alive() for thread in threads):
-        _terminate_process_tree(process)
-        for stream in (process.stdout, process.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
-        for thread in threads:
-            thread.join(timeout=1)
-    if any(thread.is_alive() for thread in threads):
-        cleanup_error = "child output pipes did not close after termination"
-        raise evidence_error(OSError(cleanup_error))
-    for stream in (process.stdout, process.stderr):
-        try:
-            stream.close()
-        except OSError:
-            pass
-    if process.poll() is None:
-        _terminate_process_tree(process)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired as exc:
-            cleanup_error = "child could not be reaped after termination"
-            raise evidence_error(OSError(cleanup_error)) from exc
-
-    stdout_bytes = bytes(buffers["stdout"])
-    stderr_bytes = bytes(buffers["stderr"])
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    stderr = stderr_bytes.decode("utf-8", errors="replace")
-    if output_limit_hit.is_set():
-        raise evidence_error(CommandOutputLimitExceeded(
-            max_output_bytes, stdout[-4000:], stderr[-4000:],
-        ))
-    if timed_out:
-        raise evidence_error(subprocess.TimeoutExpired(
-            command, timeout, output=stdout_bytes, stderr=stderr_bytes,
-        ))
-    if reader_errors:
-        raise evidence_error(OSError("could not capture child output: " + ", ".join(reader_errors)))
-    return BoundedCommandResult(
-        int(process.returncode or 0),
-        stdout,
-        stderr,
-        total[0],
-        evidence(),
-    )
 
 
 def run_typecheck(
@@ -5214,8 +5220,9 @@ def _comparator_judgment(
     - every kernel ran, leanchecker last and exiting 1, and the message names
       the first kernel that failed and its exit code (kernel_rejected).
 
-    A stderr line starting "bwrap: " takes the last two verdicts back, since a
-    bwrap that fails also exits 1 (sandbox_failed). Every other run is
+    A stderr line holding "bwrap: ", even after other text on the same line,
+    takes the last two verdicts back, since a bwrap that fails also exits 1
+    (sandbox_failed). Every other run is
     command_failed with one finding, such as a refused step, a message that is
     not a judgment, a failure on the challenge's side, or a bundled kernel that
     rejects what leanchecker accepts (external_kernel_disagreement). A rejection
@@ -5308,7 +5315,9 @@ def _comparator_judgment(
         return "rejected", kind, detail, None
     phase, target = steps[failed]
     rc = phases[failed]["rc"]
-    bwrap_error = next((line for line in stderr.split("\n") if line.startswith("bwrap: ")), None)
+    # The solution's output can leave a line unterminated, so a bwrap diagnostic
+    # may follow other text on its line.
+    bwrap_error = next((line for line in stderr.split("\n") if "bwrap: " in line), None)
     if (phase, target) == ("build", COMPARATOR_SOLUTION_MODULE):
         if rc == 1 and failed == len(phases) - 1 and message == "Child exited with 1":
             if bwrap_error is not None:
@@ -5457,9 +5466,10 @@ def _comparator_judge(
     A refusal or an unexpected error ends the run without a verdict, with its
     finding. The run directory is then removed, unless keep_workspace keeps
     it; a removal that fails makes the result command_failed with
-    cleanup_failed. Once the judge has been started, the run's receipt is
-    written whatever the result (D10), after the checks that follow the run
-    and the removal, so it records the same result as the payload.
+    cleanup_failed. Once the gate has tried to start the judge, the run's
+    receipt is written whatever the result (D10), even when the judge could
+    not be started, after the checks that follow the run and the removal, so
+    it records the same result as the payload.
     """
 
     started = False
@@ -6128,10 +6138,11 @@ def _comparator_workspace_digests(ws: Path) -> dict[str, str]:
 
 
 def _comparator_tree_fingerprint(root: Path) -> str:
-    """A stat walk of ``root``: sha256 over each entry's path, mode, size and mtime.
+    """A stat walk of ``root``: sha256 over each entry's path, mode, size, mtime and ctime.
 
-    The walk never follows a symlink, and an entry or a directory it cannot
-    read raises OSError.
+    The change time catches a change whose modification time was set back: a
+    process of the user can set mtime, but not ctime. The walk never follows a
+    symlink, and an entry or a directory it cannot read raises OSError.
     """
 
     def fail(error: OSError) -> None:
@@ -6145,7 +6156,7 @@ def _comparator_tree_fingerprint(root: Path) -> str:
             info = os.lstat(path)
             hasher.update(
                 f"{os.path.relpath(path, root)}\0{info.st_mode}\0{info.st_size}\0"
-                f"{info.st_mtime_ns}\n".encode("utf-8", "surrogateescape")
+                f"{info.st_mtime_ns}\0{info.st_ctime_ns}\n".encode("utf-8", "surrogateescape")
             )
     return hasher.hexdigest()
 
