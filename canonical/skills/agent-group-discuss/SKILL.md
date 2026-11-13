@@ -300,7 +300,7 @@ Record the chosen profile, per-role model, and reasoning effort in `state.json`.
 Do not promise truncation cannot happen.
 Keep prompts compact. Relay only the selected decisive findings from prior
 rounds, verbatim and framed as data, and list the ids of findings not relayed;
-the caps and framing rules are in "Relaying findings between rounds" in
+the framing rules are in "Relaying findings between rounds" in
 `EXECUTION.md`.
 
 If a participant response is truncated:
@@ -618,10 +618,9 @@ The `Rejected` ledger travels with the accepted claims into every later phase.
 Each entry names the rejected claim or route, the reason for the rejection, the
 counterexample or failing step, and a reproduction ref (a round file entry, an
 artifact path with its sha256, or a deep-research evidence id), and is marked
-`taken: do not retry without an evidence delta`. Entries are framed as data,
-checked and capped as "Relaying findings between rounds" in `EXECUTION.md`
-states for `Dead ends` rows: an entry over a cap is refused and listed as not
-forwarded, never cut. "Template chaining" in `EXECUTION.md` says where the
+`taken: do not retry without an evidence delta`. Entries are framed as data
+and checked as "Relaying findings between rounds" in `EXECUTION.md` states
+for `Dead ends` rows, and are forwarded word for word, never cut. "Template chaining" in `EXECUTION.md` says where the
 ledger goes in each role prompt and how a retry is judged.
 
 ## Mandatory rules for template runs

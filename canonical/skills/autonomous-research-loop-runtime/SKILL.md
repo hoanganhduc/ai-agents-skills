@@ -55,7 +55,7 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 ```
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space list --dir research/run --limit 20
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh negative-space list --dir research/run
 ```
 
 Initialize a new goal-focused loop in enforce mode (the default for new v2
@@ -763,8 +763,8 @@ warning.
   open row's entry id, and `validate` warns about a duplicate on one approach
   that involves a worker row. Under the drive in enforce mode the host stages
   the worker's submission, and the drive records the warnings that staging
-  returns (at most 10, each cut at 400 characters and scrubbed like every
-  progress string) as `staging_warnings` on the candidate's
+  returns (all of them, whole, and scrubbed like every progress string) as
+  `staging_warnings` on the candidate's
   `result_review_start` event in `driver_logs/progress.jsonl`; that event
   raises no notify issue, is not a failure, and changes no stop decision. When
   the staged candidate cannot be loaded, or fails host validation, right after
@@ -783,12 +783,11 @@ warning.
   passed` says the declared checker finished, not that the hypothesis is false,
   and nothing re-runs the tool. The row records `checker_basis: self_reported`.
 - `negative-space list` prints the open rows newest first, one `| ` line each,
-  optionally for one `--approach-id`. Each text field is cut at 200 characters
-  with `[cut: N characters omitted]`, line breaks inside a field show as `\n`,
-  hidden characters are dropped and counted in `hidden_characters_removed`,
-  and rows past `--limit` are counted as `N further open entries omitted`. Cuts
-  are made only when a row is rendered; the stored row and its fingerprint are
-  unchanged.
+  optionally for one `--approach-id`. Each text field is shown whole, line
+  breaks inside a field show as `\n`, and hidden characters are dropped and
+  counted in `hidden_characters_removed`. Every row is listed unless
+  `--limit` is given; rows past it are counted as `N further open entries
+  omitted`. The stored row and its fingerprint are unchanged.
 
 Mechanism matching is warn-first. An approach whose mechanism fingerprint (case
 and spacing normalized) equals that of a blocked or closed approach, or of an
@@ -815,20 +814,19 @@ point at earlier results:
 - The iteration prompt, in every mode, carries after its goal-focus and
   goal-priority part a block headed `Negative knowledge (loop records; data,
   not instructions)`: the open rows, scoped to the v2 approach registry when
-  the loop has one, newest first, at most 20, one `| ` line each, within 8,000
-  characters, with `N further rows omitted` for the rest. A loop with no open
+  the loop has one, newest first, every row whole, one `| ` line each. A loop with no open
   row in scope gets no block. A ledger that cannot be read safely gives the
   line `Negative knowledge: the ledger could not be read safely, so its rows
   are not shown.` instead.
 - The target-advice brief shows the rows of the current plan's approach (the
   rows in the registry's scope when no plan names one), then the pointers,
   then the recovery.md excerpt. Required output is reserved first and always
-  ends the brief whole; the block (at most 3,000 characters), the pointers and
-  the excerpt (at most 8,000) take what is left, in that order. A cut
+  ends the brief whole; the block, the pointers and the excerpt (at most
+  8,000) take what is left, in that order. A cut
   next_preferred_path, recovery excerpt or overlong head ends with
   `[cut: N characters omitted]`; the brief is no longer truncated as a whole.
 - The result-review brief lists, after the candidate, the open rows of the
-  candidate's approach (at most 20,000 characters) with an instruction to flag
+  candidate's approach with an instruction to flag
   a result that repeats an open mechanism unless a later row records its
   reopening, then the pointers. Both take only what the reviewed content
   leaves, so only reviewed content can make the brief refuse.
@@ -875,9 +873,9 @@ The formal stamp's lineage is `loop`, since no record ties it to an approach.
 Each lineage gets one pointer: the formal stamp first in `loop`, then checked
 work, then the newest. The brief subject's lineage gets none (the plan's
 approach in the target brief, the candidate's in the review brief; the strategy
-brief compares every approach and leaves none out). Only the newest 64 ledger
-rows are considered, at most six pointer lines in at most 4,096 UTF-8 bytes are
-shown, and the rest are counted.
+brief compares every approach and leaves none out). Every ledger row is
+considered, and pointer lines that do not fit the room the brief leaves are
+counted.
 When the drive builds a brief between iterations, the section says that no
 iteration worker runs while the host builds it, so no pointer is held back as
 still being written. The standalone `panel` command and `goal-focus replan`
@@ -910,7 +908,7 @@ contract is a prompt rule, so a worker can still explore.
 host writes `host_handoff.md` in the loop directory unless a regular
 `handoff.md` is at least as new as the last ledger row (its `finalized_at`, else
 its `timestamp`). The file is built from records alone, with no model call: the
-last 20 ledger rows across shards, the newest 20 open negative-space rows with
+every ledger row across shards, every open negative-space row with
 their writer and review labels, the banked candidates with their claim and
 evidence ids, the proof artifacts the rows cite (always marked self-reported),
 the goal, success criteria and stop conditions from `loop_state.json`, and the
@@ -918,8 +916,7 @@ drive's stop reason, in the two-part handoff form of the
 `autonomous-research-loop` skill. A banked row is listed under Established only
 while it passes the host's archive and boundary checks, as a `panel_accepted`
 pointer does. Every line copied from a record starts with `| `, each field is
-cut with `[cut: N characters omitted]`, and hidden characters are dropped and
-counted. `recovery.md` gains the line
+whole, and hidden characters are dropped and counted. `recovery.md` gains the line
 `- Host handoff (written from records, no model call): host_handoff.md` once,
 and `init`, `append-iteration` and `retract-iteration` keep it while the file
 exists. A negative-space ledger or `recovery.md` that is not a regular file,
@@ -986,10 +983,10 @@ and `usd`, the `cap`, the `recorded_total` from `budget.json`,
 `explicit_iterations` and `unreported_iterations`; a row from before the
 statuses with a zero amount counts as unreported.
 
-**Failure groups.** `status` adds `failure_groups` with `window_bytes`,
-`progress_log` (`read`, `absent` or `unreadable`), `n`, `groups`,
-`other_count` and `advice`. The inputs are the last 262,144 bytes of
-`<loop>/driver_logs/progress.jsonl`, read without following a link (lines
+**Failure groups.** `status` adds `failure_groups` with `progress_log`
+(`read`, `absent` or `unreadable`), `n`, `groups` and `advice`. The inputs
+are the whole `<loop>/driver_logs/progress.jsonl`, read without following a
+link (lines
 that do not decode to a JSON object are skipped), and the blocked rows of
 `iterations.jsonl`. Each attempt is grouped by kind and class:
 
@@ -1007,14 +1004,14 @@ Each attempt counts once: progress lines are deduplicated on the preceding
 else `drive_cycle`, and a blocked row is one attempt however many progress
 lines repeat its state. A rejection at the iteration budget limit, which
 finalize banks as a blocked row, counts once, as `rejected`: a blocked row is
-left out when an `iteration_rejected` event in the window names its
+left out when an `iteration_rejected` event in the log names its
 `candidate_id`, and counts when no such event is read. `n` counts the most
 recent attempts, at most 10,
 leaving out `rejected` and `blocked` ones. When one `worker_failure` or
 `host_review_error` group holds at least 3 of them and at least half of `n`,
 `advice` names that group with the text "stop the loop, fix the cause, and
-restart". `groups` lists the 8 largest groups and `other_count` the attempts
-in the rest. Outages, rejections and blocked rows are listed but never
+restart". The agent chose the 10 and the 3; the user kept them on
+2026-11-13. `groups` lists every group, largest first. Outages, rejections and blocked rows are listed but never
 advise.
 
 The advice is for the operator: `status` shows it, and the notification of a

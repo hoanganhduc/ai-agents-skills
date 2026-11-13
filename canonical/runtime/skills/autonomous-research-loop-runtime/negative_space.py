@@ -43,9 +43,6 @@ NEGATIVE_SPACE_STATUSES = frozenset({"open", "superseded"})
 NEGATIVE_SPACE_WRITERS = frozenset({"host", "worker"})
 NEGATIVE_SPACE_REVIEW_STATUSES = frozenset({"unreviewed", "reviewed"})
 NEGATIVE_SPACE_CHECKER_BASES = frozenset({"self_reported"})
-# Characters each text field keeps when a row is rendered; the rest is cut
-# with a visible marker.
-RENDER_FIELD_LIMIT = 200
 # The categories the digest sanitizers clean: controls, format characters, surrogates.
 HIDDEN_CHARACTER_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -676,15 +673,15 @@ def entry_for_blocked_approach(
     )
 
 
-def clip_for_render(value: Any, limit: int = RENDER_FIELD_LIMIT) -> str:
-    """The value as text, cut to ``limit`` characters with a visible marker.
+def clip_for_render(value: Any, limit: int | None = None) -> str:
+    """The value as text, cut to ``limit`` characters with a visible marker when a limit is given.
 
     For rendering only. Stored rows, comparisons and fingerprints keep
     ``_clean``'s value, so a long row keeps the fingerprint it was written with.
     """
 
     text = str(value or "").strip()
-    if len(text) <= limit:
+    if limit is None or len(text) <= limit:
         return text
     return f"{text[:limit]} [cut: {len(text) - limit} characters omitted]"
 
@@ -751,11 +748,11 @@ def single_line_escape(text: str) -> tuple[str, int]:
     return "\\n".join(line[len("| "):] for line in lines), removed
 
 
-def render_row(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> tuple[str, int]:
+def render_row(row: Mapping[str, Any], *, limit: int | None = None) -> tuple[str, int]:
     """Render one row as a single line starting with "| ", with its count of hidden characters.
 
-    Each text field is cut to ``limit`` characters with a visible marker, then
-    written by single_line_escape, which drops hidden characters and shows
+    Each text field is shown whole, or cut to ``limit`` characters with a
+    visible marker when a limit is given, then written by single_line_escape, which drops hidden characters and shows
     line breaks as \\n. The writer, review status and checker basis appear
     only when the row has them.
     """
@@ -800,7 +797,7 @@ def render_row(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> tu
     return "| " + "; ".join(parts), removed
 
 
-def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) -> str:
+def render_row_line(row: Mapping[str, Any], *, limit: int | None = None) -> str:
     """render_row's line alone: one "| " line per row, hidden characters dropped."""
 
     return render_row(row, limit=limit)[0]
@@ -809,8 +806,9 @@ def render_row_line(row: Mapping[str, Any], *, limit: int = RENDER_FIELD_LIMIT) 
 def summarize_open(run_dir: str | Path, *, limit: int = 20) -> list[dict[str, str]]:
     """Compact open-row summary for status / strategy review prompts.
 
-    Text fields are cut with a visible marker; writer, review status and
-    checker basis are included when the row has them.
+    mechanism_text and failure_summary are cut at 200 characters with a
+    visible marker, a cut this summary had before the Open Math work; writer,
+    review status and checker basis are included whole when the row has them.
     """
 
     rows = open_entries(run_dir)
@@ -820,8 +818,8 @@ def summarize_open(run_dir: str | Path, *, limit: int = 20) -> list[dict[str, st
             "entry_id": _clean(row.get("entry_id")),
             "approach_id": _clean(row.get("approach_id")),
             "kind": _clean(row.get("kind")),
-            "mechanism_text": clip_for_render(row.get("mechanism_text")),
-            "failure_summary": clip_for_render(row.get("failure_summary")),
+            "mechanism_text": clip_for_render(row.get("mechanism_text"), 200),
+            "failure_summary": clip_for_render(row.get("failure_summary"), 200),
         }
         for name in ("writer", "review_status", "checker_basis"):
             if name in row:

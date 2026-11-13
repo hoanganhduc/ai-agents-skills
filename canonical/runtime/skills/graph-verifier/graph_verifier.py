@@ -96,7 +96,7 @@ def measure(compute):
     except Skipped as e:
         return None, "skipped", str(e)
     except Exception as e:
-        return None, "error", f"{type(e).__name__}: {e}"[:200]
+        return None, "error", f"{type(e).__name__}: {e}"
 
 
 def no_verdict(error):

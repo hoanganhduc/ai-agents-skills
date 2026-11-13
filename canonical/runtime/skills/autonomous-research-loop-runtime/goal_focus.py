@@ -5038,7 +5038,7 @@ def _staged_negative_space_errors(record: Mapping[str, Any]) -> list[str]:
     ):
         errors.append(
             "invalid negative_space kind: "
-            + (repr(kind[:100]) if isinstance(kind, str) else "not a string")
+            + (repr(kind) if isinstance(kind, str) else "not a string")
         )
     basis = explicit.get("checker_basis")
     if basis is not None and (

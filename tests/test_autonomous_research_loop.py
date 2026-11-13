@@ -4349,25 +4349,20 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                     [event["event"] for event in control["events"]],
                 )
 
-    def test_staging_warnings_are_bounded_and_scrubbed_for_the_progress_log(self) -> None:
-        """Staging warnings reach a progress event bounded like its other text fields, and scrubbed.
+    def test_staging_warnings_are_kept_whole_and_scrubbed_for_the_progress_log(self) -> None:
+        """Staging warnings reach a progress event whole, and scrubbed.
 
-        _progress_warnings keeps at most PROGRESS_WARNINGS_MAX non-blank
-        strings, each cut to PROGRESS_WARNING_MAX_CHARS characters, and gives
-        [] for a result without a warnings list. That the progress event
+        _progress_warnings keeps every non-blank string whole (the old cut at
+        10 warnings of 400 characters is gone, user decision 2026-11-13) and
+        gives [] for a result without a warnings list. That the progress event
         redacts an email-like or credential-shaped warning is a regression
         check: every progress string is scrubbed.
         """
         arl, _gf = self._runtime_modules()
-        long_warning = "w" * (arl.PROGRESS_WARNING_MAX_CHARS + 50)
+        long_warning = "w" * 450
         raw = [long_warning, "", "   ", 7, None, *[f"warning {n}" for n in range(12)]]
-        bounded = arl._progress_warnings({"warnings": raw})
-        self.assertEqual(len(bounded), arl.PROGRESS_WARNINGS_MAX)
-        self.assertEqual(bounded[0], long_warning[: arl.PROGRESS_WARNING_MAX_CHARS])
-        self.assertEqual(
-            bounded[1:],
-            [f"warning {n}" for n in range(arl.PROGRESS_WARNINGS_MAX - 1)],
-        )
+        kept = arl._progress_warnings({"warnings": raw})
+        self.assertEqual(kept, [long_warning, *[f"warning {n}" for n in range(12)]])
         for result in (None, {}, {"warnings": "one"}, {"warnings": None}, ["one"]):
             self.assertEqual(arl._progress_warnings(result), [], result)
         # Built without literal values so sanitize-check stays clean.
@@ -12063,8 +12058,12 @@ class IterationPromptNegativeKnowledgeTests(unittest.TestCase):
                 arl.assert_panel_prompt_safe(prompt, environ={})
                 self.assertEqual(prompt, arl.iteration_prompt(loop))
 
-    def test_iteration_prompt_bounds_a_long_ledger(self) -> None:
-        """1,000 open rows give at most 20 rows, the newest that fit in 8,000 characters, and an omitted count."""
+    def test_iteration_prompt_lists_a_long_ledger_whole(self) -> None:
+        """1,000 open rows all reach the prompt, newest first, with no omitted count.
+
+        The old cut at 20 rows and 8,000 characters was a number the agent
+        chose; the user removed it on 2026-11-13.
+        """
         arl, ns = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
@@ -12074,32 +12073,8 @@ class IterationPromptNegativeKnowledgeTests(unittest.TestCase):
             )
             block = self._block(arl.iteration_prompt(loop))
             rows = [line for line in block.splitlines() if line.startswith("| ")]
-            self.assertEqual(len(rows), 20)
-            self.assertIn("980 further rows omitted", block)
-            self.assertIn("ns-0999", rows[0])
-        with tempfile.TemporaryDirectory() as tmp:
-            loop = Path(tmp) / "loop"
-            arl.init_loop(arl.selftest_init_args(loop, max_iterations=2))
-            ns.append_entries(
-                loop,
-                [
-                    self._row(
-                        ns,
-                        f"ns-{index:04d}",
-                        mechanism_text=f"route {index} " + "m" * 300,
-                        failure_summary="f" * 300,
-                        reopen_condition="r" * 300,
-                    )
-                    for index in range(1000)
-                ],
-            )
-            block = self._block(arl.iteration_prompt(loop))
-            self.assertLessEqual(len(block), 8000)
-            rows = [line for line in block.splitlines() if line.startswith("| ")]
-            self.assertGreater(len(rows), 0)
-            # Twenty such rows would not fit in 8,000 characters.
-            self.assertLess(len(rows), 20)
-            self.assertIn(f"{1000 - len(rows)} further rows omitted", block)
+            self.assertEqual(len(rows), 1000)
+            self.assertNotIn("further rows omitted", block)
             self.assertIn("ns-0999", rows[0])
 
     @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
@@ -12177,7 +12152,7 @@ class StateIndexAndHandoffTests(unittest.TestCase):
     )
     STATE_RULE = (
         "Keep STATE.md in the loop directory as a short index of where the work "
-        "stands, near 60 lines: the claim still open and why settling it would be "
+        "stands: the claim still open and why settling it would be "
         "enough, each result with its hypotheses, its evidence or artifact ids and "
         "one label (proved only with a banked or machine-checked artifact id; "
         "otherwise heuristic, conjectural, unverified or disputed), refuted routes "
@@ -13650,7 +13625,7 @@ class LoopAccountingTests(unittest.TestCase):
             "`failure_groups`",
             "`failure_group_dominant`",
             FailureGroupTests.ADVICE,
-            "262,144 bytes",
+            "the whole `<loop>/driver_logs/progress.jsonl`",
             "| Host note (information only):",
         ):
             self.assertIn(phrase, section)
@@ -13756,13 +13731,11 @@ class FailureGroupTests(unittest.TestCase):
 
             self._log(loop, [self._start(), *failures])
             groups = self._groups(arl, loop)
-            self.assertEqual(groups["window_bytes"], 262_144)
             self.assertEqual(groups["progress_log"], "read")
             self.assertEqual(groups["n"], 3)
             self.assertEqual(
                 groups["groups"], [{"kind": "worker_failure", "class": "failure", "count": 3}]
             )
-            self.assertEqual(groups["other_count"], 0)
             self.assertEqual(
                 groups["advice"],
                 {"kind": "worker_failure", "class": "failure", "count": 3, "n": 3, "text": self.ADVICE},
@@ -13966,9 +13939,9 @@ class FailureGroupTests(unittest.TestCase):
         and the drive records iteration_rejected for the same candidate_id;
         the attempt is the rejection, and the row adds nothing. A blocked row
         still counts when no iteration_rejected event names its candidate:
-        none was recorded, one names another candidate, or the event lies
-        outside the window that is read (regression part: such rows counted
-        before too).
+        none was recorded, or one names another candidate. The whole log is
+        read, so an event far back in it still counts; before 2026-11-13 the
+        read stopped at the last 262,144 bytes.
         """
         arl = self._runtime()
         reason = "result_rejected_at_iteration_budget_limit"
@@ -13988,7 +13961,10 @@ class FailureGroupTests(unittest.TestCase):
                 [self._start(), {**rejection, "event_id": "arl-iteration_rejected-cand-9", "candidate_id": "cand-9"}],
                 "both",
             ),
-            "the rejection lies outside the window": ([self._start(), rejection, *padding], "blocked"),
+            "the rejection lies before 262,144 bytes of later lines": (
+                [self._start(), rejection, *padding],
+                "rejected",
+            ),
         }
         for label, (lines, counted) in cases.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
@@ -14000,8 +13976,8 @@ class FailureGroupTests(unittest.TestCase):
                 budget["spent_iterations"] = 1
                 write_loop_json(loop, "budget.json", budget)
                 path = self._log(loop, lines)
-                if label == "the rejection lies outside the window":
-                    self.assertGreater(path.stat().st_size, arl.FAILURE_GROUP_WINDOW_BYTES)
+                if label == "the rejection lies before 262,144 bytes of later lines":
+                    self.assertGreater(path.stat().st_size, 262_144)
                 summary = self._groups(arl, loop)
                 expected = {
                     "rejected": [{"kind": "rejected", "class": "result_rejected", "count": 1}],
@@ -14012,7 +13988,6 @@ class FailureGroupTests(unittest.TestCase):
                     ],
                 }[counted]
                 self.assertEqual(summary["groups"], expected)
-                self.assertEqual(summary["other_count"], 0)
                 self.assertEqual(summary["n"], 0)
                 self.assertIsNone(summary["advice"])
 
@@ -14021,7 +13996,7 @@ class FailureGroupTests(unittest.TestCase):
 
         The class is error_class, else failure_class, else the event_id
         without its variable tail; a class that is not one short lowercase
-        token, and an event_id longer than 200 characters, read unclassified.
+        token reads unclassified, and a long event_id gives its stem too.
         """
         arl = self._runtime()
         with tempfile.TemporaryDirectory() as tmp:
@@ -14083,7 +14058,7 @@ class FailureGroupTests(unittest.TestCase):
                     self._event("result_review_error", error_class="x" * 65, drive_cycle=6),
                     self._event("result_review_error", event_id="7", drive_cycle=7),
                     self._event("result_review_error", drive_cycle=8),
-                    # An event id past 200 characters is not read for a stem.
+                    # A long event id gives its stem too: the old 200-character cut is gone.
                     self._event(
                         "result_review_error",
                         event_id="missing-staged-candidate" + "-1" * 100,
@@ -14099,7 +14074,8 @@ class FailureGroupTests(unittest.TestCase):
                     "review_timeout": 1,
                     "dispatch-attestation-error": 1,
                     "goal-focus-missing-pending": 1,
-                    "unclassified": 5,
+                    "missing-staged-candidate": 1,
+                    "unclassified": 4,
                 },
             )
 
@@ -14146,14 +14122,13 @@ class FailureGroupTests(unittest.TestCase):
             self.assertEqual(summary["n"], 5)
             self.assertEqual(summary["advice"]["class"], "failure")
 
-    def test_only_the_last_window_of_the_log_is_read(self) -> None:
-        """Only the last 262,144 bytes of progress.jsonl count, and a line the window starts inside is dropped.
+    def test_the_whole_log_is_read(self) -> None:
+        """Failures before 262,144 bytes of later lines still count: the whole log is read.
 
-        A line that starts exactly at the window's first byte is kept.
+        The old read of the last 262,144 bytes was a number the agent chose;
+        the user removed it on 2026-11-13.
         """
         arl = self._runtime()
-        window = arl.FAILURE_GROUP_WINDOW_BYTES
-        self.assertEqual(window, 262_144)
         with tempfile.TemporaryDirectory() as tmp:
             loop = self._loop(arl, tmp)
             old = [
@@ -14165,30 +14140,15 @@ class FailureGroupTests(unittest.TestCase):
                 self._start("2026-11-10T05:00:00Z"),
                 self._event("iteration_failed", failure_class="failure", drive_cycle=1),
             ]
-            self._log(loop, [*old, *padding, *recent])
-            self.assertGreater((loop / "driver_logs" / "progress.jsonl").stat().st_size, window)
+            path = self._log(loop, [*old, *padding, *recent])
+            self.assertGreater(path.stat().st_size, 262_144)
             self.assertEqual(
                 self._groups(arl, loop)["groups"],
-                [{"kind": "worker_failure", "class": "failure", "count": 1}],
+                [
+                    {"kind": "worker_failure", "class": "timeout", "count": 3},
+                    {"kind": "worker_failure", "class": "failure", "count": 1},
+                ],
             )
-
-            # A line with leading spaces parses whole, and from its second byte on.
-            edge = "  " + json.dumps(self._event("iteration_failed", failure_class="timeout", drive_cycle=9))
-            prefix = json.dumps(self._event("iteration_ok", text="p" * 50))
-            empty_filler = json.dumps({"event": "iteration_ok", "text": ""})
-            for offset, count in ((0, 1), (1, 0)):
-                with self.subTest(offset=offset):
-                    room = window - len(edge) - 1 - len(empty_filler) - 1 + offset
-                    filler = json.dumps({"event": "iteration_ok", "text": "y" * room})
-                    path = self._log(loop, [prefix, edge, filler])
-                    self.assertEqual(
-                        path.stat().st_size - window, len(prefix) + 1 + offset
-                    )
-                    groups = self._groups(arl, loop)["groups"]
-                    self.assertEqual(
-                        [g["count"] for g in groups if g["class"] == "timeout"],
-                        [count] if count else [],
-                    )
 
     def test_advice_needs_half_of_the_ten_most_recent_attempts(self) -> None:
         """The advice needs at least 3 attempts and at least half of the 10 most recent; older attempts never count toward N.
@@ -14221,8 +14181,8 @@ class FailureGroupTests(unittest.TestCase):
                         (advice["class"], advice["count"], advice["n"]), expected
                     )
 
-    def test_top_eight_groups_and_other_count(self) -> None:
-        """status lists the eight largest groups and counts the attempts in the rest as other_count."""
+    def test_every_group_is_listed_largest_first(self) -> None:
+        """status lists every group, largest first; the old cut at 8 groups is gone (2026-11-13)."""
         arl = self._runtime()
         with tempfile.TemporaryDirectory() as tmp:
             loop = self._loop(arl, tmp)
@@ -14238,9 +14198,9 @@ class FailureGroupTests(unittest.TestCase):
             summary = self._groups(arl, loop)
             self.assertEqual(
                 [(group["class"], group["count"]) for group in summary["groups"]],
-                [(f"e{index}", index + 1) for index in range(9, 1, -1)],
+                [(f"e{index}", index + 1) for index in range(9, -1, -1)],
             )
-            self.assertEqual(summary["other_count"], 1 + 2)
+            self.assertNotIn("other_count", summary)
             self.assertEqual(summary["n"], 10)
             self.assertEqual(
                 (summary["advice"]["class"], summary["advice"]["count"]), ("e9", 10)
@@ -14334,3 +14294,161 @@ class FailureGroupTests(unittest.TestCase):
             )
             self.assertIsNotNone(self._groups(arl, loop)["advice"])
             self.assertEqual(arl.compute_done(loop), before)
+
+
+class NoAgentChosenLimitTests(unittest.TestCase):
+    """The ARL outputs keep no bound the agent chose in N5 (user decision, 2026-11-13).
+
+    The iteration prompt, the progress log, host_handoff.md, negative-space
+    list and the failure groups used to stop at numbers the agent picked: 20
+    rows, 8,000, 400 or 1,000 characters, 262,144 bytes or 8 groups. Nothing
+    there is cut or dropped now. The two numbers that decide the failure-group
+    advice, 10 attempts and 3 failures, stay as the agent's labelled choice.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import negative_space as ns  # noqa: WPS
+
+        return arl, ns
+
+    @staticmethod
+    def _rows(ns: Any, count: int, width: int = 380) -> list[dict[str, Any]]:
+        return [
+            IterationPromptNegativeKnowledgeTests._row(
+                ns, f"ns-{index:03d}", mechanism_text=f"MECHANISM_{index:03d} " + "m" * width
+            )
+            for index in range(count)
+        ]
+
+    def test_no_agent_cap_progress_warnings_keep_every_warning_whole(self) -> None:
+        arl, _ns = self._runtime()
+        raw = ["w" * 1_000, *[f"warning {n}" for n in range(14)]]
+        self.assertEqual(arl._progress_warnings({"warnings": raw}), raw)
+
+    def test_no_agent_cap_iteration_prompt_shows_every_open_row(self) -> None:
+        arl, ns = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            arl.init_loop(arl.selftest_init_args(loop, max_iterations=2))
+            rows = self._rows(ns, 25)
+            ns.append_entries(loop, rows)
+            prompt = arl.iteration_prompt(loop)
+        for row in rows:
+            self.assertIn(row["mechanism_text"], prompt)
+        self.assertNotIn("further rows omitted", prompt)
+
+    def test_no_agent_cap_state_md_rule_names_no_line_count(self) -> None:
+        arl, _ns = self._runtime()
+        self.assertNotIn("60 lines", arl.ITERATION_PROMPT_STATE_RULE)
+        self.assertIn(
+            "short index of where the work stands: the claim still open", arl.ITERATION_PROMPT_STATE_RULE
+        )
+
+    def test_no_agent_cap_negative_space_list_without_limit_lists_every_row(self) -> None:
+        arl, ns = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            arl.init_loop(arl.selftest_init_args(loop, max_iterations=2))
+            ns.append_entries(loop, self._rows(ns, 25))
+            args = arl.build_parser().parse_args(["negative-space", "list", "--dir", str(loop)])
+            self.assertIsNone(args.limit)
+            listing = arl.negative_space_list_command(args)
+        self.assertEqual(len(listing["entries"]), 25)
+        self.assertEqual(listing["omitted_open_entries"], 0)
+        self.assertFalse(any("[cut:" in line for line in listing["entries"]))
+
+    def test_no_agent_cap_host_handoff_lists_every_row_whole(self) -> None:
+        arl, ns = self._runtime()
+        goal = "GOAL " + "g" * 1_500
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=30)
+            init_args.goal = goal
+            arl.init_loop(init_args)
+            for index in range(25):
+                arl.append_iteration(
+                    arl.build_parser().parse_args(
+                        [
+                            "append-iteration", "--dir", str(loop), "--mode", "bounded-research",
+                            "--objective", f"OBJECTIVE_{index:03d}", "--decision", "continue",
+                        ]
+                    )
+                )
+            rows = self._rows(ns, 25)
+            ns.append_entries(loop, rows)
+            outcome = arl.write_host_handoff(loop, reason="test")
+            text = (loop / arl.HOST_HANDOFF_FILE).read_text(encoding="utf-8")
+        self.assertNotIn(outcome["status"], ("skipped", "failed"), outcome)
+        self.assertIn("the last 25 of 25", text)
+        for row in rows:
+            self.assertIn(row["mechanism_text"], text)
+        self.assertIn(goal, text)
+        self.assertNotIn("[cut:", text)
+
+    def test_no_agent_cap_failure_groups_read_the_whole_log_and_list_every_group(self) -> None:
+        arl, _ns = self._runtime()
+        groups_tests = FailureGroupTests
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = groups_tests._loop(arl, tmp)
+            lines: list[Any] = [groups_tests._event("drive_start", timestamp="2026-11-10T00:00:00Z")]
+            for index in range(10):
+                lines.append(
+                    groups_tests._event("result_review_error", error_class=f"e{index}", drive_cycle=index + 1)
+                )
+            # A line that is not JSON, longer than the old 262,144-byte window.
+            lines.append("x" * 300_000)
+            groups_tests._log(loop, lines)
+            groups = groups_tests._groups(arl, loop)
+        self.assertEqual(sorted(group["class"] for group in groups["groups"]), [f"e{n}" for n in range(10)])
+        self.assertNotIn("window_bytes", groups)
+        self.assertNotIn("other_count", groups)
+
+    def test_no_agent_cap_a_long_event_id_still_names_its_class(self) -> None:
+        arl, _ns = self._runtime()
+        event_id = "review-error" + "-r1" * 80
+        self.assertGreater(len(event_id), 200)
+        self.assertEqual(arl._review_error_class({"event_id": event_id}), "review-error")
+
+    def test_no_agent_cap_the_advice_numbers_stay(self) -> None:
+        """Regression check: the user kept these two numbers, labelled as the agent's choice."""
+        arl, _ns = self._runtime()
+        self.assertEqual(
+            (arl.FAILURE_GROUP_RECENT_ATTEMPTS, arl.FAILURE_GROUP_ADVICE_MIN_ATTEMPTS), (10, 3)
+        )
+
+    def test_no_agent_cap_goal_focus_reports_an_invalid_kind_whole(self) -> None:
+        self._runtime()
+        import goal_focus as gf  # noqa: WPS
+
+        kind = "k" * 150
+        errors = gf._staged_negative_space_errors({"negative_space": {"kind": kind}})
+        self.assertIn(f"invalid negative_space kind: {kind!r}", errors)
+
+    def test_no_agent_cap_the_removed_constants_are_gone(self) -> None:
+        arl, ns = self._runtime()
+        import panel_parent as pp  # noqa: WPS
+
+        removed = {
+            arl: (
+                "ITERATION_NEGATIVE_KNOWLEDGE_MAX_CHARS", "PROGRESS_WARNINGS_MAX",
+                "PROGRESS_WARNING_MAX_CHARS", "HOST_HANDOFF_ROW_WINDOW", "HOST_HANDOFF_TEXT_CHARS",
+                "HOST_HANDOFF_ID_CHARS", "FAILURE_GROUP_WINDOW_BYTES", "FAILURE_GROUP_SHOWN",
+                "_EVENT_ID_MAX_CHARS",
+            ),
+            pp: (
+                "STRATEGY_NEGATIVE_SPACE_ROW_CAP", "STRATEGY_NEGATIVE_SPACE_MAX_CHARS",
+                "NEGATIVE_KNOWLEDGE_ROW_CAP", "TARGET_NEGATIVE_KNOWLEDGE_MAX_CHARS",
+                "REVIEW_NEGATIVE_KNOWLEDGE_MAX_CHARS", "STRATEGY_MECHANISM_WARNING_MAX_CHARS",
+                "POINTER_MAX_LINES", "POINTER_MAX_BYTES", "POINTER_LEDGER_WINDOW",
+            ),
+            ns: ("RENDER_FIELD_LIMIT",),
+        }
+        for module, names in removed.items():
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertFalse(hasattr(module, name))

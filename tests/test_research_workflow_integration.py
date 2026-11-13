@@ -1929,12 +1929,6 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
                 self.assertIn(expected, out["codes"])
                 self.assertEqual(self.tree(root), before)
 
-        with self.subTest("a result over the size cap"):
-            self.assertEqual(self.mod.COMPUTATION_RESULT_MAX_BYTES, 16 * 1024 * 1024)
-            big = self.result_file("big.json", "x" * 9)
-            with self.assertRaises(ValueError):
-                self.mod.read_regular_file(big, 8)
-
     def test_a_contradicting_relation_is_refused(self) -> None:
         """asserts with a failed result, or refutes with a passed one, is refused and writes nothing."""
         triangle = {"edges": [[0, 1], [1, 2], [2, 0]], "expected": {"n": 3, "connected": True}}
@@ -2408,26 +2402,52 @@ class AddComputationEvidenceVerbTests(unittest.TestCase):
                 code, result = self.delivery_check(root)
                 self.assertEqual((code, result["codes"]), (1, ["READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION"]), result)
 
-    def test_the_size_cap_bounds_the_verb_and_validate(self) -> None:
-        """Regression check: COMPUTATION_RESULT_MAX_BYTES, lowered here below the result's size, binds both reads."""
+
+    def test_no_agent_cap_the_verb_and_validate_read_the_result_whole(self) -> None:
+        """Both reads of a computation result pass no size limit (user decision, 2026-11-13)."""
         result = self.result_file("sage.json", sage_counterexample_output(SAGE_RAISING_CONJECTURE))
-        cap = len(result.read_bytes()) - 1
+        seen: list[object] = []
+        real = self.mod.read_regular_file
 
-        with self.subTest("the verb reads at most the cap"):
-            root = self.not_ready_run("verb")
-            before = self.tree(root)
-            with mock.patch.object(self.mod, "COMPUTATION_RESULT_MAX_BYTES", cap):
-                code, out = self.call_verb_in_process(root, result)
-            self.assertEqual((code, out["codes"]), (1, ["COMPUTATION_RESULT_UNREADABLE"]), out)
-            self.assertEqual(self.tree(root), before)
+        def spy(path: Path, limit: int | None = None) -> bytes:
+            seen.append(limit)
+            return real(path, limit)
 
-        with self.subTest("validate re-reads at most the cap"):
-            root = self.not_ready_run("validate")
-            code, out = self.add(root, result)
+        root = self.not_ready_run("no-cap")
+        with mock.patch.object(self.mod, "read_regular_file", spy):
+            code, out = self.call_verb_in_process(root, result)
             self.assertEqual(code, 0, out)
             self.assertEqual(self.validate_codes(root), set())
-            with mock.patch.object(self.mod, "COMPUTATION_RESULT_MAX_BYTES", cap):
-                self.assertEqual(self.validate_codes(root), {"COMPUTATION_PAYLOAD_HASH_MISMATCH"})
+        self.assertGreaterEqual(len(seen), 2)
+        self.assertEqual(set(seen), {None})
+        self.assertFalse(hasattr(self.mod, "COMPUTATION_RESULT_MAX_BYTES"))
+
+    def test_no_agent_cap_a_stamp_copy_is_read_whole(self) -> None:
+        """A stamp copy past the old 64 KiB is read, not refused (user decision, 2026-11-13)."""
+        seen: list[object] = []
+        real = self.mod.read_regular_file
+
+        def spy(path: Path, limit: int | None = None) -> bytes:
+            seen.append(limit)
+            return real(path, limit)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stamp = Path(tmp) / "stamp.json"
+            stamp.write_text(json.dumps({"padding": "x" * 70_000}), encoding="utf-8")
+            row = {
+                "artifact_ref": "stamp.json",
+                "payload_hash": "sha256:" + hashlib.sha256(stamp.read_bytes()).hexdigest(),
+                "reviewer_family": "anthropic",
+            }
+            errors: list[dict] = []
+            with mock.patch.object(self.mod, "read_regular_file", spy):
+                self.mod.bound_stamp_family(
+                    row, "artifact_ref", "payload_hash", "reviewer_family", stamp,
+                    Path(tmp) / "evidence.jsonl", errors, 1,
+                )
+        self.assertEqual(seen, [None])
+        self.assertFalse(any("cannot be read" in error["message"] for error in errors), errors)
+        self.assertFalse(hasattr(self.mod, "STAMP_COPY_MAX_BYTES"))
 
 
 DISPATCH_STAMP_SCHEMA_VERSION = "external-agent-dispatch-stamp.v1"
@@ -2805,7 +2825,7 @@ class AgdVerdictEvidenceTests(unittest.TestCase):
             ("an edited stamp copy", edited_copy, {"AGD_STAMP_HASH_MISMATCH", *unverified}),
             ("half a producer pair", without("producer_payload_hash"), {"AGD_STAMP_HASH_MISMATCH", *unverified}),
             ("launch_stamp without payload_hash", without("payload_hash"), {"AGD_STAMP_HASH_MISMATCH", *unverified}),
-            ("a copy over 64 KiB", oversized_copy, {"AGD_STAMP_HASH_MISMATCH", *unverified}),
+            ("a copy past the old 64 KiB cap", oversized_copy, set()),
             ("a copy that is not a stamp", replaced_copy(b'{"status": "ok"}\n'), {"AGD_STAMP_INVALID", *unverified}),
             (
                 "a stamp with a repeated key",

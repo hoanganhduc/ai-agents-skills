@@ -1941,43 +1941,37 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertIn("`can_reopen_with_mechanism`", rules[0])
             self.assertIn("different-family review", rules[0])
 
-    def test_strategy_brief_lists_negative_space_rows_past_the_cap_by_id(self) -> None:
+    def test_strategy_brief_lists_rows_that_do_not_fit_by_id(self) -> None:
+        """A row whose block does not fit the room left is listed by entry_id and mechanism fingerprint."""
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
             self._write_strategy_authority(run_dir)
-            cap = pp.STRATEGY_NEGATIVE_SPACE_ROW_CAP
-            total = cap + 3
             rows = [
                 self._negative_space_row(
                     f"ns-{index:03d}", mechanism_text=f"MECHANISM_{index:03d}"
                 )
-                for index in range(total)
+                for index in range(23)
             ]
             self._write_negative_space(
                 run_dir, "".join(json.dumps(row) + "\n" for row in rows)
             )
+            full = pp.build_strategy_review_brief(run_dir)
+            self.assertIn("Shown in full: 23. Listed by id only: 0. Not listed: 0.", full)
 
-            # Past the cap the brief is still built: the rows are permanent.
-            brief = pp.build_strategy_review_brief(run_dir)
+            brief = pp.build_strategy_review_brief(run_dir, max_chars=len(full) - 600)
 
-            self.assertIn(
-                f"In the approach registry above: {total} of {total} open ledger rows.",
-                brief,
-            )
-            self.assertIn(
-                f"Shown in full: {cap}. Listed by id only: 3. Not listed: 0.", brief
-            )
-            self.assertNotIn("Not listed for lack of room", brief)
-            listing = brief.split("Listed by id only (newest first):", 1)[1]
-            for row in rows[:3]:
+            section, counts = self._negative_space_section(brief)
+            self.assertGreater(counts["listed"], 0, section)
+            self.assertEqual(counts["shown"] + counts["listed"] + counts["unlisted"], 23)
+            listing = section.split("Listed by id only (newest first):", 1)[1]
+            # Newest first: the shown rows are the newest, then the listed ones.
+            listed = rows[len(rows) - counts["shown"] - counts["listed"] : len(rows) - counts["shown"]]
+            for row in listed:
                 self.assertNotIn(row["mechanism_text"], brief)
                 self.assertIn(f'"entry_id": "{row["entry_id"]}"', listing)
                 self.assertIn(
-                    f'"mechanism_fingerprint": "{row["mechanism_fingerprint"]}"',
-                    listing,
+                    f'"mechanism_fingerprint": "{row["mechanism_fingerprint"]}"', listing
                 )
-            for row in rows[3:]:
-                self.assertIn(row["mechanism_text"], brief)
 
     NEGATIVE_SPACE_COUNTS = re.compile(
         r"In the approach registry above: (\d+) of (\d+) open ledger rows\. "
@@ -2038,7 +2032,7 @@ class PanelParentUnitTests(unittest.TestCase):
                 brief = pp.build_strategy_review_brief(run_dir)
 
                 section, counts = self._negative_space_section(brief)
-                self.assertLessEqual(len(section), pp.STRATEGY_NEGATIVE_SPACE_MAX_CHARS)
+                self.assertLessEqual(len(brief), 250_000)
                 self.assertEqual(counts["scoped"], len(rows))
                 self.assertEqual(
                     counts["shown"] + counts["listed"] + counts["unlisted"], len(rows)
@@ -2062,10 +2056,8 @@ class PanelParentUnitTests(unittest.TestCase):
                 else:
                     self.assertNotIn("Not listed for lack of room", section)
                 if name == "many_short_rows":
-                    self.assertEqual(counts["shown"], pp.STRATEGY_NEGATIVE_SPACE_ROW_CAP)
+                    self.assertGreater(counts["shown"], 20)
                     self.assertGreater(counts["unlisted"], 0)
-                else:
-                    self.assertEqual(counts["unlisted"], 0)
 
     def test_strategy_brief_gives_negative_space_only_the_room_left_under_max_chars(
         self,
@@ -2079,7 +2071,7 @@ class PanelParentUnitTests(unittest.TestCase):
             )
             full = pp.build_strategy_review_brief(run_dir)
             _, full_counts = self._negative_space_section(full)
-            self.assertEqual((full_counts["shown"], full_counts["listed"]), (20, 3))
+            self.assertEqual((full_counts["shown"], full_counts["listed"]), (23, 0))
 
             # Reviewed state that leaves less room shrinks the section instead
             # of making the brief refuse.
@@ -2088,7 +2080,7 @@ class PanelParentUnitTests(unittest.TestCase):
 
             self.assertLessEqual(len(brief), max_chars)
             _, counts = self._negative_space_section(brief)
-            self.assertLess(counts["shown"], 20)
+            self.assertLess(counts["shown"], 23)
             self.assertEqual(
                 counts["shown"] + counts["listed"] + counts["unlisted"], len(rows)
             )
@@ -2252,11 +2244,11 @@ class PanelParentUnitTests(unittest.TestCase):
             ):
                 self.assertNotIn(needle, brief)
 
-        with self.subTest("an id line is checked too: past the cap, and for a full row's fingerprint"):
+        with self.subTest("an id line is checked too, also for a row shown in full"):
             with tempfile.TemporaryDirectory() as tmp:
                 run_dir = Path(tmp)
                 self._write_strategy_authority(run_dir)
-                cap = pp.STRATEGY_NEGATIVE_SPACE_ROW_CAP
+                cap = 20
                 rows = [self._negative_space_row("ns-555-123-4567")]
                 rows += [
                     self._negative_space_row(f"ns-{index:03d}")
@@ -3522,8 +3514,12 @@ class BriefPointerTests(unittest.TestCase):
                         self.assertIn(f"{self.HEADING}\n{sentence}\n", prompt)
                         self.assertIn("proof_artifacts/route-claim.json", prompt)
 
-    def test_pointer_section_caps_lines_bytes_and_withholds_sensitive_lines(self) -> None:
-        """At most six pointer lines in at most 4,096 UTF-8 bytes; a sensitive line is withheld by kind."""
+    def test_pointer_section_withholds_sensitive_lines(self) -> None:
+        """A sensitive pointer line is withheld and counted by kind; every other lineage keeps its pointer.
+
+        The old cut at six lines and 4,096 bytes was a number the agent chose;
+        the user removed it on 2026-11-13.
+        """
 
         email = "ana" + chr(64) + "example.org"
         with tempfile.TemporaryDirectory() as tmp:
@@ -3538,30 +3534,14 @@ class BriefPointerTests(unittest.TestCase):
             )
             lines = pp.brief_pointer_lines(root, exclude_lineage="route-9", max_chars=10_000, environ={})
             pointers = self._pointer_lines(lines)
-            self.assertEqual(len(pointers), 6, lines)
+            self.assertEqual(len(pointers), 8, lines)
             self.assertIn("1 pointer withheld: pii:email", lines)
-            self.assertIn("2 further pointers omitted", lines)
+            self.assertNotIn("further pointers omitted", "\n".join(lines))
             self.assertNotIn("route-9", "\n".join(lines))
             self.assertNotIn(email, "\n".join(lines))
             # Newest first after the withheld one.
             self.assertIn("lineage route-8", pointers[0])
             pp.assert_panel_prompt_safe("\n".join(lines), environ={})
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            wide = "\u20ac" * 190
-            PanelParentUnitTests._write_pointer_ledger(
-                root,
-                [
-                    {"iteration": index, "approach_id": f"{wide}{index}", "evidence_ids": [f"art-{index}"]}
-                    for index in range(1, 8)
-                ],
-            )
-            lines = pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=10_000, environ={})
-            self.assertLessEqual(len("\n".join(lines).encode("utf-8")), 4096)
-            self.assertLess(len(self._pointer_lines(lines)), 6)
-            self.assertTrue(lines[-1].endswith("further pointers omitted"), lines)
-
 
 class PanelRosterWithdrawalTests(unittest.TestCase):
     """An empty roster means every reviewer is excluded, not "use the defaults".
@@ -4069,6 +4049,130 @@ class SecureReadUsesTheValidatedDirectoryTests(unittest.TestCase):
         body = ast.unparse(function)
         self.assertIn("_open_real_directory_descriptor", body)
         self.assertIn("dir_fd=dir_fd", body)
+
+
+class PanelNoAgentChosenCapTests(unittest.TestCase):
+    """The panel briefs keep no section bound the agent chose (user decision, 2026-11-13).
+
+    Each section takes what the brief's own max_chars leaves; that budget
+    predates the Open Math work and stays.
+    """
+
+    unit = PanelParentUnitTests
+
+    def _rows(self, prefix: str, count: int, width: int) -> list[dict]:
+        return [
+            self.unit._negative_space_row(
+                f"ns-{index:03d}", mechanism_text=f"{prefix}_{index:03d} " + "m" * width
+            )
+            for index in range(count)
+        ]
+
+    def _write_rows(self, run_dir: Path, rows: list[dict]) -> None:
+        self.unit._write_negative_space(run_dir, "".join(json.dumps(row) + "\n" for row in rows))
+
+    def test_no_agent_cap_strategy_brief_shows_every_row_in_full(self) -> None:
+        """25 rows of about 3,000 characters: past the old 20-row cap and the old 50,000 characters."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self.unit._write_strategy_authority(run_dir)
+            rows = self._rows("MECHANISM", 25, 2_900)
+            self._write_rows(run_dir, rows)
+            brief = pp.build_strategy_review_brief(run_dir)
+        self.assertIn("Shown in full: 25. Listed by id only: 0. Not listed: 0.", brief)
+        for row in rows:
+            self.assertIn(row["mechanism_text"], brief)
+
+    def test_no_agent_cap_negative_knowledge_lines_show_every_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_rows(run_dir, self._rows("MECHANISM", 25, 400))
+            lines = pp.negative_knowledge_lines(run_dir, max_chars=None)
+        self.assertEqual(len([line for line in lines if line.startswith("| ")]), 25)
+        self.assertNotIn("further rows omitted", "\n".join(lines))
+
+    def test_no_agent_cap_target_brief_block_takes_the_room_left(self) -> None:
+        """About 5,500 characters of rows: past the old 3,000, inside the 12,000 the brief keeps."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self.unit._write_strategy_authority(run_dir)
+            rows = self._rows("PLAN_MECHANISM", 12, 300)
+            self._write_rows(run_dir, rows)
+            brief = pp.build_target_brief(run_dir)
+        self.assertLessEqual(len(brief), 12_000)
+        for row in rows:
+            self.assertIn(row["mechanism_text"], brief)
+
+    def test_no_agent_cap_review_brief_block_takes_the_room_left(self) -> None:
+        """About 27,000 characters of rows: past the old 20,000."""
+        candidate = {"candidate_id": "cand-a", "approach_id": "approach-a"}
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            iter_dir = run_dir / "iterations" / "iter001"
+            (iter_dir / "data").mkdir(parents=True)
+            (run_dir / "iteration_candidate.json").write_text(json.dumps(candidate), encoding="utf-8")
+            rows = self._rows("REVIEW_MECHANISM", 60, 300)
+            self._write_rows(run_dir, rows)
+            brief = pp.build_review_brief(run_dir, iter_dir)
+        for row in rows:
+            self.assertIn(row["mechanism_text"], brief)
+
+    def test_no_agent_cap_mechanism_warnings_get_the_room_left(self) -> None:
+        seen: list[int] = []
+        real = pp._mechanism_warning_lines
+
+        def spy(*args: object, **kwargs: object) -> list[str]:
+            seen.append(int(kwargs["max_chars"]))
+            return real(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self.unit._write_strategy_authority(run_dir)
+            with mock.patch.object(pp, "_mechanism_warning_lines", spy):
+                pp.build_strategy_review_brief(run_dir)
+        (max_chars,) = seen
+        self.assertGreater(max_chars, 8_000)
+
+    def test_no_agent_cap_pointers_show_every_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.unit._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": index, "approach_id": f"route-{index}", "evidence_ids": [f"art-{index}"]}
+                    for index in range(1, 11)
+                ],
+            )
+            lines = pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=100_000, environ={})
+        self.assertEqual(len([line for line in lines if line.startswith("- [")]), 10, lines)
+        self.assertNotIn("further pointers omitted", "\n".join(lines))
+
+    def test_no_agent_cap_pointers_read_rows_past_the_newest_sixty_four(self) -> None:
+        rows = [{"iteration": 1, "approach_id": "route-old", "evidence_ids": ["art-old"]}]
+        rows += [
+            {"iteration": index, "approach_id": "route-new", "evidence_ids": [f"art-{index}"]}
+            for index in range(2, 72)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.unit._write_pointer_ledger(root, rows)
+            lines = pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=100_000, environ={})
+        self.assertTrue(any("lineage route-old" in line for line in lines), lines)
+
+    def test_no_agent_cap_pointers_have_no_byte_budget(self) -> None:
+        wide = "\u20ac" * 190
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.unit._write_pointer_ledger(
+                root,
+                [
+                    {"iteration": index, "approach_id": f"{wide}{index}", "evidence_ids": [f"art-{index}"]}
+                    for index in range(1, 8)
+                ],
+            )
+            lines = pp.brief_pointer_lines(root, exclude_lineage=None, max_chars=100_000, environ={})
+        self.assertEqual(len([line for line in lines if line.startswith("- [")]), 7, lines)
+        self.assertGreater(len("\n".join(lines).encode("utf-8")), 4_096)
 
 
 if __name__ == "__main__":

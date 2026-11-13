@@ -277,6 +277,26 @@ class GraphVerifierTests(unittest.TestCase):
                 self.assertEqual(payload["property_status"]["girth"], status)
                 self.assertEqual("girth" in payload["unchecked_expected_keys"], not matches)
 
+    def test_no_agent_cap_an_error_message_is_reported_whole(self):
+        """The 200-character cut of a property error was the agent's choice (user decision, 2026-11-13)."""
+        message = "girth failed " + "e" * 400
+        driver = (
+            "import runpy, sys\n"
+            "import networkx as nx\n"
+            "def broken(graph):\n"
+            f"    raise RuntimeError({message!r})\n"
+            "nx.girth = broken\n"
+            "script, source = sys.argv[1], sys.argv[2]\n"
+            "sys.argv = [script, '--input', source]\n"
+            "runpy.run_path(script, run_name='__main__')\n"
+        )
+        path = self.tmp / "input.json"
+        path.write_text(json.dumps({"edges": [[1, 2], [2, 3]]}), encoding="utf-8")
+        rc, out, err = run(["-c", driver, self.SCRIPT, path])
+        self.assertEqual(rc, 0, err)
+        payload = json.loads(out)
+        self.assertIn(f"girth error: RuntimeError: {message}", payload["computation_evidence"]["limitations"])
+
 
 class OpenGaussRunStateTests(unittest.TestCase):
     """status.json is rewritten by kill, so an interrupt can leave it torn."""

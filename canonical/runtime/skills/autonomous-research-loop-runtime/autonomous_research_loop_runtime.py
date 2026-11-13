@@ -375,13 +375,11 @@ def _read_regular_text(
     return payload.decode("utf-8", errors=errors)
 
 
-def _read_regular_tail(path: Path, max_bytes: int) -> bytes:
-    """The last ``max_bytes`` bytes of one regular file, read without following a link.
+def _read_regular_bytes(path: Path) -> bytes:
+    """Every byte of one regular file, read without following a link.
 
     On POSIX every directory above the file is opened without following a
-    link too, and the open never waits on a FIFO. When the file is longer
-    than the window, the line the window starts inside is dropped; a line
-    that starts on the window's first byte is kept.
+    link too, and the open never waits on a FIFO.
     """
 
     absolute = Path(os.path.abspath(path))
@@ -407,12 +405,7 @@ def _read_regular_tail(path: Path, max_bytes: int) -> bytes:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise OSError(f"runtime input is not a regular file: {absolute}")
-        start = max(0, info.st_size - max_bytes)
-        # Reading from one byte before the window, everything up to the first
-        # line break is either that break alone or the end of a cut line.
-        offset = max(0, start - 1)
-        os.lseek(fd, offset, os.SEEK_SET)
-        wanted = info.st_size - offset
+        wanted = info.st_size
         while wanted > 0:
             chunk = os.read(fd, min(wanted, 1 << 16))
             if not chunk:
@@ -421,11 +414,7 @@ def _read_regular_tail(path: Path, max_bytes: int) -> bytes:
             wanted -= len(chunk)
     finally:
         os.close(fd)
-    payload = b"".join(chunks)
-    if start > 0:
-        cut = payload.find(b"\n")
-        payload = payload[cut + 1 :] if cut >= 0 else b""
-    return payload
+    return b"".join(chunks)
 
 
 def _read_contained_regular_text(
@@ -3608,10 +3597,10 @@ def spend_accounting(
 # Failure groups: status and notify advise the operator, and the next prompt
 # carries an information-only note. The inputs are the tail of
 # driver_logs/progress.jsonl and the blocked rows of iterations.jsonl; the
-# worker can write the log, so nothing here stops a loop.
-FAILURE_GROUP_WINDOW_BYTES = 262_144
+# worker can write the log, so nothing here stops a loop. The whole log is
+# read and every group is listed. The two numbers below decide when the
+# advice appears; the agent chose them, and the user kept them (2026-11-13).
 FAILURE_GROUP_RECENT_ATTEMPTS = 10
-FAILURE_GROUP_SHOWN = 8
 FAILURE_GROUP_ADVICE_MIN_ATTEMPTS = 3
 FAILURE_GROUP_ADVICE = "stop the loop, fix the cause, and restart"
 # iteration_failed classes for an iteration whose own work failed, and those
@@ -3636,7 +3625,6 @@ _FAILURE_CLASS_TOKEN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}")
 _EVENT_ID_VARIABLE_TAIL = re.compile(
     r"(?:-(?:r?[0-9]+|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|none))+$"
 )
-_EVENT_ID_MAX_CHARS = 200
 
 
 def _failure_class_token(value: str) -> str:
@@ -3654,11 +3642,7 @@ def _review_error_class(event: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return _failure_class_token(value)
     event_id = event.get("event_id")
-    if (
-        not isinstance(event_id, str)
-        or not event_id.strip()
-        or len(event_id) > _EVENT_ID_MAX_CHARS
-    ):
+    if not isinstance(event_id, str) or not event_id.strip():
         return "unclassified"
     stem = event_id.strip().lower()
     candidate_id = event.get("candidate_id")
@@ -3710,33 +3694,30 @@ def failure_groups(
 ) -> dict[str, Any]:
     """Recorded failures grouped by (kind, class), and advice for the operator when one research failure dominates.
 
-    The inputs are the last FAILURE_GROUP_WINDOW_BYTES bytes of
-    <dir>/driver_logs/progress.jsonl, read without following a link (lines
+    The inputs are <dir>/driver_logs/progress.jsonl, read whole without
+    following a link (lines
     that do not decode to a JSON object are skipped), the blocked rows of
     iterations.jsonl, and ``pending``, an event about to be recorded. Each
     attempt counts once: progress events are deduplicated on the preceding
     drive_start timestamp, the event and its event_id, else candidate_id,
     else drive_cycle, and each blocked row is one attempt unless an
-    iteration_rejected event in the window names its candidate_id, since
+    iteration_rejected event in the log names its candidate_id, since
     that rejection is the same attempt. N is the
     FAILURE_GROUP_RECENT_ATTEMPTS most recent attempts other than rejected and
     blocked ones; the advice holds when one worker_failure or
     host_review_error group has at least FAILURE_GROUP_ADVICE_MIN_ATTEMPTS of
-    them and at least half of N. ``groups`` lists the FAILURE_GROUP_SHOWN
-    largest groups, and ``other_count`` the attempts in the rest.
+    them and at least half of N. ``groups`` lists every group, largest first.
     """
 
     progress_log = "read"
     try:
-        tail = _read_regular_tail(
-            progress_paths(run_dir)["progress_jsonl"], FAILURE_GROUP_WINDOW_BYTES
-        )
+        log_bytes = _read_regular_bytes(progress_paths(run_dir)["progress_jsonl"])
     except FileNotFoundError:
-        tail, progress_log = b"", "absent"
+        log_bytes, progress_log = b"", "absent"
     except OSError:
-        tail, progress_log = b"", "unreadable"
+        log_bytes, progress_log = b"", "unreadable"
     events: list[Mapping[str, Any]] = []
-    for raw_line in tail.split(b"\n"):
+    for raw_line in log_bytes.split(b"\n"):
         if not raw_line.strip():
             continue
         try:
@@ -3783,7 +3764,7 @@ def failure_groups(
         candidate_id = row.get("candidate_id")
         if isinstance(candidate_id, str) and candidate_id.strip() in rejected_candidates:
             # Finalize turns a rejection at the iteration budget limit into a
-            # blocked row; the iteration_rejected event in the window already
+            # blocked row; the iteration_rejected event in the log already
             # counts that attempt.
             continue
         reason = row.get("stop_reason")
@@ -3825,14 +3806,12 @@ def failure_groups(
             "text": FAILURE_GROUP_ADVICE,
         }
     return {
-        "window_bytes": FAILURE_GROUP_WINDOW_BYTES,
         "progress_log": progress_log,
         "n": len(recent),
         "groups": [
             {"kind": kind, "class": failure_class, "count": count}
-            for (kind, failure_class), count in ranked[:FAILURE_GROUP_SHOWN]
+            for (kind, failure_class), count in ranked
         ],
-        "other_count": sum(count for _, count in ranked[FAILURE_GROUP_SHOWN:]),
         "advice": advice,
     }
 
@@ -6895,16 +6874,12 @@ def finalize_remote_inbox_claim(
         return
 
 
-# Characters the iteration prompt gives the open negative-space rows.
-ITERATION_NEGATIVE_KNOWLEDGE_MAX_CHARS = 8_000
-
-
 def _negative_knowledge_addon(run_dir: Path) -> str:
     """The open dead ends for the worker, or a line saying the ledger was not read.
 
     Rows are scoped to the v2 approach registry when one can be read (a
     registry that cannot be read leaves every open row in scope) and are
-    filtered and bounded by negative_knowledge_lines. Any failure to read the
+    filtered by negative_knowledge_lines, every row whole. Any failure to read the
     ledger safely gives NEGATIVE_KNOWLEDGE_UNREADABLE instead of the rows, so
     prompt construction never fails here; no open row in scope adds nothing.
     """
@@ -6915,9 +6890,7 @@ def _negative_knowledge_addon(run_dir: Path) -> str:
     except Exception:  # noqa: BLE001 - scoping is advisory
         registry = None
     try:
-        lines = negative_knowledge_lines(
-            run_dir, registry=registry, max_chars=ITERATION_NEGATIVE_KNOWLEDGE_MAX_CHARS
-        )
+        lines = negative_knowledge_lines(run_dir, registry=registry, max_chars=None)
     except Exception:  # noqa: BLE001 - prompt construction must never fail
         lines = [NEGATIVE_KNOWLEDGE_UNREADABLE]
     return "\n\n" + "\n".join(lines) if lines else ""
@@ -6936,7 +6909,7 @@ ITERATION_PROMPT_READER_RULE = (
 )
 ITERATION_PROMPT_STATE_RULE = (
     "Keep STATE.md in the loop directory as a short index of where the work "
-    "stands, near 60 lines: the claim still open and why settling it would be "
+    "stands: the claim still open and why settling it would be "
     "enough, each result with its hypotheses, its evidence or artifact ids and "
     "one label (proved only with a banked or machine-checked artifact id; "
     "otherwise heuristic, conjectural, unverified or disputed), refuted routes "
@@ -9786,27 +9759,17 @@ def _scrub_progress_payload(
     return payload
 
 
-# Bounds for the warnings a host staging result hands the drive's progress
-# log; every progress string is scrubbed as it is written.
-PROGRESS_WARNINGS_MAX = 10
-PROGRESS_WARNING_MAX_CHARS = 400
-
-
 def _progress_warnings(result: object) -> list[str]:
-    """The non-blank string warnings of a staging result, cut for the progress log.
+    """The non-blank string warnings of a staging result, all of them and whole.
 
-    At most PROGRESS_WARNINGS_MAX of them, each cut to
-    PROGRESS_WARNING_MAX_CHARS characters; [] when the result carries none.
+    [] when the result carries none. Every progress string is scrubbed as
+    it is written.
     """
 
     warnings = result.get("warnings") if isinstance(result, Mapping) else None
     if not isinstance(warnings, list):
         return []
-    return [
-        warning[:PROGRESS_WARNING_MAX_CHARS]
-        for warning in warnings
-        if isinstance(warning, str) and warning.strip()
-    ][:PROGRESS_WARNINGS_MAX]
+    return [warning for warning in warnings if isinstance(warning, str) and warning.strip()]
 
 
 def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | None = None) -> None:
@@ -14260,14 +14223,6 @@ def formal_shutdown_verdict(
     )
 
 
-# host_handoff.md lists the newest ledger rows, across shards, and the newest
-# open negative-space rows. Each record field is cut at the negative-space
-# render limit, longer text fields and id lists at these limits, all visibly.
-HOST_HANDOFF_ROW_WINDOW = 20
-HOST_HANDOFF_TEXT_CHARS = 1_000
-HOST_HANDOFF_ID_CHARS = 1_000
-
-
 def _worker_handoff_is_current(
     run_dir: Path, rows: list[dict[str, Any]] | None
 ) -> bool:
@@ -14307,7 +14262,7 @@ def _host_handoff_text(
 ) -> str:
     """host_handoff.md in the two-part handoff form, built from the loop's records alone.
 
-    ``rows`` are the newest ledger rows (None when the ledger could not be
+    ``rows`` are the ledger rows (None when the ledger could not be
     read) and ``total`` the number of rows across shards. Every line that
     carries record text starts with "| "; each field is cut with a visible
     marker, line breaks show as \\n, and hidden characters are dropped and
@@ -14319,7 +14274,7 @@ def _host_handoff_text(
 
     hidden = 0
 
-    def field(value: Any, limit: int = negative_space.RENDER_FIELD_LIMIT) -> str:
+    def field(value: Any, limit: int | None = None) -> str:
         nonlocal hidden
         text = value if isinstance(value, str) else ""
         escaped, removed = negative_space.single_line_escape(
@@ -14405,9 +14360,9 @@ def _host_handoff_text(
         if candidate:
             cited += f"; candidate {candidate}"
         if claim_ids:
-            cited += f"; claims: {field(', '.join(claim_ids), HOST_HANDOFF_ID_CHARS)}"
+            cited += f"; claims: {field(', '.join(claim_ids))}"
         if evidence_ids:
-            cited += f"; evidence: {field(', '.join(evidence_ids), HOST_HANDOFF_ID_CHARS)}"
+            cited += f"; evidence: {field(', '.join(evidence_ids))}"
         if bank == "accepted":
             try:
                 problems = goal_focus_v2.banked_review_errors(run_dir, row)
@@ -14446,7 +14401,7 @@ def _host_handoff_text(
         )
     else:
         open_rows = negative_space.filter_open(ledger_rows)
-        shown = open_rows[::-1][:HOST_HANDOFF_ROW_WINDOW]
+        shown = open_rows[::-1]
         for open_row in shown:
             line, removed = negative_space.render_row(open_row)
             hidden += removed
@@ -14461,11 +14416,11 @@ def _host_handoff_text(
     constraints: list[str] = []
     criteria = state.get("success_criteria")
     for item in strings(criteria if isinstance(criteria, list) else [criteria]):
-        constraints.append(f"| success criteria: {field(item, HOST_HANDOFF_TEXT_CHARS)}")
+        constraints.append(f"| success criteria: {field(item)}")
     stop_conditions = state.get("stop_conditions")
     if isinstance(stop_conditions, dict):
         for item in strings(stop_conditions.get("user_overrides")):
-            constraints.append(f"| stop condition: {field(item, HOST_HANDOFF_TEXT_CHARS)}")
+            constraints.append(f"| stop condition: {field(item)}")
         if stop_conditions.get("require_user_stop_only") is True:
             constraints.append("| stop rule: only the user may end the loop")
 
@@ -14475,7 +14430,7 @@ def _host_handoff_text(
         if isinstance(recorded, str) and recorded.strip():
             next_text = recorded
             break
-    next_step = field(next_text, HOST_HANDOFF_TEXT_CHARS)
+    next_step = field(next_text)
     next_lines = [f"| recorded next action: {next_step}"] if next_step else [
         "No next action is recorded."
     ]
@@ -14512,10 +14467,10 @@ def _host_handoff_text(
     for key, values in identifiers.items():
         if values:
             identifier_lines.append(
-                f"| {key}: {field(', '.join(values), HOST_HANDOFF_ID_CHARS)}"
+                f"| {key}: {field(', '.join(values))}"
             )
 
-    goal = field(state.get("goal"), HOST_HANDOFF_TEXT_CHARS)
+    goal = field(state.get("goal"))
     status_text = field(state.get("status"))
     lines = [
         "# Host handoff",
@@ -14611,8 +14566,8 @@ def write_host_handoff(run_dir: Path, *, reason: str) -> dict[str, Any]:
 
     Skipped when a regular handoff.md is at least as new as the last ledger
     row: the worker already handed over after the last banked iteration.
-    Otherwise _host_handoff_text rebuilds the file from the newest
-    HOST_HANDOFF_ROW_WINDOW ledger rows across shards, the open negative-space
+    Otherwise _host_handoff_text rebuilds the file from every ledger row
+    across shards, the open negative-space
     rows, loop_state.json and budget.json, and the proof artifacts the rows
     cite; it replaces the file atomically and recovery.md gains the pointer
     line once. Never raises: the outcome says what happened.
@@ -14625,7 +14580,7 @@ def write_host_handoff(run_dir: Path, *, reason: str) -> dict[str, Any]:
     except (OSError, ValueError, RecursionError):
         rows, total = None, 0
     else:
-        rows, total = every_row[-HOST_HANDOFF_ROW_WINDOW:], len(every_row)
+        rows, total = every_row, len(every_row)
     if _worker_handoff_is_current(run_dir, rows):
         return {
             "status": "skipped",
@@ -14760,7 +14715,7 @@ def negative_space_list_command(args: argparse.Namespace) -> dict[str, Any]:
     rows, _digest = _negative_space_snapshot(run_dir)
     approach_id = str(args.approach_id or "").strip()
     open_rows = negative_space.filter_open(rows, approach_id=approach_id or None)
-    shown = open_rows[::-1][: max(0, int(args.limit))]
+    shown = open_rows[::-1] if args.limit is None else open_rows[::-1][: max(0, int(args.limit))]
     omitted = len(open_rows) - len(shown)
     rendered = [negative_space.render_row(row) for row in shown]
     result: dict[str, Any] = {
@@ -15651,7 +15606,9 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="list open negative-space rows, newest first, one line each"
     )
     negative_space_list.add_argument("--dir", required=True, help="loop directory")
-    negative_space_list.add_argument("--limit", type=positive_int, default=20)
+    negative_space_list.add_argument(
+        "--limit", type=positive_int, default=None, help="list at most this many rows; all when unset"
+    )
     negative_space_list.add_argument(
         "--approach-id", default="", help="list only this approach's rows"
     )

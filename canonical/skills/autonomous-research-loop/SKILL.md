@@ -562,7 +562,7 @@ and keep a conjecture or an unchecked step at that status until a check you can
 cite settles it. Both lanes of the runtime's iteration prompt carry this rule.
 
 The worker keeps `STATE.md` in the loop directory as a short index of where the
-work stands, near 60 lines:
+work stands:
 
 - the claim still open, and why settling it would be enough;
 - each result with its hypotheses, its evidence or artifact ids and one label

@@ -160,8 +160,8 @@ Reconfiguration Specialist has a single constructing role, so it has no such
 check.
 
 - Each of these participants opens its Round 1 output with an `Approach`
-  section of at most 600 bytes that names the method, the object the method is
-  applied to, and the key idea.
+  section that names the method, the object the method is applied to, and the
+  key idea.
 - At the end of Round 1 the orchestrator compares the approaches pairwise. Two
   approaches are duplicates when they apply the same method to the same object,
   when one only restates the other in different words, or when one is only a
@@ -194,18 +194,10 @@ this template.
   `dead_end` (a direction that failed), `file` (an artifact ref), or `note`.
   The parent sets `kind` on its relay copy, so a result packet that
   `validate_result` checks keeps its closed field set.
-- **Entry cap.** One entry is at most 1500 bytes of UTF-8 as framed: every
-  `| ` line under its header counts (see "Framing"), so every relayed field
-  counts, such as `claim_or_object_ref` and `evidence_refs`, not only the
-  prose fields. An entry over the cap is refused, not cut, and is listed as
-  not relayed.
 - **Verbatim selection.** Relay the selected entries word for word, with no
   paraphrase, merging, or shortening. After them, list the id of every entry
   that was not relayed and the reason, so a recipient can tell a partial relay
   from a complete one (instruction `context-discipline.md`).
-- **Round caps.** Relay at most 8 entries from one participant per round, and
-  at most 12 KB (12288 bytes of UTF-8) of framed relay text per round. Entries
-  past either cap are refused and listed as not relayed.
 - **Hidden characters.** Before relaying, check the entry text for control
   characters (Unicode category Cc), format characters (category Cf, which
   includes zero-width and bidirectional controls), surrogates (category Cs),
@@ -238,11 +230,7 @@ this template.
   receives the section with this rule: a proposal that only rewords a dead
   end, or retries it under a new name, counts as that dead end, and a dead end
   comes back only with a genuinely new mechanism, invariant, or construction
-  that the proposal names. Rows are framed and checked like entries, and each
-  row obeys the entry cap. A row carried forward from an earlier round does
-  not count toward a participant's 8 entries, but the section's bytes count
-  toward the round's 12 KB before any new entry. If the section alone is over
-  12 KB, relay its newest rows that fit and list the rest as not relayed; the
+  that the proposal names. Rows are framed and checked like entries. The
   orchestrator keeps every row and applies the rule above to all of them.
 
 One framed entry looks like this:
@@ -689,11 +677,10 @@ framed line `| taken: do not retry without an evidence delta`, and every later
 phase receives the ledger with this retry rule: a proposal that only rewords an
 entry, or retries it under a new name, counts as that entry, and a rejected
 claim or route comes back only with an evidence delta that the proposal names
-(see "Evidence-delta between review rounds"). Entries are framed, checked and
-capped as "Relaying findings between rounds" states for `Dead ends` rows. An
-entry over a cap is refused and listed as not forwarded, never cut; the
-orchestrator keeps every entry and applies the retry rule to all of them,
-forwarded or not.
+(see "Evidence-delta between review rounds"). Entries are framed and checked
+as "Relaying findings between rounds" states for `Dead ends` rows, and are
+forwarded word for word, never cut; the orchestrator keeps every entry and
+applies the retry rule to all of them, forwarded or not.
 
 ## Mandatory pre-execution steps
 

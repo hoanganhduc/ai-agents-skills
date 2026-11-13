@@ -14,8 +14,6 @@ n_max = int(os.environ.get('SAGE_PARAM_N_MAX', '7'))
 conjecture = os.environ.get('SAGE_PARAM_CONJECTURE', 'G.chromatic_number() <= G.clique_number() + 1')
 
 LISTED_MAX = 20   # counterexamples listed; every one is counted
-SAMPLES_MAX = 5   # evaluation error messages kept
-TEXT_MAX = 200    # characters kept of each error message
 
 counterexamples = []
 counterexamples_found = 0
@@ -23,7 +21,6 @@ total_enumerated = 0
 total_evaluated = 0
 evaluation_errors = 0
 error_samples = []
-error_samples_truncated = False
 
 for n in range(1, n_max + 1):
     for G in graphs(n):
@@ -33,12 +30,7 @@ for n in range(1, n_max + 1):
         except Exception as e:
             # Neither a pass nor a counterexample: the graph was not evaluated.
             evaluation_errors += 1
-            sample = f"n={n}: {type(e).__name__}: {e}"
-            if len(error_samples) < SAMPLES_MAX:
-                error_samples_truncated = error_samples_truncated or len(sample) > TEXT_MAX
-                error_samples.append(sample[:TEXT_MAX])
-            else:
-                error_samples_truncated = True
+            error_samples.append(f"n={n}: {type(e).__name__}: {e}")
             continue
         total_evaluated += 1
         if holds:
@@ -56,7 +48,7 @@ for n in range(1, n_max + 1):
                 witness['chromatic_number'] = int(G.chromatic_number())
                 witness['clique_number'] = int(G.clique_number())
             except Exception as e:
-                witness['witness_detail_error'] = f"{type(e).__name__}: {e}"[:TEXT_MAX]
+                witness['witness_detail_error'] = f"{type(e).__name__}: {e}"
             counterexamples.append(witness)
     sys.stderr.write(
         f"\rn={n}: {total_enumerated} enumerated, {total_evaluated} evaluated, "
@@ -93,11 +85,6 @@ if evaluation_errors > 0:
     limitations.append(
         f"{evaluation_errors} of {total_enumerated} graphs raised an error when the conjecture was evaluated; "
         "they are neither confirmed nor refuted"
-    )
-if error_samples_truncated:
-    limitations.append(
-        f"evaluation_error_samples keeps at most {SAMPLES_MAX} messages of at most {TEXT_MAX} characters; "
-        "some were cut or dropped"
     )
 if any('witness_detail_error' in witness for witness in counterexamples):
     limitations.append("some listed counterexamples lack chromatic and clique numbers because computing them raised")
@@ -138,7 +125,6 @@ result = {
     'total_evaluated': int(total_evaluated),
     'evaluation_errors': int(evaluation_errors),
     'evaluation_error_samples': error_samples,
-    'evaluation_error_samples_truncated': bool(error_samples_truncated),
     # Deprecated alias of total_evaluated, kept for one release.
     'total_checked': int(total_evaluated),
     'counterexamples_found': int(counterexamples_found),

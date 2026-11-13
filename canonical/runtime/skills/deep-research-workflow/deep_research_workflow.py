@@ -127,7 +127,6 @@ AGD_FAMILY_SOURCES = {"declared", "launch_stamp"}
 # provider-to-family table other than "unverified" (a test keeps the two equal).
 VERIFIED_FAMILIES = {"anthropic", "openai", "xai", "deepseek", "google"}
 DISPATCH_STAMP_SCHEMA_VERSION = "external-agent-dispatch-stamp.v1"
-STAMP_COPY_MAX_BYTES = 64 * 1024
 REQUIRED_FINALIZABLE_GUARDS = {"EvidenceGuard", "VerifyGuard"}
 MODEL_FRESHNESS_SCHEMA_VERSION = "deep-research.model-freshness.v1"
 MODEL_FRESHNESS_REQUIRED = {
@@ -190,7 +189,6 @@ SUPPORTING_COMPUTATION_RESULT = {"asserts": "passed", "refutes": "failed"}
 CONTRADICTING_COMPUTATION_RESULT = {"asserts": "failed", "refutes": "passed"}
 # Keys of the record research_compute keeps for a job (template_runner.execute_manifest).
 RESEARCH_COMPUTE_ENVELOPE_KEYS = {"job_id", "status", "template", "resource_class", "started_at", "finished_at", "result"}
-COMPUTATION_RESULT_MAX_BYTES = 16 * 1024 * 1024
 
 SOURCE_REQUIRED = {"source_id", "source", "source_type", "library_status"}
 SOURCE_FIELDS = SOURCE_REQUIRED | {
@@ -977,7 +975,7 @@ def add_computation_evidence(args: argparse.Namespace) -> dict[str, Any]:
     block: dict[str, Any] | None = None
     provenance: str | None = None
     try:
-        payload = read_regular_file(result_path, COMPUTATION_RESULT_MAX_BYTES)
+        payload = read_regular_file(result_path)
         text = payload.decode("utf-8-sig")
     except (OSError, ValueError) as exc:
         payload = None
@@ -1514,7 +1512,7 @@ def validate_computation_payload(
     try:
         if artifact is None:
             raise ValueError("artifact_ref does not name a file in the run")
-        payload = read_regular_file(artifact, COMPUTATION_RESULT_MAX_BYTES)
+        payload = read_regular_file(artifact)
     except (OSError, ValueError) as exc:
         add_error(errors, "COMPUTATION_PAYLOAD_HASH_MISMATCH", path, f"line {line}: the payload behind payload_hash cannot be read: {exc}")
         return
@@ -1755,7 +1753,7 @@ def bound_stamp_family(
 ) -> str | None:
     """Return the model_family of the stamp copy that ref_field and hash_field bind, or None when they do not.
 
-    The copy must be a regular file of at most STAMP_COPY_MAX_BYTES whose
+    The copy must be a regular file whose
     sha256 is the hash, holding a delegate-agent stamp whose model_family is the
     row's family_field. Each failure is reported and leaves that side unbound.
     """
@@ -1765,7 +1763,7 @@ def bound_stamp_family(
     try:
         if artifact is None:
             raise ValueError(f"{ref_field} does not name a file in the run")
-        payload = read_regular_file(artifact, STAMP_COPY_MAX_BYTES)
+        payload = read_regular_file(artifact)
     except (OSError, ValueError) as exc:
         add_error(errors, "AGD_STAMP_HASH_MISMATCH", path, f"line {line}: the stamp copy behind {hash_field} cannot be read: {exc}")
         return None

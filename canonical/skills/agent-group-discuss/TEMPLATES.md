@@ -44,10 +44,9 @@ The `Rejected` ledger travels with the accepted claims into every later phase.
 Each entry names the rejected claim or route, the reason for the rejection, the
 counterexample or failing step, and a reproduction ref (a round file entry, an
 artifact path with its sha256, or a deep-research evidence id), and is marked
-`taken: do not retry without an evidence delta`. Entries are framed as data,
-checked and capped as "Relaying findings between rounds" in `EXECUTION.md`
-states for `Dead ends` rows: an entry over a cap is refused and listed as not
-forwarded, never cut. "Template chaining" in `EXECUTION.md` says where the
+`taken: do not retry without an evidence delta`. Entries are framed as data
+and checked as "Relaying findings between rounds" in `EXECUTION.md` states
+for `Dead ends` rows, and are forwarded word for word, never cut. "Template chaining" in `EXECUTION.md` says where the
 ledger goes in each role prompt and how a retry is judged.
 
 ## Mandatory plan
@@ -211,7 +210,7 @@ Rounds:
 
 Round 1:
 
-- each role opens with an `Approach` section (method, object, key idea; at most 600 bytes), and the orchestrator compares the approaches after the round (see "Approach statements" in `EXECUTION.md`)
+- each role opens with an `Approach` section (method, object, key idea), and the orchestrator compares the approaches after the round (see "Approach statements" in `EXECUTION.md`)
 - Specializer: characterize easy and hard restricted cases
 - Generalizer: list promising known techniques and likely obstacles
 - Reducer: list reduction sources and sketch the top candidate
@@ -412,7 +411,7 @@ Claim ledger fields:
 - notes
 - kind (optional): `lemma` / `partial` / `counterexample` / `dead_end` / `file` / `note`
 
-A row relayed between rounds follows "Relaying findings between rounds" in `EXECUTION.md`, so it holds at most 1500 bytes of UTF-8 as framed, counting every field.
+A row relayed between rounds follows "Relaying findings between rounds" in `EXECUTION.md`.
 
 Rounds:
 

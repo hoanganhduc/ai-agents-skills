@@ -522,9 +522,10 @@ class NegativeSpaceWriterTests(unittest.TestCase):
 
         A 12,000-character mechanism is stored as its first 10,000 characters
         with the fingerprint of that text, as before the change (a regression
-        check: a marker added inside _clean would change both). Rendering cuts
-        each field to 200 characters with a visible marker and shows every line
-        break inside a field as the two characters \\n, so a row is one line.
+        check: a marker added inside _clean would change both). Rendering shows
+        each field whole and every line break inside a field as the two
+        characters \\n, so a row is one line; summarize_open still cuts the
+        mechanism and failure fields at 200 characters with a visible marker.
         """
         mechanism = "Colour-step " * 999 + "Colour-step-"
         self.assertEqual(len(mechanism), 12_000)
@@ -548,10 +549,10 @@ class NegativeSpaceWriterTests(unittest.TestCase):
         line = ns.render_row_line(row)
         self.assertTrue(line.startswith("| "), line)
         self.assertEqual(len(line.splitlines()), 1)
-        self.assertIn(stored[:200] + " [cut: 9800 characters omitted]", line)
+        self.assertIn(f"mechanism: {stored};", line)
         self.assertEqual(ns.clip_for_render("short"), "short")
         self.assertEqual(
-            ns.clip_for_render("x" * 205), "x" * 200 + " [cut: 5 characters omitted]"
+            ns.clip_for_render("x" * 205, 200), "x" * 200 + " [cut: 5 characters omitted]"
         )
 
         broken = dict(
@@ -723,6 +724,51 @@ class GoalFocusNegativeSpaceIntegrationTest(unittest.TestCase):
             self.assertEqual(result["status"], "error")
             joined = " ".join(result.get("errors") or [])
             self.assertIn("negative_space", joined)
+
+
+class RenderCutsOnlyWithAPreexistingLimitTests(unittest.TestCase):
+    """Rendering cuts no field unless the caller passes a limit (user decision, 2026-11-13).
+
+    The 200-character render cut was a number the agent chose in N5, and it is
+    gone. summarize_open keeps its cut of mechanism_text and failure_summary at
+    200 characters: that cut predates the Open Math work.
+    """
+
+    @staticmethod
+    def _row(**fields: object) -> dict:
+        values = dict(
+            kind="dead_end",
+            mechanism_text="mechanism",
+            failure_summary="failure",
+            reopen_condition="a new invariant",
+            approach_id="approach-a",
+            evidence_ids=["E1"],
+        )
+        values.update(fields)
+        return ns.build_entry(**values)
+
+    def test_no_agent_cap_clip_for_render_cuts_only_with_a_limit(self) -> None:
+        self.assertFalse(hasattr(ns, "RENDER_FIELD_LIMIT"))
+        self.assertEqual(ns.clip_for_render("x" * 5_000), "x" * 5_000)
+        self.assertEqual(
+            ns.clip_for_render("x" * 205, 200), "x" * 200 + " [cut: 5 characters omitted]"
+        )
+
+    def test_no_agent_cap_render_row_shows_each_field_whole(self) -> None:
+        mechanism, failure = "M" * 3_000, "F" * 2_500
+        line = ns.render_row_line(self._row(mechanism_text=mechanism, failure_summary=failure))
+        self.assertIn(f"mechanism: {mechanism};", line)
+        self.assertIn(f"failure: {failure};", line)
+        self.assertNotIn("[cut:", line)
+
+    def test_no_agent_cap_summarize_open_keeps_only_its_older_cut(self) -> None:
+        """Regression check: summarize_open cut these two fields at 200 characters before N5."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ns.append_entries(root, [self._row(mechanism_text="M" * 300, failure_summary="F" * 300)])
+            (summary,) = ns.summarize_open(root)
+        self.assertEqual(summary["mechanism_text"], "M" * 200 + " [cut: 100 characters omitted]")
+        self.assertEqual(summary["failure_summary"], "F" * 200 + " [cut: 100 characters omitted]")
 
 
 if __name__ == "__main__":

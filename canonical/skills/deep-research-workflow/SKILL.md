@@ -279,8 +279,8 @@ compatibility workflows that do not claim those serious-research guarantees.
 `computation_evidence` block in their JSON result. Record such a result with
 `add-computation-evidence` rather than typing a `computation` row by hand:
 
-- `--result` must be a regular file, not a symbolic link, of at most 16 MiB in
-  UTF-8, holding exactly one `computation_evidence` object: at the top level,
+- `--result` must be a regular file, not a symbolic link, in UTF-8, holding
+  exactly one `computation_evidence` object: at the top level,
   or under `result` as in the record a `research_compute` job leaves. The block
   carries the ten computation fields (`tool_name`, `tool_version`,
   `input_encoding_ref`, `checked_domain`, `graph_model_assumptions`,
@@ -377,7 +377,7 @@ every copy a row names and reports:
 
 - `AGD_STAMP_HASH_MISMATCH` for a ref without its hash or a hash without its
   ref, `family_source` `launch_stamp` without `payload_hash`, and a copy that
-  is missing, a symbolic link, larger than 64 KiB, unreadable or not the bytes
+  is missing, a symbolic link, unreadable or not the bytes
   whose `sha256:<hex>` the hash gives;
 - `AGD_STAMP_INVALID` for a copy that is not a JSON object with
   `schema_version` `external-agent-dispatch-stamp.v1` and a string

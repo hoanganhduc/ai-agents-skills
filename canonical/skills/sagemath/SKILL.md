@@ -116,9 +116,8 @@ The JSON it prints, with exit 0, reports:
   exception. `evaluation_errors` counts the others, so
   `total_evaluated + evaluation_errors == total_enumerated`. A graph whose
   evaluation raised is neither a pass nor a counterexample.
-- `evaluation_error_samples`: up to 5 messages `n=<n>: <Type>: <message>`, each
-  cut at 200 characters. `evaluation_error_samples_truncated` is true when a
-  message was cut or further errors were not sampled.
+- `evaluation_error_samples`: every evaluation error message,
+  `n=<n>: <Type>: <message>`, whole.
 - `counterexamples_found`: every graph on which the conjecture evaluated false.
   `counterexamples` lists the first 20, each with `n`, `edges`,
   `chromatic_number` and `clique_number`. When computing those two numbers

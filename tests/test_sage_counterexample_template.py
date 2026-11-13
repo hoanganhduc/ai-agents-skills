@@ -224,24 +224,22 @@ class CounterexampleTemplateTests(unittest.TestCase):
         self.assertEqual(computation_evidence_errors(block), [])
 
         cases = {
-            # Seven errors: five messages are kept and the rest dropped.
-            "dropped": ("1 / G.size() > 0", 7, 5, True),
-            # Three short messages fit.
-            "kept": ("1 / G.size() > 0", 3, 3, False),
-            # One message longer than 200 characters is cut.
-            "cut": ("int('9' * 300 + 'x') > 0", 1, 1, True),
+            # Every message is kept: the old cut at 5 messages of 200 characters is gone.
+            "seven": ("1 / G.size() > 0", 7, 7),
+            "three": ("1 / G.size() > 0", 3, 3),
+            # A message longer than 200 characters is kept whole.
+            "long": ("int('9' * 300 + 'x') > 0", 1, 1),
         }
-        for label, (conjecture, n_max, kept, truncated) in cases.items():
+        for label, (conjecture, n_max, kept) in cases.items():
             with self.subTest(samples=label):
                 result = run_template(conjecture, n_max=n_max)
                 samples = result["evaluation_error_samples"]
                 self.assertEqual(len(samples), kept)
                 for sample in samples:
                     self.assertRegex(sample, r"^n=\d+: (ZeroDivisionError|ValueError): ")
-                    self.assertLessEqual(len(sample), 200)
-                self.assertIs(result["evaluation_error_samples_truncated"], truncated)
-                if label == "cut":
-                    self.assertEqual(len(samples[0]), 200)
+                self.assertNotIn("evaluation_error_samples_truncated", result)
+                if label == "long":
+                    self.assertGreater(len(samples[0]), 200)
 
     def test_a_clean_run_is_bounded_complete_and_validates(self):
         conjecture = "G.size() <= G.order() * (G.order() - 1) // 2"
@@ -345,6 +343,29 @@ class CounterexampleTemplateTests(unittest.TestCase):
         self.assertEqual((block["result_status"], block["coverage_status"]), ("partial", "partial"))
         self.assertNotIn("exhaustiveness_argument", block)
         self.assertEqual(computation_evidence_errors(block), [])
+
+
+class CounterexampleTemplateNoAgentCapTests(unittest.TestCase):
+    """Every evaluation error message is kept whole (user decision, 2026-11-13).
+
+    The agent chose to keep 5 messages of 200 characters. The 20 listed
+    counterexamples predate the Open Math work and stay.
+    """
+
+    def test_no_agent_cap_every_error_message_is_kept_whole(self):
+        result = run_template("1 / G.size() > 0", n_max=7)
+        self.assertEqual(len(result["evaluation_error_samples"]), result["evaluation_errors"])
+        self.assertGreater(result["evaluation_errors"], 5)
+        self.assertNotIn("evaluation_error_samples_truncated", result)
+        long_message = run_template("int('9' * 300 + 'x') > 0", n_max=1)
+        (sample,) = long_message["evaluation_error_samples"]
+        try:
+            int("9" * 300 + "x")
+        except ValueError as exc:
+            message = f"n=1: ValueError: {exc}"
+        # Longer than the old 200-character cut and kept as Python wrote it.
+        self.assertGreater(len(message), 200)
+        self.assertEqual(sample, message)
 
 
 if __name__ == "__main__":
