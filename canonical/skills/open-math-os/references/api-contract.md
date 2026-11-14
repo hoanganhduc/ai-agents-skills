@@ -12,21 +12,21 @@ This file describes what `open_math_os.py` sends, what it accepts, and how it fa
 
 ## Request body
 
-- `model` must match `vendor/name` (ASCII letters, digits, `.`, `_`, `-`) and appear in the catalog. The catalog is cached for 86,400 seconds.
+- `model` must match `vendor/name` (ASCII letters, digits, `.`, `_`, `-`) and appear in the catalog. Without `--catalog-ttl`, `ask` reads the catalog live before each send; with it, a cached catalog younger than the given seconds is reused.
 - `reasoning_effort` must be in the model's `supported_reasoning_efforts`. The gateway drops fields that OpenAI chat completions does not define, so effort travels only in this field.
-- `max_completion_tokens` is always sent. The default depends on the effort (see `models.md`); `--max-tokens` may set 1 to 32,768.
+- `max_completion_tokens` is sent only when `--max-tokens N` gives it, for any N of at least 1. The client has no default per effort.
 - With streaming (the default), the body also sets `stream_options.include_usage`, so the last chunk carries `usage`.
 
 ## Responses
 
 - The answer is `choices[0].message.content` (or the streamed `delta.content`), with `reasoning` and `reasoning_details` beside it. `usage` reports prompt, completion, reasoning and total tokens. There is no cost field and no rate-limit header. The `x-request-id` header holds the request id.
-- The stream is SSE and ends with `data: [DONE]`. The idle timeout is 120 seconds. The total deadline defaults to 1,800 seconds and `--deadline` changes it. A stream that ends without `[DONE]` is incomplete.
-- The deadline covers the whole response read, streamed or not. When it passes, a watchdog shuts the connection down, so a peer that trickles bytes inside one line cannot hold the client past it.
+- The stream is SSE and ends with `data: [DONE]`. A stream that ends without `[DONE]` is incomplete. There is no idle timeout unless `--idle-timeout` sets one, and no total deadline unless `--deadline` sets one.
+- A `--deadline` covers the whole response read, streamed or not. When it passes, a watchdog shuts the connection down, so a peer that trickles bytes inside one line cannot hold the client past it. Without `--idle-timeout`, the deadline also bounds the wait for the response to start.
 - `content` and `reasoning` are returned with ANSI CSI and OSC sequences and C0/C1 control characters removed (newline and tab are kept), including while they stream to a terminal. `reasoning_details` is kept verbatim inside the JSON envelope, where JSON escaping makes it inert.
 
 ## Output envelope
 
-`ask --json` prints one JSON object on one line, with these keys in this order: `schema` (`open-math-os.ask.v1`), `status` (`ok`, `truncated`, `incomplete`, `error` or `blocked`), `label`, `requested_effort`, `max_completion_tokens`, `finish_reason`, `usage`, `error`, `provenance`, `output` and `final`. The last key is always `"final": true`, so a reader can tell a complete envelope from a cut one.
+`ask --json` prints one JSON object on one line, with these keys in this order: `schema` (`open-math-os.ask.v1`), `status` (`ok`, `truncated`, `incomplete`, `error` or `blocked`), `label`, `requested_effort`, `max_completion_tokens` (null without `--max-tokens`), `finish_reason`, `usage`, `error`, `provenance`, `output` and `final`. The last key is always `"final": true`, so a reader can tell a complete envelope from a cut one.
 
 `output` holds the remote content under `trust: "untrusted-remote-output"`. `provenance` holds `provider_id`, `provenance_label`, `family`, `independence_eligible`, `requested_model`, `served_model_claimed`, `request_id`, `captured_at` and `catalog_fetched_at`.
 
@@ -54,26 +54,26 @@ Exit codes 5, 7 and 18 follow `canonical/instructions/provider-credit-quota.md`.
 
 ## Retries and the circuit breaker
 
-- A retry happens only when no response byte has arrived: a connection error, a 429, or a 5xx before the stream starts. A stream that fails after its first byte is reported as `incomplete` and not retried.
-- A `Retry-After` of at most 300 seconds is honored. A longer one stops the retries. Without the header, the wait is full-jitter exponential backoff with a 20-second base and a 120-second cap. There are at most 2 retries.
+- There are no retries unless `--retries N` allows up to N. A retry happens only when no response byte has arrived: a connection error, a 429, or a 5xx before the stream starts. A stream that fails after its first byte is reported as `incomplete` and not retried.
+- A `Retry-After` is honored. With `--retry-after-max SECONDS`, a longer one stops the retries. Without the header, the wait is full-jitter exponential backoff when `--backoff-base SECONDS` is given: a random time up to the base, doubled with each retry and capped by `--backoff-cap SECONDS` when that is given. Without `--backoff-base`, a retry follows at once.
 - Labels that start with `agd:` or `arl:` never retry. Neither does a launch inside an ARL run, where `AAS_AUTOLOOP_RUN_ID` or `AAS_ARL_BROKER_SOCKET` is set. The loader drops those markers, so `run_skill.sh` and `run_skill.ps1` pass their presence to the client as `AAS_OPENMATH_ARL_LAUNCH=1`.
-- Three 429 responses within 120 seconds open a machine-wide breaker. While it is open, no process sends for 600 seconds.
+- The machine-wide breaker runs only when `--breaker-threshold N`, `--breaker-window SECONDS` and `--breaker-open SECONDS` are given together. Then N 429 responses within the window open it, and while it is open no process that passes these flags sends. A process without them neither records 429 responses nor checks the breaker.
 - An HTTP 402 writes `hard_quota.json`. Every process refuses to send until the user deletes the file.
 
 ## Limiter and budgets
 
-- At most 4 requests are in flight on the machine. Each holds one slot file under an operating-system lock (`flock`, or `msvcrt` on Windows) that records its PID. The lock dies with its process. A slot found free with an old owner record is reported as a recovered stale slot.
-- A run is named by the first two colon-separated fields of the label. A one-field label names no run, so that invocation is its own run. Each run may make at most 50 requests and use at most 250,000 tokens.
-- Across all runs, the client allows 1,000,000 tokens per rolling day and 4,000,000 per rolling week.
-- Each attempt reserves `max_completion_tokens` plus a prompt estimate (bytes / 4). Once the attempt holds a limiter slot, the client checks the hard-quota marker, the breaker and every cap again under the state lock. In the same step it writes the reservation to `budget.jsonl` and a provisional `inflight` record to `sends.jsonl`, so concurrent processes see each other's reservations.
+- With `--max-inflight N`, at most N of the requests that pass the flag are in flight on the machine. `--slot-wait SECONDS` bounds the wait for a slot; without it the wait has no limit. Without `--max-inflight`, a request takes no slot. Each request that takes one holds one slot file under an operating-system lock (`flock`, or `msvcrt` on Windows) that records its PID. The lock dies with its process. A slot found free with an old owner record is reported as a recovered stale slot.
+- A run is named by the first two colon-separated fields of the label. A one-field label names no run, so that invocation is its own run. `--run-max-requests N` and `--run-max-tokens N` cap a run.
+- `--day-max-tokens N` and `--week-max-tokens N` cap the tokens of all runs over a rolling 24 hours and a rolling 7 days. Without these flags, nothing is capped.
+- Each attempt reserves `max_completion_tokens`, when sent, plus a prompt estimate (bytes / 4). Without `--max-tokens`, a cap therefore counts only the prompt of the request in flight, and one answer can take the total past the cap. Once the attempt holds a limiter slot, or at once without `--max-inflight`, the client checks the hard-quota marker, the breaker and every cap that is set again under the state lock. In the same step it writes the reservation to `budget.jsonl` and a provisional `inflight` record to `sends.jsonl`, so concurrent processes see each other's reservations.
 - After the attempt, a settlement row replaces the reservation by `usage.total_tokens`. When usage is missing, the attempt is charged the reservation if any byte arrived, and nothing otherwise. An attempt killed in flight has no settlement, so it stays charged at its reservation.
-- When `quota.json` in the state directory is at most 900 seconds old, a send also needs at least 50 USD left in both team windows. The expected shape is `{"fetched_at": "<UTC Z time>", "windows": {"five_hour": {"remaining_usd": N}, "week": {"remaining_usd": N}}}`. A fresh file with another shape refuses the send.
+- With `--quota-floor USD`, a send also needs at least USD left in both team windows of `quota.json` in the state directory. `--quota-max-age SECONDS` ignores a file older than SECONDS; without it, the floor applies to a file of any age. The expected shape is `{"fetched_at": "<UTC Z time>", "windows": {"five_hour": {"remaining_usd": N}, "week": {"remaining_usd": N}}}`. While the floor is set, a file with another shape refuses the send, unless `--quota-max-age` ignores it as too old.
 
 ## Local state
 
 The state directory is `~/.local/state/ai-agents-skills/open-math-os` (mode `0700`), derived from `HOME`. On Windows it is `%LOCALAPPDATA%\ai-agents-skills\state\open-math-os`, checked by the broker's owner and DACL guard. Files are `0600`, opened without following links:
 
-- `sends.jsonl`: the metadata-only send log, rotated at 1 MiB with 3 old files kept. Each attempt writes an `inflight` record before it sends and a final record after it; both carry the same `attempt_id`.
+- `sends.jsonl`: the metadata-only send log, rotated at 1 MiB with 3 old files kept (bounds the agent chose; see SKILL.md). Each attempt writes an `inflight` record before it sends and a final record after it; both carry the same `attempt_id`.
 - `budget.jsonl`: the durable budget ledger. It is never rotated; only rows older than the weekly window are pruned. A settlement row carries the timestamp of its reservation, so the two always leave the window together.
 - `catalog.json`, `breaker.json`, `hard_quota.json`, `quota.json`, `state.lock` and `limiter-slot-<n>.lock`.
 

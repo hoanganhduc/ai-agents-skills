@@ -45,6 +45,8 @@ def _load_client() -> types.ModuleType:
     spec = importlib.util.spec_from_file_location("open_math_os_under_test", SKILL_RUNTIME / "open_math_os.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # The client defines a dataclass, and dataclasses look the module up in sys.modules.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -58,6 +60,7 @@ CHILD_MAIN = (
     "import importlib.util, sys\n"
     "spec = importlib.util.spec_from_file_location('open_math_os_child', sys.argv[1])\n"
     "module = importlib.util.module_from_spec(spec)\n"
+    "sys.modules[spec.name] = module\n"
     "spec.loader.exec_module(module)\n"
     "raise SystemExit(module.main(sys.argv[3:], _origin=sys.argv[2]))\n"
 )
@@ -245,7 +248,6 @@ class ClientTestCase(unittest.TestCase):
         self.sleeps: list[float] = []
         for patcher in (
             mock.patch.object(om, "_sleep", self.sleeps.append),
-            mock.patch.object(om, "LIMITER_WAIT_S", 0.0),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -309,7 +311,7 @@ class ResponseTests(ClientTestCase):
         self.assertEqual(request["headers"]["authorization"], "Bearer " + self.key)
         self.assertEqual(request["body"]["model"], MODEL)
         self.assertEqual(request["body"]["reasoning_effort"], "low")
-        self.assertEqual(request["body"]["max_completion_tokens"], 4096)
+        self.assertNotIn("max_completion_tokens", request["body"])
         self.assertIs(request["body"]["stream"], False)
         self.assertEqual(request["body"]["messages"], [{"role": "user", "content": PROMPT}])
         self.assert_no_secret(out, err)
@@ -400,16 +402,16 @@ class ErrorClassTests(ClientTestCase):
         self.gateway.chat += [json_reply(429, {"error": {"code": "rate_limited"}}, {"Retry-After": "7"}),
                               json_reply(200, completion())]
 
-        code, _out, err = self.ask("--no-stream")
+        code, _out, err = self.ask("--no-stream", "--retries", "2")
 
         self.assertEqual(code, 0, err)
         self.assertEqual(self.sleeps, [7.0])
         self.assertEqual(len(self.gateway.chat_requests()), 2)
 
-    def test_retry_after_above_300_seconds_stops_retrying(self) -> None:
+    def test_retry_after_above_retry_after_max_stops_retrying(self) -> None:
         self.gateway.chat.append(json_reply(429, {"error": {"code": "rate_limited"}}, {"Retry-After": "301"}))
 
-        code, _out, err = self.ask()
+        code, _out, err = self.ask("--retries", "2", "--retry-after-max", "300")
 
         self.assertEqual(code, 5)
         self.assertEqual(self.sleeps, [])
@@ -421,7 +423,8 @@ class ErrorClassTests(ClientTestCase):
                               json_reply(502, {"error": {"code": "bad_gateway"}}),
                               json_reply(200, completion())]
 
-        code, _out, err = self.ask("--no-stream")
+        code, _out, err = self.ask("--no-stream", "--retries", "2", "--backoff-base", "20",
+                                   "--backoff-cap", "120")
 
         self.assertEqual(code, 0, err)
         self.assertEqual(len(self.gateway.chat_requests()), 3)
@@ -429,10 +432,10 @@ class ErrorClassTests(ClientTestCase):
         self.assertTrue(0.0 <= self.sleeps[0] <= 20.0, self.sleeps)
         self.assertTrue(0.0 <= self.sleeps[1] <= 40.0, self.sleeps)
 
-    def test_retries_stop_after_two(self) -> None:
+    def test_retries_stop_after_the_given_count(self) -> None:
         self.gateway.chat += [json_reply(503, {"error": {"code": "overloaded"}}) for _ in range(4)]
 
-        code, _out, _err = self.ask()
+        code, _out, _err = self.ask("--retries", "2")
 
         self.assertEqual(code, 13)
         self.assertEqual(len(self.gateway.chat_requests()), 3)
@@ -442,7 +445,7 @@ class ErrorClassTests(ClientTestCase):
                   {"error": {"code": "upstream_error", "status": 502}}]
         self.gateway.chat += [sse_reply(events, done=False), json_reply(200, completion())]
 
-        code, out, err = self.ask()
+        code, out, err = self.ask("--retries", "2")
 
         self.assertEqual(code, 13)
         self.assertEqual(len(self.gateway.chat_requests()), 1)
@@ -467,8 +470,7 @@ class ErrorClassTests(ClientTestCase):
         events = [{"id": "c1", "model": MODEL, "choices": [{"index": 0, "delta": {"content": "slow"}}]}]
         self.gateway.chat.append(sse_reply(events, stall=1.5))
 
-        with mock.patch.object(om, "STREAM_IDLE_TIMEOUT_S", 0.3):
-            code, _out, err = self.ask()
+        code, _out, err = self.ask("--idle-timeout", "0.3")
 
         self.assertEqual(code, 13)
         self.assertIn("idle_timeout", err)
@@ -477,7 +479,7 @@ class ErrorClassTests(ClientTestCase):
     def test_orchestrator_labels_never_retry(self) -> None:
         self.gateway.chat += [json_reply(503, {"error": {"code": "overloaded"}}), json_reply(200, completion())]
 
-        code, _out, _err = self.ask("--label", "agd:run-1:breaker")
+        code, _out, _err = self.ask("--label", "agd:run-1:breaker", "--retries", "2")
 
         self.assertEqual(code, 13)
         self.assertEqual(len(self.gateway.chat_requests()), 1)
@@ -486,7 +488,7 @@ class ErrorClassTests(ClientTestCase):
     def test_the_runner_arl_flag_never_retries(self) -> None:
         self.gateway.chat += [json_reply(503, {"error": {"code": "overloaded"}}), json_reply(200, completion())]
 
-        code, _out, _err = self.ask(environ={**self.environ, "AAS_OPENMATH_ARL_LAUNCH": "1"})
+        code, _out, _err = self.ask("--retries", "2", environ={**self.environ, "AAS_OPENMATH_ARL_LAUNCH": "1"})
 
         self.assertEqual(code, 13)
         self.assertEqual(len(self.gateway.chat_requests()), 1)
@@ -522,7 +524,7 @@ class ErrorClassTests(ClientTestCase):
                         "reasoning_effort": "low", "max_completion_tokens": 16, "stream": stream}
                 started = time.monotonic()
                 with self.assertRaises(om.OpenMathError) as caught:
-                    om.send_chat_once(client, self.key, body, deadline_s=1.0, sink=None)
+                    om.send_chat_once(client, self.key, body, deadline_s=1.0, idle_timeout_s=None, sink=None)
                 self.assertEqual(caught.exception.code, "deadline_exceeded")
                 self.assertLess(time.monotonic() - started, 6.0)
 
@@ -546,20 +548,22 @@ class ErrorClassTests(ClientTestCase):
     def test_three_rate_limits_open_the_machine_wide_breaker(self) -> None:
         self.gateway.chat += [json_reply(429, {"error": {"code": "rate_limited"}}, {"Retry-After": "0"})
                               for _ in range(3)]
+        breaker = ("--retries", "2", "--breaker-threshold", "3", "--breaker-window", "120",
+                   "--breaker-open", "600")
 
-        code, _out, err = self.ask()
+        code, _out, err = self.ask(*breaker)
 
         self.assertEqual(code, 5)
         self.assertEqual(len(self.gateway.chat_requests()), 3)
         self.assertIn("circuit breaker opened", err)
-        code, _out, err = self.ask()
+        code, _out, err = self.ask(*breaker)
         self.assertEqual(code, 5)
         self.assertIn("refused quota: breaker_open", err)
         self.assertEqual(len(self.gateway.chat_requests()), 3)
-        later = time.time() + om.BREAKER_OPEN_S + 1
+        later = time.time() + 600 + 1
         self.gateway.chat.append(json_reply(200, completion()))
         with mock.patch.object(om, "_wall", lambda: later):
-            code, _out, err = self.ask("--no-stream")
+            code, _out, err = self.ask("--no-stream", *breaker)
         self.assertEqual(code, 0, err)
 
     def test_402_writes_a_hard_quota_marker_every_process_obeys(self) -> None:
@@ -600,19 +604,16 @@ class RequestValidationTests(ClientTestCase):
         self.assertIn("model_not_in_catalog", err)
         self.assertEqual(self.gateway.chat_requests(), [])
 
-    def test_max_completion_tokens_is_always_sent_from_the_effort_table(self) -> None:
+    def test_max_completion_tokens_is_sent_only_with_max_tokens(self) -> None:
         self.gateway.chat += [json_reply(200, completion()), json_reply(200, completion())]
 
         self.assertEqual(self.ask("--effort", "high", "--no-stream")[0], 0)
-        self.assertEqual(self.ask("--max-tokens", "100", "--no-stream")[0], 0)
-        code, _out, err = self.ask("--max-tokens", "40000")
+        self.assertEqual(self.ask("--max-tokens", "40000", "--no-stream")[0], 0)
 
         bodies = [request["body"] for request in self.gateway.chat_requests()]
-        self.assertEqual([body["max_completion_tokens"] for body in bodies], [12288, 100])
-        self.assertEqual(code, 2)
-        self.assertIn("max_tokens_out_of_range", err)
-        self.assertEqual(om.EFFORT_MAX_COMPLETION_TOKENS,
-                         {"low": 4096, "medium": 12288, "high": 12288, "xhigh": 32768, "max": 32768})
+        self.assertNotIn("max_completion_tokens", bodies[0])
+        self.assertEqual(bodies[1]["max_completion_tokens"], 40000)
+        self.assertFalse(hasattr(om, "EFFORT_MAX_COMPLETION_TOKENS"))
 
     def test_only_the_fixed_origin_or_a_loopback_test_origin_is_accepted(self) -> None:
         self.assertEqual(om.validated_origin(om.API_ORIGIN), "https://os.openmathmodel.org")
@@ -1244,7 +1245,7 @@ class StateTests(ClientTestCase):
     def test_state_directory_and_files_are_owner_private(self) -> None:
         self.gateway.chat.append(json_reply(200, completion()))
 
-        self.assertEqual(self.ask("--no-stream")[0], 0)
+        self.assertEqual(self.ask("--no-stream", "--max-inflight", "4")[0], 0)
 
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o700)
         for name in ("sends.jsonl", "budget.jsonl", "catalog.json", "state.lock", "limiter-slot-0.lock"):
@@ -1286,8 +1287,7 @@ class StateTests(ClientTestCase):
         self.assertEqual(sum(json.loads(row)["tokens"] for row in ledger), 120_000)
         self.assertFalse((self.state / "budget.jsonl.1").exists())
         # A fresh invocation stands in for a restarted client: only disk state carries over.
-        with mock.patch.object(om, "DAY_MAX_TOKENS", 100_000):
-            code, _out, err = self.ask()
+        code, _out, err = self.ask("--day-max-tokens", "100000")
         self.assertEqual(code, 14)
         self.assertIn("refused budget: day_max_tokens", err)
         self.assertEqual(len(self.gateway.chat_requests()), 3)
@@ -1322,15 +1322,15 @@ class StateTests(ClientTestCase):
 
         messages = json.dumps([{"role": "user", "content": PROMPT}], ensure_ascii=False, sort_keys=True,
                               separators=(",", ":")).encode("utf-8")
-        reserved = 4096 + math.ceil(len(messages) / 4)
+        # Without --max-tokens the reservation holds only the prompt estimate.
+        reserved = math.ceil(len(messages) / 4)
         rows = [json.loads(line) for line in (self.state / "budget.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual([(row["phase"], row["tokens"]) for row in rows], [("reserve", reserved)])
         records = [json.loads(line) for line in (self.state / "sends.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual([record["status"] for record in records], ["inflight"])
         self.assertEqual(records[0]["attempt_id"], rows[0]["attempt_id"])
         # The next invocation still counts the reservation of the killed attempt.
-        with mock.patch.object(om, "DAY_MAX_TOKENS", reserved + 1):
-            code, _out, err = self.ask()
+        code, _out, err = self.ask("--day-max-tokens", str(reserved + 1))
         self.assertEqual(code, 14)
         self.assertIn("refused budget: day_max_tokens", err)
         self.assertEqual(len(self.gateway.chat_requests()), 1)
@@ -1348,14 +1348,14 @@ class StateTests(ClientTestCase):
 
     def test_run_budget_is_shared_by_labels_that_name_the_same_run(self) -> None:
         self.gateway.chat += [json_reply(200, completion()) for _ in range(4)]
-        with mock.patch.object(om, "RUN_MAX_REQUESTS", 2):
-            self.assertEqual(self.ask("--no-stream", "--label", "probe:r1:a")[0], 0)
-            self.assertEqual(self.ask("--no-stream", "--label", "probe:r1:b")[0], 0)
-            code, _out, err = self.ask("--label", "probe:r1:c")
-            self.assertEqual(code, 14)
-            self.assertIn("run_max_requests", err)
-            self.assertEqual(self.ask("--no-stream", "--label", "probe:r2:a")[0], 0)
-            self.assertEqual(self.ask("--no-stream", "--label", "manual")[0], 0)
+        cap = ("--run-max-requests", "2")
+        self.assertEqual(self.ask("--no-stream", "--label", "probe:r1:a", *cap)[0], 0)
+        self.assertEqual(self.ask("--no-stream", "--label", "probe:r1:b", *cap)[0], 0)
+        code, _out, err = self.ask("--label", "probe:r1:c", *cap)
+        self.assertEqual(code, 14)
+        self.assertIn("run_max_requests", err)
+        self.assertEqual(self.ask("--no-stream", "--label", "probe:r2:a", *cap)[0], 0)
+        self.assertEqual(self.ask("--no-stream", "--label", "manual", *cap)[0], 0)
 
     def test_a_fresh_quota_snapshot_applies_the_remaining_floor(self) -> None:
         self.gateway.chat.append(json_reply(200, completion()))
@@ -1366,21 +1366,22 @@ class StateTests(ClientTestCase):
             snapshot.write_text(json.dumps(payload), encoding="utf-8")
             snapshot.chmod(0o600)
 
+        floor = ("--quota-floor", "50", "--quota-max-age", "900")
         now = om._iso(time.time())
         write({"fetched_at": now, "windows": {"five_hour": {"remaining_usd": 10}, "week": {"remaining_usd": 200}}})
-        code, _out, err = self.ask()
+        code, _out, err = self.ask(*floor)
         self.assertEqual(code, 14)
         self.assertIn("quota_five_hour_below_floor", err)
 
         write({"fetched_at": now, "windows": {"five_hour": {"remaining_usd": "lots"}}})
-        code, _out, err = self.ask()
+        code, _out, err = self.ask(*floor)
         self.assertEqual(code, 14)
         self.assertIn("quota_snapshot_invalid", err)
 
         write({"fetched_at": om._iso(time.time() - 3600),
                "windows": {"five_hour": {"remaining_usd": 1}, "week": {"remaining_usd": 1}}})
         self.gateway.chat.append(json_reply(200, completion()))
-        self.assertEqual(self.ask("--no-stream")[0], 0)
+        self.assertEqual(self.ask("--no-stream", *floor)[0], 0)
 
 
 @unittest.skipIf(fcntl is None, "POSIX flock limiter test")
@@ -1393,14 +1394,14 @@ class LimiterTests(ClientTestCase):
     def test_every_slot_held_refuses_without_sending(self) -> None:
         store = self._store()
         held = []
-        for index in range(om.MAX_INFLIGHT_REQUESTS):
+        for index in range(2):
             descriptor = os.open(self.state / f"limiter-slot-{index}.lock", os.O_RDWR | os.O_CREAT, 0o600)
             fcntl.flock(descriptor, fcntl.LOCK_EX)
             held.append(descriptor)
         self.addCleanup(lambda: [os.close(descriptor) for descriptor in held])
         self.assertTrue(store.exists())
 
-        code, _out, err = self.ask()
+        code, _out, err = self.ask("--max-inflight", "2", "--slot-wait", "0.001")
 
         self.assertEqual(code, 13)
         self.assertIn("limiter_busy", err)
@@ -1414,7 +1415,7 @@ class LimiterTests(ClientTestCase):
         slot.write_text(json.dumps({"pid": dead.pid, "started_at": "2026-11-05T00:00:00Z"}), encoding="utf-8")
         slot.chmod(0o600)
 
-        with om.machine_slot(store, "probe", wait_s=0) as held:
+        with om.machine_slot(store, "probe", slots=1, wait_s=0) as held:
             self.assertEqual(held["slot"], 0)
             self.assertIs(held["stale_recovered"], True)
             self.assertEqual(held["stale_pid"], dead.pid)
@@ -1425,9 +1426,10 @@ class LimiterTests(ClientTestCase):
     def test_slots_are_released_after_each_request(self) -> None:
         self.gateway.chat.append(json_reply(200, completion()))
 
-        self.assertEqual(self.ask("--no-stream")[0], 0)
+        self.assertEqual(self.ask("--no-stream", "--max-inflight", "2")[0], 0)
 
-        for index in range(om.MAX_INFLIGHT_REQUESTS):
+        self.assertTrue((self.state / "limiter-slot-0.lock").exists())
+        for index in range(2):
             path = self.state / f"limiter-slot-{index}.lock"
             if not path.exists():
                 continue
@@ -1524,7 +1526,7 @@ class CommandTests(ClientTestCase):
         self.assertEqual(payload["problem"]["code"], "api_contract_mismatch")
         self.assertTrue(all(request["method"] == "GET" for request in self.gateway.requests))
 
-    def test_models_lists_only_valid_catalog_entries_and_uses_the_cache(self) -> None:
+    def test_models_lists_only_valid_catalog_entries_and_reads_the_catalog_live(self) -> None:
         code, out, err = self.run_cli("models")
         self.assertEqual(code, 0, err)
         payload = json.loads(out)
@@ -1534,8 +1536,8 @@ class CommandTests(ClientTestCase):
         self.assertEqual(payload["provenance"]["provenance_label"], "unverified-gateway:openmathos")
 
         code, out, _err = self.run_cli("models")
-        self.assertEqual(json.loads(out)["source"], "cache")
-        self.assertEqual(len(self.gateway.requests), 1)
+        self.assertEqual(json.loads(out)["source"], "live")
+        self.assertEqual(len(self.gateway.requests), 2)
         code, out, _err = self.run_cli("models", "--refresh")
         self.assertEqual(json.loads(out)["source"], "live")
 
@@ -1612,6 +1614,359 @@ class CommandTests(ClientTestCase):
         self.assertNotIn(canary, out + err)
         self.assertEqual(list(empty_home.rglob("*")), [])
         self.assertEqual(self.gateway.requests, [])
+
+
+class NoDefaultLimitTests(ClientTestCase):
+    """The client sets no limit of its own (user decision, 2026-11-13).
+
+    Each limit of `ask` applies only when its flag gives it.
+    """
+
+    FLAGS = (
+        ("--deadline", "deadline_s", "7.5", 7.5), ("--idle-timeout", "idle_timeout_s", "3", 3.0),
+        ("--metadata-timeout", "metadata_timeout_s", "2", 2.0), ("--max-tokens", "max_tokens", "100", 100),
+        ("--catalog-ttl", "catalog_ttl_s", "60", 60.0), ("--max-inflight", "max_inflight", "2", 2),
+        ("--slot-wait", "slot_wait_s", "1.5", 1.5), ("--run-max-requests", "run_max_requests", "5", 5),
+        ("--run-max-tokens", "run_max_tokens", "500", 500), ("--day-max-tokens", "day_max_tokens", "900", 900),
+        ("--week-max-tokens", "week_max_tokens", "9000", 9000), ("--quota-floor", "quota_floor_usd", "50", 50.0),
+        ("--quota-max-age", "quota_max_age_s", "900", 900.0), ("--retries", "retries", "2", 2),
+        ("--retry-after-max", "retry_after_max_s", "300", 300.0), ("--backoff-base", "backoff_base_s", "20", 20.0),
+        ("--backoff-cap", "backoff_cap_s", "120", 120.0),
+    )
+    BREAKER = ("--breaker-threshold", "3", "--breaker-window", "120", "--breaker-open", "600")
+
+    def parse(self, *extra: str):
+        return om.build_parser().parse_args(["ask", "--model", MODEL, "--prompt", "x", *extra])
+
+    def usage_code(self, *extra: str) -> str | None:
+        try:
+            om.ask_limits(self.parse(*extra))
+        except om.OpenMathError as exc:
+            self.assertEqual(exc.error_class, "usage")
+            return exc.code
+        return None
+
+    def fresh_store(self):
+        store = om.StateStore(Path(tempfile.mkdtemp(dir=self.root)) / "state")
+        store.ensure()
+        return store
+
+    def policy_run(self, limits, failures: list, *, max_tokens: int | None = None):
+        store = self.fresh_store()
+        calls: list[tuple] = []
+        body = {"model": MODEL, "messages": [{"role": "user", "content": "x" * 400}],
+                "reasoning_effort": "low", "stream": False}
+        if max_tokens is not None:
+            body["max_completion_tokens"] = max_tokens
+
+        def fake_send(client, key, body, *, deadline_s, idle_timeout_s, sink):
+            calls.append((deadline_s, idle_timeout_s))
+            if failures:
+                raise failures.pop(0)
+            result = om.ChatResult()
+            result.done = True
+            return result
+
+        with mock.patch.object(om, "send_chat_once", fake_send):
+            try:
+                om.chat_with_policy(object(), store, "k", body, label="manual", run_key="manual:1",
+                                    orchestrated=False, limits=limits, sink=None)
+                outcome = "ok"
+            except om.OpenMathError as exc:
+                outcome = exc.code
+        return store, calls, outcome
+
+    @staticmethod
+    def rate_limited():
+        return om.OpenMathError("quota", "rate_limited", kind="http", http_status=429, retryable=True)
+
+    def heavy_ledger(self, store, now: float) -> None:
+        for index in range(3):
+            store.append_jsonl(om.BUDGET_LEDGER, {"ts": now - 10, "run": "r:1", "requests": 1,
+                                                  "tokens": 10_000_000, "phase": "reserve",
+                                                  "attempt_id": f"a{index}"})
+
+    def write_quota(self, store, *, age_s: float, remaining: float) -> None:
+        store.write_json(om.QUOTA_SNAPSHOT, {"fetched_at": om._iso(time.time() - age_s), "windows": {
+            "five_hour": {"remaining_usd": remaining}, "week": {"remaining_usd": 1000}}})
+
+    def test_no_ask_flag_has_a_default(self) -> None:
+        args = self.parse()
+        for _flag, field, _raw, _value in self.FLAGS:
+            self.assertIsNone(getattr(args, field), field)
+        for field in ("breaker_threshold", "breaker_window_s", "breaker_open_s"):
+            self.assertIsNone(getattr(args, field), field)
+        self.assertEqual(om.ask_limits(args), om.Limits())
+
+    def test_each_flag_sets_only_its_own_limit(self) -> None:
+        for flag, field, raw, value in self.FLAGS:
+            with self.subTest(flag=flag):
+                limits = om.ask_limits(self.parse(flag, raw))
+                self.assertEqual(getattr(limits, field), value)
+                self.assertEqual({key: item for key, item in vars(limits).items() if key != field and item is not None},
+                                 {})
+
+    def test_zero_negative_nan_and_inf_are_usage_errors_with_the_flag_code(self) -> None:
+        for flag, _field, _raw, value in self.FLAGS:
+            code = flag[2:].replace("-", "_") + "_out_of_range"
+            for raw in ["0", "-1"] + (["nan", "inf"] if isinstance(value, float) else []):
+                with self.subTest(flag=flag, raw=raw):
+                    self.assertEqual(self.usage_code(flag, raw), code)
+
+    def test_large_values_have_no_upper_bound(self) -> None:
+        limits = om.ask_limits(self.parse("--deadline", "86400000", "--max-tokens", "10000000"))
+        self.assertEqual((limits.deadline_s, limits.max_tokens), (86400000.0, 10000000))
+
+    def test_the_breaker_needs_all_three_flags(self) -> None:
+        trio = self.BREAKER
+        for partial in (trio[:2], trio[:4], trio[2:]):
+            with self.subTest(flags=partial):
+                self.assertEqual(self.usage_code(*partial), "breaker_flags_incomplete")
+        limits = om.ask_limits(self.parse(*trio))
+        self.assertTrue(limits.breaker)
+        self.assertEqual(limits.breaker_threshold, 3)
+        self.assertFalse(om.Limits().breaker)
+
+    def test_ask_help_lists_every_optional_limit(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+            om.build_parser().parse_args(["ask", "--help"])
+        text = out.getvalue()
+        for flag in [flag for flag, *_rest in self.FLAGS] + list(self.BREAKER[0::2]):
+            self.assertIn(flag, text)
+        self.assertIn("None has a default", text)
+
+    def test_retry_after_is_honoured_unless_retry_after_max_is_lower(self) -> None:
+        self.assertEqual(om.retry_delay(5000.0, 0, om.Limits()), 5000.0)
+        self.assertIsNone(om.retry_delay(500.0, 0, om.Limits(retry_after_max_s=300.0)))
+        self.assertEqual(om.retry_delay(200.0, 0, om.Limits(retry_after_max_s=300.0)), 200.0)
+
+    def test_no_backoff_without_backoff_base_and_a_cap_only_with_backoff_cap(self) -> None:
+        self.assertEqual(om.retry_delay(None, 3, om.Limits()), 0.0)
+        waits = [om.retry_delay(None, 3, om.Limits(backoff_base_s=2.0)) for _ in range(200)]
+        self.assertTrue(all(0.0 <= wait <= 16.0 for wait in waits))
+        self.assertGreater(max(waits), 8.0)
+        capped = [om.retry_delay(None, 3, om.Limits(backoff_base_s=2.0, backoff_cap_s=5.0)) for _ in range(200)]
+        self.assertTrue(all(0.0 <= wait <= 5.0 for wait in capped))
+
+    def test_no_token_cap_applies_unless_set(self) -> None:
+        store = self.fresh_store()
+        now = time.time()
+        self.heavy_ledger(store, now)
+        usage = om.check_budget(store, run_key="r:1", reserved_tokens=10, now=now, limits=om.Limits())
+        self.assertEqual((usage["day_tokens"], usage["run_requests"]), (30_000_000, 3))
+
+    def test_each_token_cap_refuses_with_its_code_when_set(self) -> None:
+        store = self.fresh_store()
+        now = time.time()
+        self.heavy_ledger(store, now)
+        for limits, code in ((om.Limits(run_max_requests=3), "run_max_requests"),
+                             (om.Limits(run_max_tokens=30_000_000), "run_max_total_tokens"),
+                             (om.Limits(day_max_tokens=30_000_000), "day_max_tokens"),
+                             (om.Limits(week_max_tokens=30_000_000), "week_max_tokens")):
+            with self.subTest(code=code), self.assertRaises(om.OpenMathError) as caught:
+                om.check_budget(store, run_key="r:1", reserved_tokens=10, now=now, limits=limits)
+            self.assertEqual((caught.exception.error_class, caught.exception.code), ("budget", code))
+        om.check_budget(store, run_key="r:1", reserved_tokens=10, now=now,
+                        limits=om.Limits(run_max_requests=4, day_max_tokens=30_000_010))
+
+    def test_the_quota_floor_is_off_unless_set(self) -> None:
+        store = self.fresh_store()
+        store.write_json(om.QUOTA_SNAPSHOT, {"not": "a snapshot"})
+        om.check_quota_snapshot(store, time.time(), om.Limits())
+        with self.assertRaises(om.OpenMathError) as caught:
+            om.check_quota_snapshot(store, time.time(), om.Limits(quota_floor_usd=1.0))
+        self.assertEqual(caught.exception.code, "quota_snapshot_invalid")
+
+    def test_the_quota_floor_applies_at_any_age_without_quota_max_age(self) -> None:
+        store = self.fresh_store()
+        self.write_quota(store, age_s=86400 * 30, remaining=10)
+        with self.assertRaises(om.OpenMathError) as caught:
+            om.check_quota_snapshot(store, time.time(), om.Limits(quota_floor_usd=50.0))
+        self.assertEqual(caught.exception.code, "quota_five_hour_below_floor")
+        om.check_quota_snapshot(store, time.time(), om.Limits(quota_floor_usd=50.0, quota_max_age_s=900.0))
+        self.write_quota(store, age_s=10, remaining=60)
+        om.check_quota_snapshot(store, time.time(), om.Limits(quota_floor_usd=50.0))
+
+    @unittest.skipIf(fcntl is None, "POSIX flock limiter test")
+    def test_no_slot_is_taken_without_max_inflight(self) -> None:
+        store = self.fresh_store()
+        with om.machine_slot(store, "x", slots=None) as held:
+            self.assertIsNone(held["slot"])
+        self.assertEqual(list(store.root.glob("limiter-slot-*")), [])
+
+    @unittest.skipIf(fcntl is None, "POSIX flock limiter test")
+    def test_slot_wait_bounds_the_wait_and_without_it_the_wait_has_no_limit(self) -> None:
+        store = self.fresh_store()
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def holder() -> None:
+            with om.machine_slot(store, "holder", slots=1):
+                entered.set()
+                release.wait(10)
+
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.assertTrue(entered.wait(5))
+        with mock.patch.object(om, "_sleep", time.sleep):
+            started = time.monotonic()
+            with self.assertRaises(om.OpenMathError) as caught:
+                with om.machine_slot(store, "busy", slots=1, wait_s=0.3, poll_s=0.05):
+                    self.fail("got a held slot")
+            self.assertEqual(caught.exception.code, "limiter_busy")
+            self.assertLess(time.monotonic() - started, 2.0)
+            timer = threading.Timer(1.0, release.set)
+            timer.start()
+            started = time.monotonic()
+            with om.machine_slot(store, "patient", slots=1, poll_s=0.05):
+                waited = time.monotonic() - started
+        thread.join(5)
+        timer.join(5)
+        self.assertGreaterEqual(waited, 0.9)
+
+    def test_the_catalog_is_read_live_without_catalog_ttl(self) -> None:
+        store = self.fresh_store()
+        calls: list[tuple] = []
+
+        class Client:
+            def get_json(self, path, *, key, max_bytes=None, timeout=None):
+                calls.append((path, timeout))
+                return {"data": [{"id": MODEL, "supported_reasoning_efforts": ["low"]}]}, "rid"
+
+        for _ in range(2):
+            _catalog, source = om.load_catalog(Client(), store, "k", refresh=False, now=time.time(),
+                                               limits=om.Limits())
+            self.assertEqual(source, "live")
+        self.assertEqual(calls, [("/models", None), ("/models", None)])
+        limits = om.Limits(catalog_ttl_s=60.0, metadata_timeout_s=2.0)
+        calls.clear()
+        sources = [om.load_catalog(Client(), self.fresh_store(), "k", refresh=False, now=time.time(),
+                                   limits=limits)[1]]
+        self.assertEqual((sources, calls), (["live"], [("/models", 2.0)]))
+
+    def test_catalog_ttl_reuses_the_cache(self) -> None:
+        self.gateway.chat += [json_reply(200, completion()), json_reply(200, completion())]
+
+        for _ in range(2):
+            self.assertEqual(self.ask("--no-stream", "--catalog-ttl", "60")[0], 0)
+
+        self.assertEqual([request["path"] for request in self.gateway.requests if request["method"] == "GET"],
+                         ["/v1/models"])
+
+    def test_the_socket_timeout_is_idle_for_streams_else_the_deadline_else_none(self) -> None:
+        class Stop(Exception):
+            pass
+
+        class Client:
+            def __init__(self) -> None:
+                self.timeouts: list = []
+
+            def open(self, method, path, *, key, body=None, accept="application/json", timeout=None):
+                self.timeouts.append(timeout)
+                raise Stop()
+
+        cases = ((True, None, None, None), (True, 3.0, None, 3.0), (True, None, 7.0, 7.0), (True, 3.0, 7.0, 3.0),
+                 (False, 3.0, None, None), (False, None, 7.0, 7.0))
+        for stream, idle, deadline, expected in cases:
+            with self.subTest(stream=stream, idle=idle, deadline=deadline):
+                client = Client()
+                with contextlib.suppress(Stop):
+                    om.send_chat_once(client, "k", {"stream": stream, "messages": []},
+                                      deadline_s=deadline, idle_timeout_s=idle, sink=None)
+                self.assertEqual(client.timeouts, [expected])
+
+    def test_no_deadline_timer_and_no_deadline_check_without_deadline(self) -> None:
+        watch = om.DeadlineWatch(object(), None)
+        with watch:
+            pass
+        self.assertIsNone(watch._timer)
+        self.assertFalse(watch.expired.is_set())
+
+        class Response:
+            lines = [b"data: [DONE]\n"]
+
+            def readline(self, _limit):
+                return self.lines.pop(0) if self.lines else b""
+
+        lines = list(om._stream_lines(Response(), om.ChatResult(), time.monotonic() - 10_000, None))
+        self.assertEqual(lines, [b"data: [DONE]\n"])
+
+    def test_no_retry_without_retries(self) -> None:
+        _store, calls, outcome = self.policy_run(om.Limits(), [self.rate_limited()])
+        self.assertEqual((len(calls), outcome), (1, "rate_limited"))
+        _store, calls, outcome = self.policy_run(om.Limits(retries=2), [self.rate_limited() for _ in range(3)])
+        self.assertEqual((len(calls), outcome), (3, "rate_limited"))
+        _store, calls, outcome = self.policy_run(om.Limits(retries=2), [self.rate_limited()])
+        self.assertEqual((len(calls), outcome), (2, "ok"))
+
+    def test_no_breaker_without_its_flags(self) -> None:
+        store, _calls, _outcome = self.policy_run(om.Limits(retries=5), [self.rate_limited() for _ in range(4)])
+        self.assertIsNone(store.read_json(om.BREAKER_FILE))
+        limits = om.Limits(retries=5, breaker_threshold=2, breaker_window_s=60.0, breaker_open_s=30.0)
+        store, calls, outcome = self.policy_run(limits, [self.rate_limited() for _ in range(4)])
+        state = store.read_json(om.BREAKER_FILE)
+        self.assertEqual((len(calls), outcome), (2, "rate_limited"))
+        self.assertIsNotNone(state["open_until"])
+        self.assertEqual(len(state["rate_limited_at"]), 2)
+
+    def test_a_breaker_threshold_above_sixteen_still_opens(self) -> None:
+        limits = om.Limits(retries=30, breaker_threshold=20, breaker_window_s=600.0, breaker_open_s=30.0)
+        store, calls, _outcome = self.policy_run(limits, [self.rate_limited() for _ in range(25)])
+        self.assertEqual(len(calls), 20)
+        self.assertIsNotNone(store.read_json(om.BREAKER_FILE)["open_until"])
+
+    def test_an_open_breaker_is_ignored_without_the_flags(self) -> None:
+        store = self.fresh_store()
+        store.write_json(om.BREAKER_FILE, {"rate_limited_at": [], "open_until": time.time() + 3600})
+        om.reserve_attempt(store, run_key="r:1", attempt_id="a", reserved_tokens=1, now=time.time(),
+                           limits=om.Limits(), send_record={"status": "inflight"})
+        with self.assertRaises(om.OpenMathError) as caught:
+            om.reserve_attempt(store, run_key="r:1", attempt_id="b", reserved_tokens=1, now=time.time(),
+                               limits=om.Limits(breaker_threshold=1, breaker_window_s=1.0, breaker_open_s=1.0),
+                               send_record={"status": "inflight"})
+        self.assertEqual(caught.exception.code, "breaker_open")
+
+    def test_the_reservation_holds_the_prompt_estimate_plus_max_tokens_only_when_given(self) -> None:
+        def reserved(store) -> int:
+            return [row for row in om._budget_rows(store) if row.get("phase") == "reserve"][0]["tokens"]
+
+        prompt_only = reserved(self.policy_run(om.Limits(), [])[0])
+        with_cap = reserved(self.policy_run(om.Limits(), [], max_tokens=1000)[0])
+        self.assertTrue(0 < prompt_only < 1000, prompt_only)
+        self.assertEqual(with_cap, prompt_only + 1000)
+
+    def test_deadline_and_idle_timeout_reach_the_send_unchanged_and_are_none_by_default(self) -> None:
+        self.assertEqual(self.policy_run(om.Limits(), [])[1], [(None, None)])
+        self.assertEqual(self.policy_run(om.Limits(deadline_s=9.0, idle_timeout_s=4.0), [])[1], [(9.0, 4.0)])
+
+    def test_log_and_doctor_report_no_day_or_week_caps(self) -> None:
+        om.StateStore(om.state_dir(self.environ)).ensure()
+
+        code, out, err = self.run_cli("log")
+
+        self.assertEqual(code, 0, err)
+        self.assertEqual(set(json.loads(out)["budget"]), {"day_tokens", "week_tokens"})
+        self.assertEqual(set(om._inspect_state(self.environ)["budget"]), {"day_tokens", "week_tokens"})
+
+    def test_smoke_pins_the_no_default_rule(self) -> None:
+        code, out, err = self.run_cli("smoke", environ={})
+
+        self.assertEqual(code, 0, err)
+        report = json.loads(out)
+        self.assertEqual(report["status"], "ok", report["failed"])
+        self.assertIn("limits_off_by_default", report["checks"])
+        self.assertNotIn("effort_table", report["checks"])
+
+    def test_no_removed_constant_is_left_in_the_module(self) -> None:
+        for name in ("EFFORT_MAX_COMPLETION_TOKENS", "MAX_COMPLETION_TOKENS_CEILING", "DAY_MAX_TOKENS",
+                     "WEEK_MAX_TOKENS", "RUN_MAX_REQUESTS", "RUN_MAX_TOTAL_TOKENS", "RETRY_MAX",
+                     "RETRY_AFTER_MAX_S", "BACKOFF_BASE_S", "BACKOFF_CAP_S", "BREAKER_THRESHOLD",
+                     "BREAKER_WINDOW_S", "BREAKER_OPEN_S", "DEFAULT_DEADLINE_S", "CATALOG_TTL_S",
+                     "MAX_INFLIGHT_REQUESTS", "LIMITER_WAIT_S", "QUOTA_MIN_REMAINING_USD",
+                     "QUOTA_SNAPSHOT_MAX_AGE_S", "STREAM_IDLE_TIMEOUT_S", "METADATA_TIMEOUT_S"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(om, name))
 
 
 @unittest.skipIf(os.name == "nt", "POSIX launcher test")

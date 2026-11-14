@@ -69,7 +69,7 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 
 Add `--live` to also read the OpenAPI document and the model catalog. `doctor --live` never sends a prompt.
 
-Show the catalog (cached for one day; `--refresh` forces a fetch):
+Show the catalog. It is read live each time, so `--refresh` is no longer needed:
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -85,9 +85,9 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   --prompt-file problem.md --json --label manual
 ```
 
-Other `ask` flags: `--system` or `--system-file`, `--prompt`, `--max-tokens`, `--no-stream` and `--deadline SECONDS`. A label of the form `kind:run:...` names a run, and every send with the same first two fields counts toward the same run budget. Labels that start with `agd:` or `arl:` disable retries, so the orchestrator's counter stays the only one. A launch inside an ARL run never retries either.
+Other `ask` flags: `--system` or `--system-file`, `--prompt` and `--no-stream`, and the optional limits in "Optional limits" below. A label of the form `kind:run:...` names a run, and every send with the same first two fields counts toward the same run budget. Labels that start with `agd:` or `arl:` never retry, even with `--retries`, so the orchestrator's counter stays the only one. A launch inside an ARL run never retries either.
 
-Show recent send-log records and the token budget:
+Show recent send-log records and the tokens used over the last 24 hours and 7 days:
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -103,10 +103,41 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 
 `batch` is not available yet.
 
+## Optional limits
+
+`ask` sets no time limit, token limit, concurrency limit, retry, circuit breaker or quota floor of its own (user decision, 2026-11-13). Each limit below applies only when its flag is given. `ask --help` lists them too.
+
+| Flag | Effect when given |
+|---|---|
+| `--deadline SECONDS` | Stops an attempt after SECONDS in total. |
+| `--idle-timeout SECONDS` | Stops a streamed answer that sends nothing for SECONDS. |
+| `--metadata-timeout SECONDS` | Sets the socket timeout of the catalog request. |
+| `--max-tokens N` | Sends `max_completion_tokens=N`. Without it, the request carries none. |
+| `--catalog-ttl SECONDS` | Reuses a cached catalog younger than SECONDS. Without it, every `ask` reads the catalog live. |
+| `--max-inflight N`, `--slot-wait SECONDS` | Allows at most N requests in flight on the machine, counted among the processes that pass `--max-inflight`. `--slot-wait` bounds the wait for a slot. |
+| `--run-max-requests N`, `--run-max-tokens N` | Cap one run. |
+| `--day-max-tokens N`, `--week-max-tokens N` | Cap the tokens of all runs over a rolling 24 hours and a rolling 7 days. |
+| `--quota-floor USD`, `--quota-max-age SECONDS` | Refuse a send when `quota.json` shows less than USD left in a team window. `--quota-max-age` ignores an older file. |
+| `--retries N` | Retries a failed attempt at most N times. |
+| `--retry-after-max SECONDS` | With `--retries`, stops instead of honouring a longer `Retry-After`. |
+| `--backoff-base SECONDS`, `--backoff-cap SECONDS` | With `--retries` and no `Retry-After`, wait a random time up to SECONDS, doubled with each retry and capped by `--backoff-cap`. Without `--backoff-base`, a retry follows at once. |
+| `--breaker-threshold N`, `--breaker-window SECONDS`, `--breaker-open SECONDS` | Given together: N rate-limit responses within the window stop every process that passes these flags for the open time. |
+
+Without `--max-tokens`, a token cap counts only the prompt of the request in flight, so one answer can take the total past the cap.
+
 ## Limits and failures
 
-- At most 4 requests run at once on the machine. Each run is capped at 50 requests and 250,000 tokens, and token caps per day and per week come from a durable budget ledger. Each attempt is charged its reservation before it sends, so an attempt killed in flight still counts.
-- After 3 rate-limit responses within 120 seconds, every process stops sending for 600 seconds.
+- Each attempt is charged its reservation in a durable budget ledger before it sends, so an attempt killed in flight still counts. The caps of "Optional limits" read this ledger. Without them, nothing is capped.
 - An HTTP 402 writes a `hard_quota.json` marker in the state directory. Every process refuses to send until the user deletes it.
 - Errors print one line, `HTTP <status> <class>: <code>`, on stderr. Exit codes: quota 5, edge block 6, auth 7, bad request 11, client bug 12, transient 13, budget 14, blocked 15, local state 16, hard quota 18. See `references/api-contract.md`.
-- `finish_reason=length` means the answer was cut at `max_completion_tokens`. The client says so on stderr and marks the envelope `truncated`.
+- `finish_reason=length` means a length limit cut the answer: `max_completion_tokens` when `--max-tokens` was given, otherwise a limit on the gateway's side. The client says so on stderr and marks the envelope `truncated`.
+
+### Bounds the agent chose
+
+These bounds stay. They cap only what the client reads, keeps or prints, never a request. The agent chose the values; no upstream source sets them. To use other values, change the constants in `open_math_os.py`.
+
+- Reads: a response of 8 MiB, an SSE line of 1 MiB, an error body of 64 KiB, a prompt or system file of 1 MiB, Claude's secrets file of 1 MiB, the runtime's secret loader of 1,000,000 bytes, a key on standard input of 4,096 bytes, a small state file such as `breaker.json` of 256 KiB, the budget ledger of 16 MiB, and each send-log file of 2 MiB in `log`.
+- Kept files: `sends.jsonl` rotates at 1 MiB and keeps 3 old files. Once `budget.jsonl` passes 1 MiB, rows older than 7 days and 1 hour are pruned.
+- Output: `log` shows 20 records unless `--limit` is given, and at most 1,000.
+- Patterns: a model id has at most 64 characters before the slash and 128 after it. A label and a request id have at most 128 characters, an error code at most 64, a key body 16 to 512, and an effort name at most 16 letters. The terminal sanitizer stops treating a sequence as an escape after 256 characters.
+- Estimate and poll: a reservation counts the prompt as bytes / 4 tokens. A process that waits for a limiter slot checks every 0.5 seconds.

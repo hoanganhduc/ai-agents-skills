@@ -204,7 +204,7 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |
 | `manim-math-animation` | `offline-smoke` | yes | Selftest validates scene-spec round-trips, the generated Manim source (Write/MathTex/TransformMatchingTex/emphasis), and the manim/ffmpeg argv builders with no network, package install, Manim, LaTeX, or ffmpeg. |
 | `modal-research-compute` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
-| `open-math-os` | `offline-smoke` | yes | Smoke checks the fixed origin, handler set, effort table, outbound screen, control stripping, SSE parsing and error classes in memory, without network, state writes or a key. |
+| `open-math-os` | `offline-smoke` | yes | Smoke checks the fixed origin, handler set, default-off limits, outbound screen, control stripping, SSE parsing and error classes in memory, without network, state writes or a key. |
 | `opengauss` | `offline-smoke` | yes | Smoke validates inert OpenGauss readiness guidance without installing OpenGauss, starting gauss, or calling backends. Full install/session is manual-native. |
 | `remote-bridge` | `offline-smoke` | yes | Selftest exercises mailbox arm/CAS/approval single-use, inbox claim/consume, /aas parser boundaries, and in-memory config redaction without network, path synchronization, or real-secret discovery; installed legacy sync/publisher names are inert revocation stubs. |
 | `research-digest-wrapper` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |

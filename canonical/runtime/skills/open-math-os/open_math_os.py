@@ -4,15 +4,18 @@
 The client talks to one fixed origin and never follows a redirect or a proxy.
 Every outbound message is screened for credentials and email addresses before
 any network I/O. Every remote byte is returned as untrusted data with its
-provenance. A metadata-only send log, a durable budget ledger, a machine-wide
-request limiter and a circuit breaker run on the client side, because the model
-key cannot read the shared team quota.
+provenance. A metadata-only send log and a durable budget ledger run on the
+client side. A machine-wide request limiter, budget caps, retries and a circuit
+breaker are available, but each applies only when its `ask` flag sets it: the
+client sets no limit of its own (user decision, 2026-11-13). The model key
+cannot read the shared team quota.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import email.utils
 import getpass
 import hashlib
@@ -78,45 +81,101 @@ ERROR_CODE_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 FINISH_REASON_RE = re.compile(r"[a-z_]{1,32}\Z")
 CLOUDFLARE_CODE_RE = re.compile(r"error code:\s*([0-9]{3,5})", re.IGNORECASE)
 
-# Requirement R5 of the approved plan: max_completion_tokens is always sent.
-EFFORT_MAX_COMPLETION_TOKENS = {
-    "low": 4096,
-    "medium": 12288,
-    "high": 12288,
-    "xhigh": 32768,
-    "max": 32768,
-}
-MAX_COMPLETION_TOKENS_CEILING = 32768
-CATALOG_TTL_S = 86400
-STREAM_IDLE_TIMEOUT_S = 120.0
-DEFAULT_DEADLINE_S = 1800.0
-METADATA_TIMEOUT_S = 60.0
+# The reasoning efforts that the gateway's catalog named on 2026-11-07.
+EFFORT_NAMES = ("low", "medium", "high", "xhigh", "max")
+
+# Bounds the agent chose (SKILL.md, "Bounds the agent chose"). They cap only
+# what the client reads, keeps or prints, never a request.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_SSE_LINE_BYTES = 1024 * 1024
 MAX_ERROR_BODY_BYTES = 64 * 1024
 MAX_INPUT_FILE_BYTES = 1024 * 1024
 MAX_SECRET_SOURCE_BYTES = 1024 * 1024
-
-MAX_INFLIGHT_REQUESTS = 4
-LIMITER_WAIT_S = 300.0
 LIMITER_POLL_S = 0.5
 
-RUN_MAX_REQUESTS = 50
-RUN_MAX_TOTAL_TOKENS = 250_000
-DAY_MAX_TOKENS = 1_000_000
-WEEK_MAX_TOKENS = 4_000_000
+# The windows of --day-max-tokens and --week-max-tokens.
 DAY_S = 86400
 WEEK_S = 7 * 86400
-QUOTA_SNAPSHOT_MAX_AGE_S = 900
-QUOTA_MIN_REMAINING_USD = 50.0
 
-RETRY_MAX = 2
-RETRY_AFTER_MAX_S = 300.0
-BACKOFF_BASE_S = 20.0
-BACKOFF_CAP_S = 120.0
-BREAKER_WINDOW_S = 120.0
-BREAKER_THRESHOLD = 3
-BREAKER_OPEN_S = 600.0
+
+@dataclasses.dataclass(frozen=True)
+class Limits:
+    """The optional limits of `ask`. None has a default: each applies only when set."""
+
+    deadline_s: float | None = None
+    idle_timeout_s: float | None = None
+    metadata_timeout_s: float | None = None
+    max_tokens: int | None = None
+    catalog_ttl_s: float | None = None
+    max_inflight: int | None = None
+    slot_wait_s: float | None = None
+    run_max_requests: int | None = None
+    run_max_tokens: int | None = None
+    day_max_tokens: int | None = None
+    week_max_tokens: int | None = None
+    quota_floor_usd: float | None = None
+    quota_max_age_s: float | None = None
+    retries: int | None = None
+    retry_after_max_s: float | None = None
+    backoff_base_s: float | None = None
+    backoff_cap_s: float | None = None
+    breaker_threshold: int | None = None
+    breaker_window_s: float | None = None
+    breaker_open_s: float | None = None
+
+    @property
+    def breaker(self) -> bool:
+        """The breaker runs only when its three flags are given together."""
+
+        return self.breaker_threshold is not None
+
+
+# Every optional limit of `ask`: flag, Limits field, type, metavar and help.
+# None has a default (user decision, 2026-11-13).
+LIMIT_FLAGS = (
+    ("--deadline", "deadline_s", float, "SECONDS",
+     "stop an attempt after SECONDS in total"),
+    ("--idle-timeout", "idle_timeout_s", float, "SECONDS",
+     "stop a streamed answer that sends nothing for SECONDS"),
+    ("--metadata-timeout", "metadata_timeout_s", float, "SECONDS",
+     "socket timeout of the catalog request"),
+    ("--max-tokens", "max_tokens", int, "N",
+     "send max_completion_tokens=N; without it the request carries none"),
+    ("--catalog-ttl", "catalog_ttl_s", float, "SECONDS",
+     "reuse a cached catalog younger than SECONDS; without it the catalog is read live"),
+    ("--max-inflight", "max_inflight", int, "N",
+     "at most N requests in flight on the machine, among processes that pass this flag"),
+    ("--slot-wait", "slot_wait_s", float, "SECONDS",
+     "with --max-inflight, wait at most SECONDS for a slot"),
+    ("--run-max-requests", "run_max_requests", int, "N",
+     "at most N requests per run"),
+    ("--run-max-tokens", "run_max_tokens", int, "N",
+     "at most N tokens per run"),
+    ("--day-max-tokens", "day_max_tokens", int, "N",
+     "at most N tokens of all runs over a rolling 24 hours"),
+    ("--week-max-tokens", "week_max_tokens", int, "N",
+     "at most N tokens of all runs over a rolling 7 days"),
+    ("--quota-floor", "quota_floor_usd", float, "USD",
+     "refuse a send when quota.json shows less than USD left in a team window"),
+    ("--quota-max-age", "quota_max_age_s", float, "SECONDS",
+     "with --quota-floor, ignore a quota.json older than SECONDS"),
+    ("--retries", "retries", int, "N",
+     "retry a failed attempt at most N times"),
+    ("--retry-after-max", "retry_after_max_s", float, "SECONDS",
+     "with --retries, stop instead of honouring a Retry-After longer than SECONDS"),
+    ("--backoff-base", "backoff_base_s", float, "SECONDS",
+     "with --retries and no Retry-After, wait a random time up to SECONDS, doubled per retry; "
+     "without it a retry follows at once"),
+    ("--backoff-cap", "backoff_cap_s", float, "SECONDS",
+     "cap the wait of --backoff-base at SECONDS"),
+    ("--breaker-threshold", "breaker_threshold", int, "N",
+     "with --breaker-window and --breaker-open: N rate-limit responses within the window "
+     "stop every process that passes these flags"),
+    ("--breaker-window", "breaker_window_s", float, "SECONDS",
+     "the window of --breaker-threshold"),
+    ("--breaker-open", "breaker_open_s", float, "SECONDS",
+     "how long an opened breaker stops sends"),
+)
 
 SENDS_LOG = "sends.jsonl"
 SENDS_MAX_BYTES = 1024 * 1024
@@ -763,12 +822,19 @@ def _transport_code(exc: BaseException) -> str:
     return "connection_error"
 
 
-def retry_delay(retry_after: float | None, attempt: int) -> float | None:
+def retry_delay(retry_after: float | None, attempt: int, limits: Limits) -> float | None:
     """Seconds to wait before a retry, or ``None`` when no retry is allowed."""
 
     if retry_after is not None:
-        return retry_after if retry_after <= RETRY_AFTER_MAX_S else None
-    return random.uniform(0.0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * (2 ** attempt)))
+        if limits.retry_after_max_s is not None and retry_after > limits.retry_after_max_s:
+            return None
+        return retry_after
+    if limits.backoff_base_s is None:
+        return 0.0
+    bound = limits.backoff_base_s * (2 ** attempt)
+    if limits.backoff_cap_s is not None:
+        bound = min(limits.backoff_cap_s, bound)
+    return random.uniform(0.0, bound)
 
 
 # ---------------------------------------------------------------------------
@@ -1144,6 +1210,7 @@ def reserve_attempt(
     attempt_id: str,
     reserved_tokens: int,
     now: float,
+    limits: Limits,
     send_record: Mapping[str, Any],
 ) -> None:
     """Admit one attempt and charge its reservation before any byte is sent.
@@ -1158,9 +1225,9 @@ def reserve_attempt(
     with store.lock():
         if hard_quota_marker(store) is not None:
             raise OpenMathError("hard_quota", "marker_present")
-        if breaker_open_until(store, now) is not None:
+        if limits.breaker and breaker_open_until(store, now) is not None:
             raise OpenMathError("quota", "breaker_open")
-        check_budget(store, run_key=run_key, reserved_tokens=reserved_tokens, now=now)
+        check_budget(store, run_key=run_key, reserved_tokens=reserved_tokens, now=now, limits=limits)
         _append_budget_row(store, {
             "ts": round(now, 3), "run": run_key, "requests": 1, "tokens": int(reserved_tokens),
             "attempt_id": attempt_id, "phase": "reserve",
@@ -1188,9 +1255,11 @@ def settle_attempt(
         }, now=now)
 
 
-def check_quota_snapshot(store: StateStore, now: float) -> None:
-    """Apply the remaining-quota floor of a fresh quota.json, when one exists."""
+def check_quota_snapshot(store: StateStore, now: float, limits: Limits) -> None:
+    """Apply --quota-floor to quota.json, when the flag is set and the file exists."""
 
+    if limits.quota_floor_usd is None:
+        return
     try:
         snapshot = store.read_json(QUOTA_SNAPSHOT)
     except OpenMathError as exc:
@@ -1200,7 +1269,7 @@ def check_quota_snapshot(store: StateStore, now: float) -> None:
     fetched = _parse_iso(snapshot.get("fetched_at")) if isinstance(snapshot, dict) else None
     if fetched is None:
         raise OpenMathError("budget", "quota_snapshot_invalid")
-    if now - fetched > QUOTA_SNAPSHOT_MAX_AGE_S:
+    if limits.quota_max_age_s is not None and now - fetched > limits.quota_max_age_s:
         return
     windows = snapshot.get("windows")
     if not isinstance(windows, dict):
@@ -1210,21 +1279,25 @@ def check_quota_snapshot(store: StateStore, now: float) -> None:
         remaining = window.get("remaining_usd") if isinstance(window, dict) else None
         if not isinstance(remaining, (int, float)) or isinstance(remaining, bool):
             raise OpenMathError("budget", "quota_snapshot_invalid")
-        if remaining < QUOTA_MIN_REMAINING_USD:
+        if remaining < limits.quota_floor_usd:
             raise OpenMathError("budget", f"quota_{name}_below_floor")
 
 
-def check_budget(store: StateStore, *, run_key: str, reserved_tokens: int, now: float) -> dict[str, int]:
+def check_budget(
+    store: StateStore, *, run_key: str, reserved_tokens: int, now: float, limits: Limits
+) -> dict[str, int]:
+    """Apply the caps and the quota floor that the caller set."""
+
     usage = budget_usage(store, now, run_key)
-    if usage["run_requests"] + 1 > RUN_MAX_REQUESTS:
+    if limits.run_max_requests is not None and usage["run_requests"] + 1 > limits.run_max_requests:
         raise OpenMathError("budget", "run_max_requests")
-    if usage["run_tokens"] + reserved_tokens > RUN_MAX_TOTAL_TOKENS:
+    if limits.run_max_tokens is not None and usage["run_tokens"] + reserved_tokens > limits.run_max_tokens:
         raise OpenMathError("budget", "run_max_total_tokens")
-    if usage["day_tokens"] + reserved_tokens > DAY_MAX_TOKENS:
+    if limits.day_max_tokens is not None and usage["day_tokens"] + reserved_tokens > limits.day_max_tokens:
         raise OpenMathError("budget", "day_max_tokens")
-    if usage["week_tokens"] + reserved_tokens > WEEK_MAX_TOKENS:
+    if limits.week_max_tokens is not None and usage["week_tokens"] + reserved_tokens > limits.week_max_tokens:
         raise OpenMathError("budget", "week_max_tokens")
-    check_quota_snapshot(store, now)
+    check_quota_snapshot(store, now, limits)
     return usage
 
 
@@ -1245,15 +1318,22 @@ def breaker_open_until(store: StateStore, now: float) -> float | None:
     return open_until if open_until is not None and now < open_until else None
 
 
-def breaker_record_rate_limit(store: StateStore, now: float) -> bool:
-    """Record one 429; return True when the machine-wide breaker opens."""
+def breaker_record_rate_limit(store: StateStore, now: float, limits: Limits) -> bool:
+    """Record one 429; return True when the machine-wide breaker opens.
 
+    Only called when the three breaker flags are set. The file keeps the last
+    ``--breaker-threshold`` rate-limit times, which is all the test needs.
+    """
+
+    threshold = int(limits.breaker_threshold or 0)
+    window = float(limits.breaker_window_s or 0.0)
+    open_s = float(limits.breaker_open_s or 0.0)
     with store.lock():
         state = _breaker_state(store)
-        events = [t for t in state["rate_limited_at"] if now - t <= BREAKER_WINDOW_S] + [now]
-        opened = len(events) >= BREAKER_THRESHOLD
-        open_until = now + BREAKER_OPEN_S if opened else state["open_until"]
-        store.write_json(BREAKER_FILE, {"rate_limited_at": events[-16:], "open_until": open_until})
+        events = [t for t in state["rate_limited_at"] if now - t <= window] + [now]
+        opened = len(events) >= threshold
+        open_until = now + open_s if opened else state["open_until"]
+        store.write_json(BREAKER_FILE, {"rate_limited_at": events[-threshold:], "open_until": open_until})
     return opened
 
 
@@ -1286,7 +1366,7 @@ def machine_slot(
     store: StateStore,
     label: str,
     *,
-    slots: int = MAX_INFLIGHT_REQUESTS,
+    slots: int | None,
     wait_s: float | None = None,
     poll_s: float | None = None,
 ) -> Iterator[dict[str, Any]]:
@@ -1295,11 +1375,15 @@ def machine_slot(
     Each slot is a lock file holding the owner's PID. The operating system
     drops a lock when its process dies, so a slot is never stuck; a slot found
     free with leftover owner metadata is reported as a recovered stale slot.
+    With ``slots`` None (no --max-inflight) the request takes no slot. With
+    ``wait_s`` None (no --slot-wait) the wait for a slot has no limit.
     """
 
-    wait = LIMITER_WAIT_S if wait_s is None else wait_s
+    if slots is None:
+        yield {"slot": None, "stale_recovered": False, "stale_pid": None}
+        return
     poll = LIMITER_POLL_S if poll_s is None else poll_s
-    deadline = _mono() + wait
+    deadline = None if wait_s is None else _mono() + wait_s
     while True:
         for index in range(slots):
             path = store.root / f"limiter-slot-{index}.lock"
@@ -1332,7 +1416,7 @@ def machine_slot(
                 return
             finally:
                 os.close(descriptor)
-        if _mono() >= deadline:
+        if deadline is not None and _mono() >= deadline:
             raise OpenMathError("transient", "limiter_busy")
         _sleep(poll)
 
@@ -1408,7 +1492,7 @@ class GatewayClient:
         key: str | None,
         body: bytes | None = None,
         accept: str = "application/json",
-        timeout: float = METADATA_TIMEOUT_S,
+        timeout: float | None = None,
     ) -> Any:
         url = self.origin + API_PREFIX + path
         request = urllib.request.Request(url, data=body, method=method)
@@ -1426,8 +1510,10 @@ class GatewayClient:
             raise OpenMathError("client_bug", "scheme_refused")
         return response
 
-    def get_json(self, path: str, *, key: str | None, max_bytes: int = MAX_RESPONSE_BYTES) -> tuple[Any, str | None]:
-        response = self.open("GET", path, key=key)
+    def get_json(
+        self, path: str, *, key: str | None, max_bytes: int = MAX_RESPONSE_BYTES, timeout: float | None = None
+    ) -> tuple[Any, str | None]:
+        response = self.open("GET", path, key=key, timeout=timeout)
         with contextlib.closing(response):
             request_id = _request_id(response.headers)
             try:
@@ -1483,13 +1569,16 @@ def _valid_catalog(value: Any) -> bool:
 
 
 def load_catalog(
-    client: GatewayClient, store: StateStore, key: str, *, refresh: bool, now: float
+    client: GatewayClient, store: StateStore, key: str, *, refresh: bool, now: float, limits: Limits
 ) -> tuple[dict[str, Any], str]:
-    cached = None if refresh else store.read_json(CATALOG_FILE)
-    if _valid_catalog(cached) and 0 <= now - float(cached["fetched_at_epoch"]) < CATALOG_TTL_S:
+    """Read the catalog live, or from the cache when --catalog-ttl allows it."""
+
+    ttl = limits.catalog_ttl_s
+    cached = None if refresh or ttl is None else store.read_json(CATALOG_FILE)
+    if ttl is not None and _valid_catalog(cached) and 0 <= now - float(cached["fetched_at_epoch"]) < ttl:
         return cached, "cache"
-    with machine_slot(store, "catalog"):
-        payload, _request = client.get_json("/models", key=key)
+    with machine_slot(store, "catalog", slots=limits.max_inflight, wait_s=limits.slot_wait_s):
+        payload, _request = client.get_json("/models", key=key, timeout=limits.metadata_timeout_s)
     catalog = parse_catalog(payload, now=_wall())
     with store.lock():
         store.write_json(CATALOG_FILE, catalog)
@@ -1752,9 +1841,11 @@ def iter_sse_data(lines: Iterable[bytes]) -> Iterator[str]:
         yield "\n".join(data_lines)
 
 
-def _stream_lines(response: Any, result: ChatResult, started: float, deadline_s: float) -> Iterator[bytes]:
+def _stream_lines(
+    response: Any, result: ChatResult, started: float, deadline_s: float | None
+) -> Iterator[bytes]:
     while True:
-        if _mono() - started > deadline_s:
+        if deadline_s is not None and _mono() - started > deadline_s:
             raise OpenMathError("transient", "deadline_exceeded", kind="transport",
                                 bytes_received=result.bytes_received, partial=result,
                                 request_id=result.request_id)
@@ -1776,7 +1867,7 @@ def read_stream(
     result: ChatResult,
     *,
     started: float,
-    deadline_s: float,
+    deadline_s: float | None,
     sink: Callable[[str], None] | None,
 ) -> ChatResult:
     try:
@@ -1830,14 +1921,16 @@ class DeadlineWatch:
     trickles bytes inside one SSE line or one chunk-size line could otherwise
     hold the client far past ``--deadline``. After the shutdown every blocked
     or later read returns at once, and the caller reports the deadline.
+    Without ``--deadline`` the watch does nothing.
     """
 
-    def __init__(self, response: Any, remaining_s: float) -> None:
+    def __init__(self, response: Any, remaining_s: float | None) -> None:
         self.expired = threading.Event()
         connection = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
         self._socket = connection if isinstance(connection, socket.socket) else None
-        self._timer = threading.Timer(max(0.0, remaining_s), self._expire)
-        self._timer.daemon = True
+        self._timer = None if remaining_s is None else threading.Timer(max(0.0, remaining_s), self._expire)
+        if self._timer is not None:
+            self._timer.daemon = True
 
     def _expire(self) -> None:
         self.expired.set()
@@ -1848,11 +1941,13 @@ class DeadlineWatch:
                 socket.socket.shutdown(self._socket, socket.SHUT_RDWR)
 
     def __enter__(self) -> "DeadlineWatch":
-        self._timer.start()
+        if self._timer is not None:
+            self._timer.start()
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        self._timer.cancel()
+        if self._timer is not None:
+            self._timer.cancel()
 
 
 def send_chat_once(
@@ -1860,24 +1955,28 @@ def send_chat_once(
     key: str,
     body: Mapping[str, Any],
     *,
-    deadline_s: float,
+    deadline_s: float | None,
+    idle_timeout_s: float | None,
     sink: Callable[[str], None] | None,
 ) -> ChatResult:
     stream = bool(body.get("stream"))
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     started = _mono()
+    # A streamed answer takes --idle-timeout as its socket timeout when it is
+    # given. Otherwise the socket timeout is --deadline, or there is none.
     response = client.open(
         "POST",
         "/chat/completions",
         key=key,
         body=payload,
         accept="text/event-stream" if stream else "application/json",
-        timeout=STREAM_IDLE_TIMEOUT_S if stream else deadline_s,
+        timeout=idle_timeout_s if stream and idle_timeout_s is not None else deadline_s,
     )
     with contextlib.closing(response):
         result = ChatResult()
         result.request_id = _request_id(response.headers)
-        with DeadlineWatch(response, deadline_s - (_mono() - started)) as watch:
+        remaining = None if deadline_s is None else deadline_s - (_mono() - started)
+        with DeadlineWatch(response, remaining) as watch:
             if response.status != 200:
                 try:
                     error_body = _read_limited(response, MAX_ERROR_BODY_BYTES)
@@ -1943,23 +2042,24 @@ def chat_with_policy(
     label: str,
     run_key: str,
     orchestrated: bool,
-    deadline_s: float,
+    limits: Limits,
     sink: Callable[[str], None] | None,
     pii_reported: Iterable[str] = (),
 ) -> ChatResult:
-    """One logical request: budget, breaker, limiter, retry rules and logging."""
+    """One logical request: the limits that are set, retry rules and logging."""
 
     messages_bytes = json.dumps(body["messages"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    reserved = int(body["max_completion_tokens"]) + math.ceil(len(messages_bytes) / 4)
+    # Without --max-tokens the reservation holds only the prompt estimate.
+    reserved = int(body.get("max_completion_tokens") or 0) + math.ceil(len(messages_bytes) / 4)
     reported = sorted(pii_reported)
     attempt = 0
     while True:
         now = _wall()
         if hard_quota_marker(store) is not None:
             raise OpenMathError("hard_quota", "marker_present")
-        if breaker_open_until(store, now) is not None:
+        if limits.breaker and breaker_open_until(store, now) is not None:
             raise OpenMathError("quota", "breaker_open")
-        check_budget(store, run_key=run_key, reserved_tokens=reserved, now=now)
+        check_budget(store, run_key=run_key, reserved_tokens=reserved, now=now, limits=limits)
         attempt_id = secrets.token_hex(8)
         common = {
             "label": label,
@@ -1974,10 +2074,10 @@ def chat_with_policy(
         }
         outcome: ChatResult | None = None
         failure: OpenMathError | None = None
-        with machine_slot(store, label):
+        with machine_slot(store, label, slots=limits.max_inflight, wait_s=limits.slot_wait_s):
             reserved_at = _wall()
             reserve_attempt(store, run_key=run_key, attempt_id=attempt_id, reserved_tokens=reserved,
-                            now=reserved_at, send_record={
+                            now=reserved_at, limits=limits, send_record={
                                 **common, "ts": _iso(reserved_at), "status": "inflight",
                                 "reserved_tokens": reserved, "request_id": None, "response_sha256": None,
                                 "response_bytes": 0, "usage": {}, "latency_s": None,
@@ -1985,7 +2085,8 @@ def chat_with_policy(
                             })
             started = _mono()
             try:
-                outcome = send_chat_once(client, key, body, deadline_s=deadline_s, sink=sink)
+                outcome = send_chat_once(client, key, body, deadline_s=limits.deadline_s,
+                                         idle_timeout_s=limits.idle_timeout_s, sink=sink)
             except OpenMathError as exc:
                 failure = exc
         latency = round(_mono() - started, 3)
@@ -2021,8 +2122,8 @@ def chat_with_policy(
             return outcome
         assert failure is not None
         opened = False
-        if failure.error_class == "quota":
-            opened = breaker_record_rate_limit(store, _wall())
+        if failure.error_class == "quota" and limits.breaker:
+            opened = breaker_record_rate_limit(store, _wall(), limits)
         if failure.error_class == "hard_quota":
             write_hard_quota_marker(store, request_id=failure.request_id, now=_wall())
         delay = None
@@ -2031,12 +2132,13 @@ def chat_with_policy(
             and not orchestrated
             and not opened
             and failure.bytes_received == 0
-            and attempt < RETRY_MAX
+            and limits.retries is not None
+            and attempt < limits.retries
         ):
-            delay = retry_delay(failure.retry_after, attempt)
+            delay = retry_delay(failure.retry_after, attempt, limits)
         if delay is None:
             if opened:
-                print(f"circuit breaker opened: sends pause for {int(BREAKER_OPEN_S)} s", file=sys.stderr)
+                print(f"circuit breaker opened: sends pause for {limits.breaker_open_s:g} s", file=sys.stderr)
             raise failure
         _sleep(delay)
         attempt += 1
@@ -2219,6 +2321,22 @@ def _log_blocked(environ: Mapping[str, str], label: str, model: str, effort: str
                                  "status": "blocked", "findings": findings})
 
 
+def ask_limits(args: argparse.Namespace) -> Limits:
+    """Read the optional limits of `ask`; each stays off unless its flag is given."""
+
+    values: dict[str, Any] = {}
+    for flag, field, _kind, _metavar, _text in LIMIT_FLAGS:
+        value = getattr(args, field, None)
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise OpenMathError("usage", flag[2:].replace("-", "_") + "_out_of_range")
+        values[field] = value
+    limits = Limits(**values)
+    breaker = (limits.breaker_threshold, limits.breaker_window_s, limits.breaker_open_s)
+    if any(value is not None for value in breaker) and any(value is None for value in breaker):
+        raise OpenMathError("usage", "breaker_flags_incomplete")
+    return limits
+
+
 def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: str) -> int:
     label = args.label or "manual"
     if not LABEL_RE.fullmatch(label):
@@ -2227,11 +2345,8 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
     if not MODEL_ID_RE.fullmatch(model):
         raise OpenMathError("usage", "model_id_invalid")
     effort = args.effort
-    max_tokens = EFFORT_MAX_COMPLETION_TOKENS[effort] if args.max_tokens is None else args.max_tokens
-    if not 1 <= max_tokens <= MAX_COMPLETION_TOKENS_CEILING:
-        raise OpenMathError("usage", "max_tokens_out_of_range")
-    if not 10 <= args.deadline <= 7200:
-        raise OpenMathError("usage", "deadline_out_of_range")
+    limits = ask_limits(args)
+    max_tokens = limits.max_tokens
     try:
         system = _read_input_file(args.system_file, environ) if args.system_file else args.system
         prompt = _read_input_file(args.prompt_file, environ) if args.prompt_file else args.prompt
@@ -2252,10 +2367,10 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
     now = _wall()
     if hard_quota_marker(store) is not None:
         raise OpenMathError("hard_quota", "marker_present")
-    if breaker_open_until(store, now) is not None:
+    if limits.breaker and breaker_open_until(store, now) is not None:
         raise OpenMathError("quota", "breaker_open")
     client = GatewayClient(origin)
-    catalog, _source = load_catalog(client, store, key, refresh=False, now=now)
+    catalog, _source = load_catalog(client, store, key, refresh=False, now=now, limits=limits)
     entry = catalog_entry(catalog, model)
     if entry is None:
         raise OpenMathError("usage", "model_not_in_catalog")
@@ -2265,9 +2380,10 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
         "model": model,
         "messages": messages,
         "reasoning_effort": effort,
-        "max_completion_tokens": max_tokens,
         "stream": bool(args.stream),
     }
+    if max_tokens is not None:
+        body["max_completion_tokens"] = max_tokens
     if args.stream:
         body["stream_options"] = {"include_usage": True}
     pii_reported = report_outbound_pii(messages)
@@ -2280,7 +2396,7 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
         result = chat_with_policy(
             client, store, key, body,
             label=label, run_key=run_key, orchestrated=is_orchestrated(label, environ),
-            deadline_s=float(args.deadline), sink=sink.write if sink is not None else None,
+            limits=limits, sink=sink.write if sink is not None else None,
             pii_reported=pii_reported,
         )
     except OpenMathError as exc:
@@ -2291,7 +2407,9 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
     status = "truncated" if result.finish_reason == "length" else "ok"
     provenance = provenance_block(requested_model=model, result=result, catalog=catalog)
     if status == "truncated":
-        print(f"finish_reason=length: the answer stopped at max_completion_tokens={max_tokens}", file=sys.stderr)
+        cut = (f"max_completion_tokens={max_tokens}" if max_tokens is not None
+               else "a gateway limit; the request carried no max_completion_tokens")
+        print(f"finish_reason=length: the answer stopped at {cut}", file=sys.stderr)
     if sink is not None:
         sink.finish(status, provenance)
         return 0
@@ -2319,7 +2437,7 @@ def _ask_error_envelope(args: argparse.Namespace, exc: OpenMathError) -> dict[st
         "status": "blocked" if exc.error_class == "blocked" else ("incomplete" if partial is not None else "error"),
         "label": args.label or "manual",
         "requested_effort": args.effort,
-        "max_completion_tokens": args.max_tokens or EFFORT_MAX_COMPLETION_TOKENS.get(args.effort),
+        "max_completion_tokens": args.max_tokens,
         "finish_reason": partial.finish_reason if partial is not None else None,
         "usage": partial.usage if partial is not None else {},
         "error": exc.as_dict(),
@@ -2334,7 +2452,8 @@ def command_models(args: argparse.Namespace, environ: Mapping[str, str], origin:
     key = require_model_key(environ)
     store = StateStore(state_dir(environ))
     store.ensure()
-    catalog, source = load_catalog(GatewayClient(origin), store, key, refresh=args.refresh, now=_wall())
+    catalog, source = load_catalog(GatewayClient(origin), store, key, refresh=args.refresh, now=_wall(),
+                                   limits=Limits())
     block = dict(PROVENANCE)
     block["catalog_fetched_at"] = catalog.get("fetched_at")
     _emit_json({
@@ -2365,10 +2484,7 @@ def _inspect_state(environ: Mapping[str, str]) -> dict[str, Any]:
             "hard_quota_marker": hard_quota_marker(store) is not None,
             "breaker_open_until": breaker_open_until(store, now),
             "catalog_fetched_at": catalog.get("fetched_at") if _valid_catalog(catalog) else None,
-            "budget": {
-                "day_tokens": usage["day_tokens"], "day_max_tokens": DAY_MAX_TOKENS,
-                "week_tokens": usage["week_tokens"], "week_max_tokens": WEEK_MAX_TOKENS,
-            },
+            "budget": {"day_tokens": usage["day_tokens"], "week_tokens": usage["week_tokens"]},
         }
     except (OpenMathError, OSError) as exc:
         return {"status": getattr(exc, "code", "unreadable")}
@@ -2382,8 +2498,7 @@ def _live_checks(origin: str, environ: Mapping[str, str], key: str) -> tuple[dic
     try:
         store = StateStore(state_dir(environ))
         store.ensure()
-        with machine_slot(store, "doctor"):
-            spec, _spec_request = client.get_json("/openapi.json", key=None)
+        spec, _spec_request = client.get_json("/openapi.json", key=None)
         text = json.dumps(spec)
         info = spec.get("info") if isinstance(spec, dict) else None
         version = info.get("version") if isinstance(info, dict) else None
@@ -2399,7 +2514,7 @@ def _live_checks(origin: str, environ: Mapping[str, str], key: str) -> tuple[dic
             # `max_completion_tokens` are not named in the spec and cannot be checked here.
             "fields_ok": "supported_reasoning_efforts" in text,
         }
-        catalog, _source = load_catalog(client, store, key, refresh=True, now=_wall())
+        catalog, _source = load_catalog(client, store, key, refresh=True, now=_wall(), limits=Limits())
         models = catalog.get("models", [])
         live["models"] = {
             "status": "ok",
@@ -2542,7 +2657,7 @@ def command_log(args: argparse.Namespace, environ: Mapping[str, str], origin: st
     _emit_json({
         "schema": "open-math-os.log.v1",
         "records": records[-args.limit:],
-        "budget": {**usage, "day_max_tokens": DAY_MAX_TOKENS, "week_max_tokens": WEEK_MAX_TOKENS},
+        "budget": usage,
         "content_logged": False,
         "final": True,
     })
@@ -2576,8 +2691,8 @@ def _smoke_checks(environ: Mapping[str, str]) -> list[tuple[str, bool]]:
         isinstance(handler, (urllib.request.HTTPRedirectHandler, urllib.request.HTTPErrorProcessor))
         or (isinstance(handler, urllib.request.ProxyHandler) and handler.proxies)
         for handler in build_opener(API_ORIGIN).handlers)))
-    checks.append(("effort_table", EFFORT_MAX_COMPLETION_TOKENS == {
-        "low": 4096, "medium": 12288, "high": 12288, "xhigh": 32768, "max": 32768}))
+    unset = build_parser().parse_args(["ask", "--model", "vendor/model-1", "--prompt", "x"])
+    checks.append(("limits_off_by_default", ask_limits(unset) == Limits()))
     checks.append(("model_id_rule", MODEL_ID_RE.fullmatch("deepseek/deepseek-v4.1-flash") is not None
                    and MODEL_ID_RE.fullmatch("../x") is None))
     synthetic_token = "gh" + "p_" + "Q7" * 18
@@ -2636,18 +2751,20 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument("--refresh", action="store_true")
     ask = sub.add_parser("ask", help="send one prompt to one model")
     ask.add_argument("--model", required=True)
-    ask.add_argument("--effort", default="low", choices=sorted(EFFORT_MAX_COMPLETION_TOKENS))
+    ask.add_argument("--effort", default="low", choices=EFFORT_NAMES)
     system = ask.add_mutually_exclusive_group()
     system.add_argument("--system")
     system.add_argument("--system-file")
     prompt = ask.add_mutually_exclusive_group(required=True)
     prompt.add_argument("--prompt")
     prompt.add_argument("--prompt-file")
-    ask.add_argument("--max-tokens", type=int)
     ask.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
     ask.add_argument("--json", action="store_true")
     ask.add_argument("--label")
-    ask.add_argument("--deadline", type=float, default=DEFAULT_DEADLINE_S)
+    limits = ask.add_argument_group(
+        "optional limits", "None has a default: each limit applies only when its flag is given.")
+    for flag, field, kind, metavar, text in LIMIT_FLAGS:
+        limits.add_argument(flag, dest=field, type=kind, metavar=metavar, help=text)
     setup = sub.add_parser("setup-key", help="write the model key file")
     source = setup.add_mutually_exclusive_group(required=True)
     source.add_argument("--from-claude-secrets", action="store_true")

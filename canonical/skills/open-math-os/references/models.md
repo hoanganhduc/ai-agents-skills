@@ -1,6 +1,6 @@
 # Open Math OS Models
 
-The catalog below was read from `GET /v1/models` on 2026-11-07. The live catalog is authoritative: `ask` checks the model id and the effort against it before every send, and `models --refresh` shows the current list.
+The catalog below was read from `GET /v1/models` on 2026-11-07. The live catalog is authoritative: `ask` checks the model id and the effort against it before every send, and `models` shows the current list.
 
 | Model id | Reasoning efforts | Notes |
 |---|---|---|
@@ -12,15 +12,9 @@ The catalog below was read from `GET /v1/models` on 2026-11-07. The live catalog
 | `mistralai/mistral-large-4-0` | low, medium, high | context 1M, images |
 | `nvidia/nemotron-3-super-120b-a12b` | low, medium | text only, context 262K |
 
-## Default output budget
+## Output budget
 
-The client always sends `max_completion_tokens`. Without `--max-tokens` it uses the effort's default:
-
-| Effort | max_completion_tokens |
-|---|---|
-| low | 4096 |
-| medium, high | 12288 |
-| xhigh, max | 32768 |
+The client sends `max_completion_tokens` only when `--max-tokens N` gives it. It has no default per effort (user decision, 2026-11-13).
 
 ## What the first trial showed
 
