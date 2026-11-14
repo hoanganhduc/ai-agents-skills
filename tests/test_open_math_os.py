@@ -310,7 +310,7 @@ class ResponseTests(ClientTestCase):
         self.assertRegex(om.USER_AGENT, r"^ai-agents-skills-open-math-os/\d+\.\d+\.\d+$")
         self.assertEqual(request["headers"]["authorization"], "Bearer " + self.key)
         self.assertEqual(request["body"]["model"], MODEL)
-        self.assertEqual(request["body"]["reasoning_effort"], "low")
+        self.assertEqual(request["body"]["reasoning_effort"], "max")
         self.assertNotIn("max_completion_tokens", request["body"])
         self.assertIs(request["body"]["stream"], False)
         self.assertEqual(request["body"]["messages"], [{"role": "user", "content": PROMPT}])
@@ -592,6 +592,70 @@ class RequestValidationTests(ClientTestCase):
         self.assertEqual(code, 2)
         self.assertIn("effort_not_supported", err)
         self.assertEqual(self.gateway.chat_requests(), [])
+
+    def test_without_effort_ask_sends_the_highest_effort_the_catalog_lists(self) -> None:
+        # User decision, 2026-11-13: the model's highest effort, in the order
+        # low < medium < high < xhigh < max. The catalog order does not matter.
+        self.gateway.catalog = {"object": "list", "data": [
+            {"id": MODEL, "supported_reasoning_efforts": ["low", "high", "max"]},
+            {"id": "meta/muse-spark-open", "supported_reasoning_efforts": ["max", "xhigh", "high", "medium", "low"]},
+            {"id": "mistralai/mistral-large-4-0", "supported_reasoning_efforts": ["low", "medium", "high"]},
+            {"id": "nvidia/nemotron-3-super-120b-a12b", "supported_reasoning_efforts": ["medium", "low"]},
+        ]}
+        expected = {MODEL: "max", "meta/muse-spark-open": "max", "mistralai/mistral-large-4-0": "high",
+                    "nvidia/nemotron-3-super-120b-a12b": "medium"}
+        for model, effort in expected.items():
+            with self.subTest(model=model):
+                self.gateway.chat.append(json_reply(200, completion()))
+                code, out, err = self.ask("--no-stream", model=model)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.gateway.chat_requests()[-1]["body"]["reasoning_effort"], effort)
+                self.assertEqual(self.envelope(out)["requested_effort"], effort)
+
+    def test_an_explicit_effort_is_sent_as_given(self) -> None:
+        self.gateway.chat.append(json_reply(200, completion()))
+
+        code, out, err = self.ask("--effort", "low", "--no-stream")
+
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.gateway.chat_requests()[0]["body"]["reasoning_effort"], "low")
+        self.assertEqual(self.envelope(out)["requested_effort"], "low")
+
+    def test_the_parser_gives_effort_no_fixed_default(self) -> None:
+        args = om.build_parser().parse_args(["ask", "--model", MODEL, "--prompt", "x"])
+
+        self.assertIsNone(args.effort)
+
+    def test_without_effort_a_model_with_no_known_effort_is_refused_before_any_chat_request(self) -> None:
+        self.gateway.catalog = {"object": "list", "data": [
+            {"id": MODEL, "supported_reasoning_efforts": ["ultra"]},
+            {"id": "vendor/no-efforts", "supported_reasoning_efforts": []},
+        ]}
+        for model in (MODEL, "vendor/no-efforts"):
+            with self.subTest(model=model):
+                code, out, err = self.ask(model=model)
+                self.assertEqual(code, 2)
+                self.assertIn("effort_not_supported", err)
+                self.assertIsNone(self.envelope(out)["requested_effort"])
+        self.assertEqual(self.gateway.chat_requests(), [])
+
+    def test_the_error_envelope_reports_the_effort_chosen_without_effort(self) -> None:
+        self.gateway.chat.append(json_reply(401, {"error": {"code": "invalid_api_key"}}))
+
+        code, out, _err = self.ask()
+
+        self.assertEqual(code, 7)
+        self.assertEqual(self.gateway.chat_requests()[0]["body"]["reasoning_effort"], "max")
+        self.assertEqual(self.envelope(out)["requested_effort"], "max")
+
+    def test_a_send_blocked_before_the_catalog_read_logs_no_effort(self) -> None:
+        code, _out, _err = self.ask(prompt="Write to " + address("someone", "example.org") + " about W_6.")
+
+        self.assertEqual(code, 15)
+        record = json.loads((self.state / "sends.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(record["status"], "blocked")
+        self.assertIsNone(record["effort"])
+        self.assertEqual(self.gateway.requests, [])
 
     def test_model_id_must_match_the_rule_and_the_catalog(self) -> None:
         code, _out, err = self.ask(model="../etc/passwd")
@@ -1269,7 +1333,7 @@ class StateTests(ClientTestCase):
         self.assertEqual(record["prompt_bytes"], len(canonical))
         self.assertEqual(record["response_sha256"], hashlib.sha256(answer.encode("utf-8")).hexdigest())
         self.assertEqual(record["response_bytes"], len(answer.encode("utf-8")))
-        for field, value in (("label", "probe:r1:t1"), ("model", MODEL), ("effort", "low"),
+        for field, value in (("label", "probe:r1:t1"), ("model", MODEL), ("effort", "max"),
                              ("request_id", "rq-test0001"), ("status", "ok")):
             self.assertEqual(record[field], value, field)
         self.assertEqual(record["usage"]["total_tokens"], 30)

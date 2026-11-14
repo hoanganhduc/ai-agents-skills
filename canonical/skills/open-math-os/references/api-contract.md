@@ -13,7 +13,7 @@ This file describes what `open_math_os.py` sends, what it accepts, and how it fa
 ## Request body
 
 - `model` must match `vendor/name` (ASCII letters, digits, `.`, `_`, `-`) and appear in the catalog. Without `--catalog-ttl`, `ask` reads the catalog live before each send; with it, a cached catalog younger than the given seconds is reused.
-- `reasoning_effort` must be in the model's `supported_reasoning_efforts`. The gateway drops fields that OpenAI chat completions does not define, so effort travels only in this field.
+- `reasoning_effort` must be in the model's `supported_reasoning_efforts`. Without `--effort`, the client sends the highest of low, medium, high, xhigh and max that the list holds, and refuses with `usage: effort_not_supported` when it holds none of them. A send refused before the catalog is read then has no effort yet: the envelope's `requested_effort` and the blocked record's `effort` are null. The gateway drops fields that OpenAI chat completions does not define, so effort travels only in this field.
 - `max_completion_tokens` is sent only when `--max-tokens N` gives it, for any N of at least 1. The client has no default per effort.
 - With streaming (the default), the body also sets `stream_options.include_usage`, so the last chunk carries `usage`.
 

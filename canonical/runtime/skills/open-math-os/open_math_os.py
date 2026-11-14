@@ -81,7 +81,9 @@ ERROR_CODE_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 FINISH_REASON_RE = re.compile(r"[a-z_]{1,32}\Z")
 CLOUDFLARE_CODE_RE = re.compile(r"error code:\s*([0-9]{3,5})", re.IGNORECASE)
 
-# The reasoning efforts that the gateway's catalog named on 2026-11-07.
+# The reasoning efforts that the gateway's catalog named on 2026-11-07, from
+# lowest to highest. Without --effort, `ask` sends the highest of them that the
+# catalog lists for the model (user decision, 2026-11-13).
 EFFORT_NAMES = ("low", "medium", "high", "xhigh", "max")
 
 # Bounds the agent chose (SKILL.md, "Bounds the agent chose"). They cap only
@@ -1592,6 +1594,14 @@ def catalog_entry(catalog: Mapping[str, Any], model: str) -> dict[str, Any] | No
     return None
 
 
+def highest_effort(entry: Mapping[str, Any]) -> str | None:
+    """The highest effort of EFFORT_NAMES that the catalog lists for a model, if any."""
+
+    listed = entry.get("supported_reasoning_efforts") or []
+    known = [name for name in EFFORT_NAMES if name in listed]
+    return known[-1] if known else None
+
+
 # ---------------------------------------------------------------------------
 # Keys.
 # ---------------------------------------------------------------------------
@@ -2311,7 +2321,8 @@ def _read_input_file(path_value: str, environ: Mapping[str, str]) -> str:
         raise OpenMathError("usage", "input_file_not_utf8") from exc
 
 
-def _log_blocked(environ: Mapping[str, str], label: str, model: str, effort: str, findings: list[str]) -> None:
+def _log_blocked(environ: Mapping[str, str], label: str, model: str, effort: str | None,
+                 findings: list[str]) -> None:
     """Log a refused send as metadata only; the refusal stands if the log fails."""
 
     with contextlib.suppress(OpenMathError, OSError):
@@ -2374,6 +2385,11 @@ def command_ask(args: argparse.Namespace, environ: Mapping[str, str], origin: st
     entry = catalog_entry(catalog, model)
     if entry is None:
         raise OpenMathError("usage", "model_not_in_catalog")
+    if effort is None:
+        effort = highest_effort(entry)
+        if effort is None:
+            raise OpenMathError("usage", "effort_not_supported")
+        args.effort = effort  # so an error envelope reports the effort that was sent
     if effort not in entry.get("supported_reasoning_efforts", []):
         raise OpenMathError("usage", "effort_not_supported")
     body: dict[str, Any] = {
@@ -2751,7 +2767,8 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument("--refresh", action="store_true")
     ask = sub.add_parser("ask", help="send one prompt to one model")
     ask.add_argument("--model", required=True)
-    ask.add_argument("--effort", default="low", choices=EFFORT_NAMES)
+    ask.add_argument("--effort", choices=EFFORT_NAMES,
+                     help="reasoning effort; without it, the highest effort the catalog lists for the model")
     system = ask.add_mutually_exclusive_group()
     system.add_argument("--system")
     system.add_argument("--system-file")

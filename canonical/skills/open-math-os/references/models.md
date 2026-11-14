@@ -12,6 +12,8 @@ The catalog below was read from `GET /v1/models` on 2026-11-07. The live catalog
 | `mistralai/mistral-large-4-0` | low, medium, high | context 1M, images |
 | `nvidia/nemotron-3-super-120b-a12b` | low, medium | text only, context 262K |
 
+Without `--effort`, `ask` sends the model's highest effort in the order low, medium, high, xhigh, max: `max` for the first five models above, `high` for Mistral Large 4 and `medium` for Nemotron 3 Super (user decision, 2026-11-13).
+
 ## Output budget
 
 The client sends `max_completion_tokens` only when `--max-tokens N` gives it. It has no default per effort (user decision, 2026-11-13).

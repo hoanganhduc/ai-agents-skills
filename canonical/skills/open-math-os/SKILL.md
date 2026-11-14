@@ -76,7 +76,7 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   skills/open-math-os/run_open_math_os.sh models
 ```
 
-Ask one model. `--effort` must be one the model supports; it defaults to `low`. `--json` prints one envelope that ends with `"final": true`:
+Ask one model. `--effort` must be one the model supports; without it, `ask` sends the highest effort the catalog lists for the model, in the order low, medium, high, xhigh, max (user decision, 2026-11-13). `--json` prints one envelope that ends with `"final": true`:
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
