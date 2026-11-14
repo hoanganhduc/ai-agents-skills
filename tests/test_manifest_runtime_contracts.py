@@ -276,7 +276,7 @@ class RuntimePythonBlockManifestTests(unittest.TestCase):
                 armed.update(match.group(1).split("|"))
         manifest = json.loads((REPO_ROOT / "manifest/credential-runtime.json").read_text(encoding="utf-8"))
         declared = {command for consumer in manifest["consumers"] for command in consumer["commands"]}
-        self.assertEqual(len(armed), 24)  # The retired Zenodo publication route is absent.
+        self.assertEqual(len(armed), 25)  # The retired Zenodo publication route is absent.
         self.assertEqual(armed, declared)
 
     def test_every_declared_skill_has_the_planned_modules_and_provision(self) -> None:
@@ -530,7 +530,7 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
             self._refuses(self._contract("functional_smoke", requires_python_modules=modules), "functional_smoke", "requires_python_modules")
 
     def test_live_requirements_are_closed_and_read_only_is_literal(self) -> None:
-        pointers = ["AAS_SKILL_SECRETS_FILE", "AAS_COMPUTE_SECRETS_FILE", "AAS_PROVIDER_SECRETS_FILE", "AAS_ZOTERO_SECRETS_FILE", "AAS_CALIBRE_SECRETS_FILE", "AAS_FILE_DELIVERY_SECRETS_FILE", "SEND_EMAIL_SECRETS_FILE", "REMOTE_BRIDGE_SECRETS_FILE"]
+        pointers = ["AAS_SKILL_SECRETS_FILE", "AAS_COMPUTE_SECRETS_FILE", "AAS_PROVIDER_SECRETS_FILE", "AAS_ZOTERO_SECRETS_FILE", "AAS_CALIBRE_SECRETS_FILE", "AAS_FILE_DELIVERY_SECRETS_FILE", "SEND_EMAIL_SECRETS_FILE", "REMOTE_BRIDGE_SECRETS_FILE", "AAS_OPENMATH_SECRETS_FILE"]
         self._validate(self._contract("live_check", requires={"network": True, "pointer_env": pointers, "config_files": ["~/.config/example.json"]}), "live_check")
         for literal in (False, 1, "true", None):
             self._refuses(self._contract("live_check", read_only=literal), "live_check", "read_only")
@@ -564,6 +564,7 @@ class RuntimeSmokeContractValidationTests(unittest.TestCase):
             "modal-research-compute": ("submit", "run", "cancel", "deploy"),
             "send-email": ("send",), "remote-bridge": ("send", "approve"),
             "submission-venue-selector": ("run", "select"), "vnthuquan": ("download",),
+            "open-math-os": ("ask",),
         }
         for skill, blocked in verbs.items():
             command = f"workspace/skills/{skill}/run.sh"

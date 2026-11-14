@@ -17,13 +17,17 @@ STDLIB_ONLY_SKILLS = (
     "zenodo-artifact",
     "axiom-axle-mcp",
     "autonomous-research-loop-runtime",
+    "open-math-os",
 )
 
 # These lazy imports are repository-owned adapters, not third-party packages.
 # Their runtime dependency closure is checked by test_runtime_cross_skill_imports;
-# they execute only for an explicitly selected remote-formal job.
+# they execute only for an explicitly selected remote-formal job. open-math-os
+# imports the broker's stdlib-only owner/DACL guard, which runtime.yaml ships
+# beside it, only on native Windows.
 OPTIONAL_REPOSITORY_IMPORTS = {
     "autonomous-research-loop-runtime/remote_formal.py": {"kaggle_driver", "research_compute"},
+    "open-math-os/open_math_os.py": {"windows_acl"},
 }
 
 

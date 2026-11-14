@@ -1,0 +1,131 @@
+#!/bin/bash -p
+set -euo pipefail
+
+# Capture this wrapper's projected key, and the email values it screens for,
+# with shell builtins. Remove every ambient credential, selector and startup
+# hook before resolving a path or spawning a process, then restore the Open
+# Math model key and the screening values to the bound child.
+# The platform key and the OpenCode server credentials never pass this wrapper.
+configured_python="${AAS_RUNTIME_PYTHON:-}"
+openmath_api_key="${OPENMATH_API_KEY:-}"
+
+unset AAS_SECRETS_FILE OPENCLAW_SECRETS_FILE AAS_SKILL_SECRETS_FILE
+unset AAS_COMPUTE_SECRETS_FILE AAS_PROVIDER_SECRETS_FILE
+unset AAS_CALIBRE_SECRETS_FILE AAS_ZOTERO_SECRETS_FILE
+unset AAS_FILE_DELIVERY_SECRETS_FILE REMOTE_BRIDGE_SECRETS_FILE SEND_EMAIL_SECRETS_FILE
+unset AAS_OPENMATH_SECRETS_FILE
+
+# Email-bearing values reach the client only as screening input. Under
+# run_skill.sh the runner has already moved them into AAS_OPENMATH_SCREEN_VALUES;
+# a direct launch adds the ones still in this environment, by the runner's rule.
+openmath_screen_values="${AAS_OPENMATH_SCREEN_VALUES:-}"
+shopt -s nocasematch
+for screen_name in $(builtin compgen -e 2>/dev/null); do
+  case "$screen_name" in
+    *EMAIL*|SMTP_FROM|SMTP_USER|SMTP_REPLY_TO|SMTP_CC|SMTP_BCC) ;;
+    *) continue ;;
+  esac
+  screen_value="${!screen_name-}"
+  case "$screen_value" in *@*) ;; *) continue ;; esac
+  openmath_screen_values+="$screen_name=${screen_value//$'\n'/ }"$'\n'
+done
+shopt -u nocasematch
+unset screen_name screen_value
+
+unset OPENMATH_API_KEY OPENMATH_PLATFORM_KEY OPENCODE_SERVER_PASSWORD OPENCODE_SERVER_USERNAME
+unset AXLE_API_KEY LEANEXPLORE_API_KEY OCR_SPACE_API_KEY OCR_SPACE_KEY OCRSPACE_API_KEY OCRSPACE_KEY
+unset OPENCLAW_S2_API_KEY S2_API_KEY PATENTSVIEW_API_KEY SEMANTIC_SCHOLAR_API_KEY UNPAYWALL_EMAIL ZENODO_TOKEN
+unset ZOTERO_API_KEY WEBDAV_PASSWORD GDRIVE_CREDENTIALS CALIBRE_GDRIVE_FOLDER_ID
+unset SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM SMTP_SECURITY SMTP_TIMEOUT SMTP_ACCOUNT
+unset ZULIP_ORG_URL ZULIP_SITE ZULIP_EMAIL ZULIP_API_KEY TELEGRAM_BOT_TOKEN
+unset HCLOUD_TOKEN HCLOUD_SSH_KEYS KAGGLE_API_TOKEN KAGGLE_CONFIG_DIR KAGGLE_USERNAME KAGGLE_KEY
+unset MODAL_TOKEN_ID MODAL_TOKEN_SECRET OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+unset CLAUDE_API_KEY CLAUDE_CODE_OAUTH_TOKEN COPILOT_GITHUB_TOKEN COPILOT_PROVIDER_API_KEY
+unset COPILOT_PROVIDER_BEARER_TOKEN GEMINI_API_KEY GOOGLE_API_KEY DEEPSEEK_API_KEY XAI_API_KEY
+unset GROK_API_KEY KIMI_API_KEY MOONSHOT_API_KEY OPENCODE_API_KEY GH_TOKEN GITHUB_TOKEN
+unset GROQ_API_KEY TOGETHER_API_KEY OPENROUTER_API_KEY
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS PYTHONBREAKPOINT
+unset VIRTUAL_ENV __PYVENV_LAUNCHER__ NODE_OPTIONS NODE_PATH
+unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH
+unset BASH_ENV ENV CDPATH GLOBIGNORE 2>/dev/null || true
+export PATH=/usr/bin:/bin
+
+script_path="${BASH_SOURCE[0]:-$0}"
+runtime_command_fd="${AAS_RUNTIME_COMMAND_FD:-}"
+if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
+   { [ "$script_path" = "/proc/self/fd/$runtime_command_fd" ] || [ "$script_path" = "/dev/fd/$runtime_command_fd" ]; }; then
+  script_path="${AAS_RUNTIME_COMMAND_PATH:-$script_path}"
+fi
+unset AAS_RUNTIME_COMMAND_FD AAS_RUNTIME_COMMAND_PATH
+case "$script_path" in */*) script_parent="${script_path%/*}" ;; *) script_parent=. ;; esac
+SCRIPT_DIR="$(cd -- "$script_parent" && builtin pwd -P)"
+SCRIPT="$SCRIPT_DIR/open_math_os.py"
+
+# Choose an unused FD without Bash 4's {var}< syntax.  Probe by duplication,
+# not by reading it: inherited read-only and write-only FDs must both survive.
+# Keep clear of the outer runner's 200+ range and Bash's script descriptor.
+# Callers open the FD immediately; only this bounded integer enters eval.
+select_unused_fd() {
+  local variable="$1" number=10
+  while [ "$number" -lt 200 ]; do
+    if ! ( : <&"$number" ) 2>/dev/null; then
+      printf -v "$variable" '%s' "$number"
+      return 0
+    fi
+    number=$((number + 1))
+  done
+  printf 'no unused runtime descriptor is available\n' >&2
+  return 1
+}
+
+trusted_regular_file() {
+  local candidate="$1" metadata owner mode links kind current_uid
+  metadata="$(/usr/bin/stat -c '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -f '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
+  IFS=: read -r owner mode links kind <<< "$metadata"
+  case "$kind" in
+    "Regular File") kind="regular file" ;;
+  esac
+  current_uid="$(/usr/bin/id -u)"
+  case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#$mode & 8#022) == 0 )) || return 1
+  [ "$kind" = "regular file" ] || return 1
+  [ "$owner" = 0 ] || [ "$links" -eq 1 ]
+}
+
+# A stdlib-only skill runs the attested system Python and ignores an admitted
+# skill venv, so no third-party site-packages can load beside the model key.
+PYTHON="$(/usr/bin/readlink -f -- /usr/bin/python3 2>/dev/null || true)"
+case "$PYTHON" in /usr/bin/python3|/usr/bin/python3.*) ;; *) PYTHON= ;; esac
+if [ -z "$PYTHON" ] || ! trusted_regular_file "$PYTHON" || [ ! -x "$PYTHON" ]; then
+  printf 'attested system Python runtime is unavailable\n' >&2
+  exit 127
+fi
+if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ] 2>/dev/null; then
+  printf 'AAS_RUNTIME_PYTHON is not an approved absolute runtime selector\n' >&2
+  exit 127
+fi
+python_real="$PYTHON"
+select_unused_fd AAS_OPENMATH_PYTHON_FD || exit 127
+eval "exec ${AAS_OPENMATH_PYTHON_FD}<\"\$PYTHON\"" || exit 127
+if [ -e "/proc/self/fd/$AAS_OPENMATH_PYTHON_FD" ]; then
+  PYTHON="/proc/self/fd/$AAS_OPENMATH_PYTHON_FD"
+  [ "$PYTHON" -ef "$python_real" ] || exit 127
+elif [ -e "/dev/fd/$AAS_OPENMATH_PYTHON_FD" ]; then
+  # Darwin's fdesc node is not executable; use the fixed attested path.
+  /usr/bin/python3 -I -c 'import os,sys; a=os.fstat(int(sys.argv[1])); b=os.stat("/usr/bin/python3"); sys.exit((a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino))' "$AAS_OPENMATH_PYTHON_FD" || exit 127
+  PYTHON="$python_real"
+else
+  printf 'attested system Python runtime could not be descriptor-bound\n' >&2
+  exit 127
+fi
+
+[ -n "$openmath_api_key" ] && export OPENMATH_API_KEY="$openmath_api_key"
+[ -n "$openmath_screen_values" ] && export AAS_OPENMATH_SCREEN_VALUES="$openmath_screen_values"
+export AAS_RUNTIME_PYTHON="$python_real"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+unset AAS_RUNTIME_PYTHON_PREFIX
+
+secure_loader='import os,stat,sys; p=os.path.abspath(sys.argv[1]); q=os.stat(p,follow_symlinks=False); f=os.open(p,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0)|getattr(os,"O_CLOEXEC",0)); b=os.fstat(f); ok=stat.S_ISREG(b.st_mode) and b.st_nlink==1 and b.st_uid in {0,os.geteuid()} and not (stat.S_IMODE(b.st_mode)&0o022) and (q.st_dev,q.st_ino)==(b.st_dev,b.st_ino) and b.st_size<=16777216; ok or (_ for _ in ()).throw(RuntimeError("runtime helper is unavailable or untrusted")); d=b""; rem=b.st_size; exec("while rem:\n c=os.read(f,min(65536,rem))\n c or (_ for _ in ()).throw(RuntimeError(\"runtime helper was truncated\"))\n d+=c; rem-=len(c)"); a=os.fstat(f); (b.st_dev,b.st_ino,b.st_size,b.st_mtime_ns,b.st_ctime_ns,b.st_nlink)==(a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns,a.st_ctime_ns,a.st_nlink) or (_ for _ in ()).throw(RuntimeError("runtime helper changed while reading")); c=compile(d,p,"exec"); sys.argv=[p,*sys.argv[2:]]; g={"__name__":"__main__","__file__":p,"__package__":None,"__cached__":None}; exec(c,g,g)'
+exec "$PYTHON" -I -c "$secure_loader" "$SCRIPT" "$@"

@@ -113,6 +113,7 @@ Status vocabulary used by `precheck`:
 | `numpy-python-package` | `python` | numpy |
 | `nvidia-smi-tool` | `tool` | nvidia-smi-tool |
 | `ocr-runtime` | `tool` | ocr-runtime |
+| `open-math-os-api` | `remote-service` | remote-service |
 | `pdf2image-python-package` | `python` | pdf2image |
 | `pdfplumber-python-package` | `python` | pdfplumber |
 | `pdftotext-system-tool` | `tool` | pdftotext-system-tool |

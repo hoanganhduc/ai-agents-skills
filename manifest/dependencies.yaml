@@ -668,6 +668,7 @@
     "kaggle-auth": {"type": "remote-service"},
     "axle-auth": {"type": "remote-service"},
     "leanexplore-auth": {"type": "remote-service"},
+    "open-math-os-api": {"type": "remote-service"},
     "lean-explore-local-cache": {"type": "manual-data"},
     "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"},
     "git-cli": {"type": "tool", "logical_tool": "git-cli"},

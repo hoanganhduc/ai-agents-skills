@@ -13,6 +13,7 @@
         "annotated-review",
         "axiom-axle-mcp",
         "opengauss",
+        "open-math-os",
         "calibre",
         "deep-research-workflow",
         "digest-bridge",
@@ -4097,6 +4098,181 @@
               "exists": true
             }
           ]
+        }
+      }
+    },
+    "open-math-os": {
+      "runtime_dir": "open-math-os",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke checks the fixed origin, handler set, effort table, outbound screen, control stripping, SSE parsing and error classes in memory, without network, state writes or a key."
+      },
+      "files": [
+        {
+          "source": "skills/open-math-os/open_math_os.py",
+          "target": "workspace/skills/open-math-os/open_math_os.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/open-math-os/run_open_math_os.ps1",
+          "target": "workspace/skills/open-math-os/run_open_math_os.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/open-math-os/run_open_math_os.sh",
+          "target": "workspace/skills/open-math-os/run_open_math_os.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "workspace/research_compute/windows_acl.py",
+          "target": "workspace/skills/open-math-os/windows_acl.py",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/open-math-os/run_open_math_os.sh",
+          "macos": "workspace/skills/open-math-os/run_open_math_os.sh",
+          "wsl": "workspace/skills/open-math-os/run_open_math_os.sh",
+          "windows": "workspace/skills/open-math-os/run_open_math_os.ps1",
+          "windows_ps1": "workspace/skills/open-math-os/run_open_math_os.ps1"
+        },
+        "args": [
+          "smoke"
+        ],
+        "timeout_seconds": 15,
+        "writes": [],
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_OPENMATH_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "OPENMATH_API_KEY": "OPENMATH-SMOKE-CANARY"
+          }
+        },
+        "expect": {
+          "exit_code": 0,
+          "stdout_json": [
+            {
+              "path": "status",
+              "equals": "ok"
+            },
+            {
+              "path": "smoke_mode",
+              "equals": "offline"
+            },
+            {
+              "path": "failed",
+              "equals": []
+            },
+            {
+              "path": "checks",
+              "contains": "outbound_screen"
+            },
+            {
+              "path": "checks",
+              "contains": "projected_key_screened"
+            },
+            {
+              "path": "network_required",
+              "equals": false
+            },
+            {
+              "path": "live_api_attempted",
+              "equals": false
+            },
+            {
+              "path": "config_written",
+              "equals": false
+            },
+            {
+              "path": "state_written",
+              "equals": false
+            },
+            {
+              "path": "provenance.independence_eligible",
+              "equals": false
+            }
+          ]
+        }
+      },
+      "live_check": {
+        "doctor": {
+          "schema": "runtime-live-check.v1",
+          "command": {
+            "linux": "workspace/skills/open-math-os/run_open_math_os.sh",
+            "macos": "workspace/skills/open-math-os/run_open_math_os.sh",
+            "wsl": "workspace/skills/open-math-os/run_open_math_os.sh",
+            "windows": "workspace/skills/open-math-os/run_open_math_os.ps1",
+            "windows_ps1": "workspace/skills/open-math-os/run_open_math_os.ps1"
+          },
+          "args": [
+            "doctor",
+            "--live"
+          ],
+          "timeout_seconds": 120,
+          "read_only": true,
+          "requires": {
+            "network": true,
+            "pointer_env": [
+              "AAS_OPENMATH_SECRETS_FILE"
+            ]
+          },
+          "expect": {
+            "exit_code": 0,
+            "stdout_json": [
+              {
+                "path": "status",
+                "equals": "ok"
+              },
+              {
+                "path": "key.status",
+                "equals": "present"
+              },
+              {
+                "path": "live.status",
+                "equals": "ok"
+              },
+              {
+                "path": "live.models.fields_ok",
+                "equals": true
+              }
+            ]
+          }
         }
       }
     },

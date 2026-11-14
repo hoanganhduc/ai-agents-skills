@@ -64,7 +64,8 @@ $secretPointerPresent = [bool](
     $env:AAS_ZOTERO_SECRETS_FILE -or
     $fileDeliveryPointer -or
     $remoteBridgePointer -or
-    $env:SEND_EMAIL_SECRETS_FILE
+    $env:SEND_EMAIL_SECRETS_FILE -or
+    $env:AAS_OPENMATH_SECRETS_FILE
 )
 $trustedRuntimeRequired = [bool](
     $secretPointerPresent -or

@@ -12,10 +12,31 @@ zotero_pointer="${AAS_ZOTERO_SECRETS_FILE:-}"
 delivery_pointer="${AAS_FILE_DELIVERY_SECRETS_FILE:-}"
 remote_pointer="${REMOTE_BRIDGE_SECRETS_FILE:-}"
 email_pointer="${SEND_EMAIL_SECRETS_FILE:-}"
+openmath_pointer="${AAS_OPENMATH_SECRETS_FILE:-}"
 unset AAS_SECRETS_FILE OPENCLAW_SECRETS_FILE AAS_SKILL_SECRETS_FILE
 unset AAS_COMPUTE_SECRETS_FILE AAS_PROVIDER_SECRETS_FILE
 unset AAS_CALIBRE_SECRETS_FILE AAS_ZOTERO_SECRETS_FILE
 unset AAS_FILE_DELIVERY_SECRETS_FILE REMOTE_BRIDGE_SECRETS_FILE SEND_EMAIL_SECRETS_FILE
+unset AAS_OPENMATH_SECRETS_FILE
+
+# The loader keeps no email-bearing variable, so capture their values here,
+# with builtins and after the pointers are gone. Only the open-math-os branch
+# passes them on, as NAME=value lines under one screening-only name, so its
+# client can refuse a prompt that carries one. A value without '@' cannot
+# match and is skipped.
+openmath_screen_values=""
+shopt -s nocasematch
+for screen_name in $(builtin compgen -e 2>/dev/null); do
+  case "$screen_name" in
+    *EMAIL*|SMTP_FROM|SMTP_USER|SMTP_REPLY_TO|SMTP_CC|SMTP_BCC) ;;
+    *) continue ;;
+  esac
+  screen_value="${!screen_name-}"
+  case "$screen_value" in *@*) ;; *) continue ;; esac
+  openmath_screen_values+="$screen_name=${screen_value//$'\n'/ }"$'\n'
+done
+shopt -u nocasematch
+unset screen_name screen_value AAS_OPENMATH_SCREEN_VALUES AAS_OPENMATH_ARL_LAUNCH
 
 ambient_secret_keys=(
   AXLE_API_KEY LEANEXPLORE_API_KEY OCR_SPACE_API_KEY OCR_SPACE_KEY OCRSPACE_API_KEY OCRSPACE_KEY
@@ -31,6 +52,7 @@ ambient_secret_keys=(
   CLAUDE_API_KEY CLAUDE_CODE_OAUTH_TOKEN COPILOT_GITHUB_TOKEN COPILOT_PROVIDER_API_KEY
   COPILOT_PROVIDER_BEARER_TOKEN GEMINI_API_KEY GOOGLE_API_KEY DEEPSEEK_API_KEY XAI_API_KEY
   GROK_API_KEY KIMI_API_KEY MOONSHOT_API_KEY OPENCODE_API_KEY GH_TOKEN GITHUB_TOKEN
+  OPENMATH_API_KEY OPENMATH_PLATFORM_KEY OPENCODE_SERVER_PASSWORD OPENCODE_SERVER_USERNAME
   GROQ_API_KEY TOGETHER_API_KEY OPENROUTER_API_KEY
 )
 for key in "${ambient_secret_keys[@]}"; do
@@ -197,6 +219,19 @@ case "$command_rel" in
     credential_contract=1
     [ -n "$skill_pointer" ] && export AAS_SKILL_SECRETS_FILE="$skill_pointer"
     select_flat_projection AAS_SKILL_SECRETS_FILE env SEMANTIC_SCHOLAR_API_KEY UNPAYWALL_EMAIL
+    ;;
+  skills/open-math-os/run_open_math_os.sh)
+    credential_contract=1
+    openmath_pointer="$(default_private_projection "$openmath_pointer" openmath.env)"
+    [ -n "$openmath_pointer" ] && export AAS_OPENMATH_SECRETS_FILE="$openmath_pointer"
+    select_flat_projection AAS_OPENMATH_SECRETS_FILE env OPENMATH_API_KEY
+    [ -n "$openmath_screen_values" ] && export AAS_OPENMATH_SCREEN_VALUES="$openmath_screen_values"
+    # The loader also drops the ARL run markers, so their presence reaches the
+    # client as one non-secret flag: a launch inside an ARL run never retries.
+    if [ -n "${AAS_AUTOLOOP_RUN_ID:-}" ] || [ -n "${AAS_ARL_BROKER_SOCKET:-}" ]; then
+      export AAS_OPENMATH_ARL_LAUNCH=1
+    fi
+    projection_retain_env+=(AAS_OPENMATH_SCREEN_VALUES AAS_OPENMATH_ARL_LAUNCH)
     ;;
   skills/zotero/run_zot.sh)
     credential_contract=1

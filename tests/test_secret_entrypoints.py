@@ -55,13 +55,20 @@ SKILL_KEYS = {
     "UNPAYWALL_EMAIL",
     "ZENODO_TOKEN",
 }
+# The Open Math model key has its own pointer lane (AAS_OPENMATH_SECRETS_FILE);
+# the platform key and the OpenCode server credentials are scrub-only here.
+OPENMATH_KEYS = {"OPENMATH_API_KEY", "OPENMATH_PLATFORM_KEY"}
+OPENCODE_SERVER_KEYS = {"OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME"}
 OBSERVED_KEYS = sorted(COMPUTE_KEYS | PROVIDER_KEYS)
-OBSERVED_ENV_KEYS = sorted(COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEYS) + [
+OBSERVED_ENV_KEYS = sorted(
+    COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEYS | OPENMATH_KEYS | OPENCODE_SERVER_KEYS
+) + [
     "PATENTSVIEW_API_KEY",
     "S2_API_KEY",
     "AAS_COMPUTE_SECRETS_FILE",
     "AAS_PROVIDER_SECRETS_FILE",
     "AAS_SKILL_SECRETS_FILE",
+    "AAS_OPENMATH_SECRETS_FILE",
     "AAS_HETZNER_HCLOUD_BIN",
     "AAS_HETZNER_SCP_BIN",
     "AAS_HETZNER_SSH_BIN",
@@ -180,6 +187,10 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             sorted((COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEYS) - scrubbed),
         )
         self.assertTrue({"S2_API_KEY", "PATENTSVIEW_API_KEY"}.issubset(scrubbed))
+        self.assertTrue(
+            (OPENMATH_KEYS | OPENCODE_SERVER_KEYS).issubset(scrubbed),
+            sorted((OPENMATH_KEYS | OPENCODE_SERVER_KEYS) - scrubbed),
+        )
 
     def test_direct_structured_wrappers_bind_system_python_and_ignore_hostile_path(self) -> None:
         cases = (
@@ -740,6 +751,74 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             for key in (COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | (SKILL_KEYS - {"LEANEXPLORE_API_KEY"})):
                 self.assertIsNone(child[key], key)
 
+    def _run_open_math_doctor(self, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        wrapper = self._stage_entrypoint(
+            root,
+            skill="open-math-os",
+            wrapper="run_open_math_os.sh",
+            python_entrypoint="open_math_os.py",
+        )
+        runner = wrapper.parents[3] / "run_skill.sh"
+        self._copy_test_runner(runner)
+        runner.chmod(0o755)
+        return subprocess.run(
+            ["/bin/bash", str(runner), "skills/open-math-os/run_open_math_os.sh", "doctor"],
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+
+    def test_managed_open_math_projection_reaches_only_the_model_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            model_key = "nuc_" + "ak_" + "synthetic" * 3
+            authority = self._private_file(root, "openmath.env", f"OPENMATH_API_KEY={model_key}\n")
+            env = self._env(root)
+            env.update(
+                {
+                    "AAS_OPENMATH_SECRETS_FILE": str(authority),
+                    "OPENMATH_PLATFORM_KEY": "ambient-platform-key-must-not-cross",
+                    "OPENCODE_SERVER_PASSWORD": "ambient-opencode-password-must-not-cross",
+                    "OPENCODE_SERVER_USERNAME": "ambient-opencode-user-must-not-cross",
+                    "OPENAI_API_KEY": "cross-lane-must-not-cross",
+                    "AXLE_API_KEY": "skill-lane-must-not-cross",
+                }
+            )
+
+            completed = self._run_open_math_doctor(root, env)
+
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            child = json.loads(completed.stdout)
+            self.assertEqual(child["OPENMATH_API_KEY"], model_key)
+            self.assertIsNone(child["AAS_OPENMATH_SECRETS_FILE"])
+            for key in (
+                COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEYS
+                | OPENCODE_SERVER_KEYS | {"OPENMATH_PLATFORM_KEY"}
+            ):
+                self.assertIsNone(child[key], key)
+
+    def test_open_math_runner_projects_the_default_owner_private_key_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            config = root / ".config" / "ai-agents-skills"
+            config.mkdir(parents=True)
+            config.chmod(0o700)
+            model_key = "nuc_" + "ak_" + "defaultfile" * 2
+            self._private_file(config, "openmath.env", f"OPENMATH_API_KEY={model_key}\n")
+            env = self._env(root)
+            self.assertNotIn("AAS_OPENMATH_SECRETS_FILE", env)
+
+            completed = self._run_open_math_doctor(root, env)
+
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            child = json.loads(completed.stdout)
+            self.assertEqual(child["OPENMATH_API_KEY"], model_key)
+            self.assertIsNone(child["AAS_OPENMATH_SECRETS_FILE"])
+
     def test_credential_runner_allows_its_attested_workspace_but_rejects_an_external_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -934,6 +1013,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         cases = (
             ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
             ("send-email", "run_send_email.sh", "send_email.py"),
+            ("open-math-os", "run_open_math_os.sh", "open_math_os.py"),
         )
         for skill, wrapper_name, entrypoint, selector in (
             (*case, selector) for case in cases for selector in ("arbitrary", "closure")

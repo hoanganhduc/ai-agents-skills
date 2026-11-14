@@ -85,13 +85,38 @@ $pointerNames = @(
     "AAS_ZOTERO_SECRETS_FILE",
     "AAS_FILE_DELIVERY_SECRETS_FILE",
     "REMOTE_BRIDGE_SECRETS_FILE",
-    "SEND_EMAIL_SECRETS_FILE"
+    "SEND_EMAIL_SECRETS_FILE",
+    "AAS_OPENMATH_SECRETS_FILE"
 )
 $pointerValues = @{}
 foreach ($name in $pointerNames) {
     $pointerValues[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 Remove-AasProcessEnvironment $pointerNames
+
+# The allowlist below keeps no email-bearing variable, so capture their values
+# for the open-math-os command now, after the pointers are gone. That client
+# gets them as NAME=value lines under one screening-only name, so it can refuse
+# a prompt that carries one; a value without '@' cannot match and is skipped.
+# The ARL run markers become its no-retry flag the same way.
+$openMathScreenValues = ""
+$openMathArlLaunch = $false
+Remove-AasProcessEnvironment @("AAS_OPENMATH_SCREEN_VALUES", "AAS_OPENMATH_ARL_LAUNCH")
+if ($normalized.ToLowerInvariant() -eq "skills\open-math-os\run_open_math_os.ps1") {
+    foreach ($name in @(
+        [Environment]::GetEnvironmentVariables(
+            [System.EnvironmentVariableTarget]::Process
+        ).Keys | ForEach-Object { [string]$_ } | Sort-Object
+    )) {
+        if ($name -notmatch '^(.*EMAIL.*|SMTP_(FROM|USER|REPLY_TO|CC|BCC))$') { continue }
+        $value = [Environment]::GetEnvironmentVariable($name, "Process")
+        if ($value -and $value.Contains("@")) {
+            $openMathScreenValues += $name + "=" + ($value -replace "`r|`n", " ") + "`n"
+        }
+    }
+    $value = $null
+    $openMathArlLaunch = [bool]($env:AAS_AUTOLOOP_RUN_ID -or $env:AAS_ARL_BROKER_SOCKET)
+}
 
 # Empty-by-default applies even to an unmapped command.  These names are
 # always removed before a command contract republishes its exact subset.
@@ -118,8 +143,9 @@ $ambientSecretKeys = @(
     "COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN",
     "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY",
     "GROK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "OPENCODE_API_KEY",
-    "GH_TOKEN", "GITHUB_TOKEN", "GROQ_API_KEY", "TOGETHER_API_KEY",
-    "OPENROUTER_API_KEY"
+    "GH_TOKEN", "GITHUB_TOKEN", "OPENMATH_API_KEY", "OPENMATH_PLATFORM_KEY",
+    "OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME",
+    "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY"
 )
 Remove-AasProcessEnvironment $ambientSecretKeys
 
@@ -153,6 +179,9 @@ $flatContracts = @{
         Pointer = "AAS_CALIBRE_SECRETS_FILE"; Format = "json"; Keys = @(
             "GDRIVE_CREDENTIALS", "CALIBRE_GDRIVE_FOLDER_ID"
         )
+    }
+    "skills\open-math-os\run_open_math_os.ps1" = @{
+        Pointer = "AAS_OPENMATH_SECRETS_FILE"; Format = "env"; Keys = @("OPENMATH_API_KEY")
     }
 }
 
@@ -299,6 +328,17 @@ if ($credentialContract) {
     }
     if ($normalizedLower -like "skills\vnthuquan\*") {
         [void]$credentialMetadataNames.Add("VNTHUQUAN_TARGET")
+    }
+    if ($normalizedLower -eq "skills\open-math-os\run_open_math_os.ps1") {
+        if ($openMathScreenValues) {
+            $env:AAS_OPENMATH_SCREEN_VALUES = $openMathScreenValues
+        }
+        if ($openMathArlLaunch) {
+            $env:AAS_OPENMATH_ARL_LAUNCH = "1"
+        }
+        foreach ($name in @("AAS_OPENMATH_SCREEN_VALUES", "AAS_OPENMATH_ARL_LAUNCH")) {
+            [void]$credentialMetadataNames.Add($name)
+        }
     }
     if ($usesComputeWorkspace) {
         [void]$credentialMetadataNames.Add("AAS_AUTOLOOP_COMPUTE_WORKSPACE")

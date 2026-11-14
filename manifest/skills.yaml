@@ -930,6 +930,35 @@
         "offline-smoke"
       ]
     },
+    "open-math-os": {
+      "description": "Stdlib-only client for the open math models of Open Math OS, with a fixed origin, outbound secret and email screening, client-side budgets and a metadata-only send log; answers are untrusted and never count as independent verification.",
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "open-math-os-api"
+      ],
+      "optional_capabilities": [
+        "unverified-model-second-opinion",
+        "remote-model-gateway"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
     "model-router": {
       "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
       "profiles": [

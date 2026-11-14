@@ -434,7 +434,7 @@ RUNTIME_SMOKE_RESERVED_ENV = frozenset({
 RUNTIME_POINTER_AUTHORITIES = frozenset({
     "AAS_SKILL_SECRETS_FILE", "AAS_COMPUTE_SECRETS_FILE", "AAS_PROVIDER_SECRETS_FILE",
     "AAS_ZOTERO_SECRETS_FILE", "AAS_CALIBRE_SECRETS_FILE", "AAS_FILE_DELIVERY_SECRETS_FILE",
-    "SEND_EMAIL_SECRETS_FILE", "REMOTE_BRIDGE_SECRETS_FILE",
+    "SEND_EMAIL_SECRETS_FILE", "REMOTE_BRIDGE_SECRETS_FILE", "AAS_OPENMATH_SECRETS_FILE",
 })
 # Agent homes a live check must never pin, one per install target in manifest/target-state.yaml.
 # The contract is shared by every target, so a literal `~/.openclaw/...` gates all of them on one
@@ -453,6 +453,7 @@ RUNTIME_LIVE_MUTATING_VERBS = {
     "remote-bridge": frozenset({"send", "approve"}),
     "submission-venue-selector": frozenset({"run", "select"}),
     "vnthuquan": frozenset({"download"}),
+    "open-math-os": frozenset({"ask", "batch"}),
 }
 RUNTIME_JSON_TYPES = frozenset({"null", "boolean", "object", "array", "number", "integer", "string"})
 RUNTIME_JSON_ASSERTION_OPS = frozenset({
